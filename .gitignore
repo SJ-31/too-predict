@@ -10,3 +10,6 @@ wheels/
 .venv
 /.stfolder/
 /.stignore
+/.here
+/.python-version
+/uv.lock
