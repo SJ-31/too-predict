@@ -1,0 +1,19 @@
+{
+    "reportArgumentType": "none",
+    "reportAttributeAccessIssue": "none",
+    "reportOptionalSubscript": "none",
+    "reportOptionalMemberAccess": "none",
+    "reportAssignmentType": "none",
+    "reportUnusedCallResult": false,
+    "reportCallIssue": false,
+    "reportIncompleteStub": false,
+    "reportAny": false,
+    "reportUnknownParameterType": false,
+    "reportUnknownVariableType": false,
+    "reportUnknownMemberType": false,
+    "reportUnknownArgumentType": false,
+    "reportUnknownLambdaType": false,
+    "reportMissingTypeArgument": false,
+    "reportMissingParameterType": false,
+    "reportMissingTypeStubs": false
+}
