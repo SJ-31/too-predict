@@ -17,7 +17,7 @@ from rpy2.rinterface_lib.sexp import (
     NARealType,
 )
 from rpy2.robjects import RObject, pandas2ri
-from rpy2.robjects.packages import STAP, importr
+from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse
 
 import too_predict
@@ -71,10 +71,8 @@ def r_cleanup(fn: Callable):
 
 @r_cleanup
 def dgelist2anndata(rds: str | RObject) -> ad.AnnData:
-    global base
-    if not base:
-        base = importr("base")
     """Read a DGEList object stored in an rds file `rds` into an AnnData object"""
+    base = library("base")
     if isinstance(rds, str):
         ro.globalenv["dge"] = base.readRDS(rds)
         adata = ad.AnnData(
@@ -86,7 +84,7 @@ def dgelist2anndata(rds: str | RObject) -> ad.AnnData:
     return adata
 
 
-def library(r_script: str) -> STAP:
+def source(r_script: str) -> STAP:
     """Import `r script` in src/R as a STAP"""
     with res.path(too_predict) as root:
         r_src = root.parent.joinpath("R")
@@ -95,6 +93,16 @@ def library(r_script: str) -> STAP:
             text = script.read_text()
             return STAP(text, Path(r_script).stem)
         raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
+
+
+def library(package: str) -> InstalledSTPackage | InstalledPackage:
+    """Load an R package into the global environment if it has not been loaded yet"""
+    check = globals().get(package)
+    if not check or type(check) not in {InstalledPackage, InstalledSTPackage}:
+        loaded = importr(package)
+        globals()[package] = loaded
+        return loaded
+    return check
 
 
 @r_cleanup
@@ -106,6 +114,7 @@ def add_gene_metadata(
     keytpe: str = "GENEID",
 ) -> None:
     """Add gene metadata from the ensembldb object stored at `ensdb_path`"""
+    ensembldb = library("ensembldb")
     for c in columns:
         if c in adata.var.columns:
             print(f"WARNING: column {c} already exists in adata.var, removing...")
