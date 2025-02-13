@@ -14,19 +14,32 @@ IMPLEMENTED_NORMALIZATION = {"clr", "tmm"}
 
 
 class Normalizer:
-    """Class for normalizing counts in the given adata object. Inplace by default"""
+    """Class for normalizing counts in the given adata object. Inplace by default
+    Count data are temporarily converted to a numpy array for normalization if necessary
+
+    """
 
     def __init__(
-        self, adata: ad.AnnData, method: str, impute_fn: Callable, inplace=True
+        self,
+        adata: ad.AnnData,
+        method: str,
+        impute_fn: Callable,
+        inplace=True,
+        make_sparse=True,
     ) -> None:
         self.ad = adata if inplace else adata.copy()
         if method.lower() not in IMPLEMENTED_NORMALIZATION:
             raise ValueError(f"Normalization method {method} not implemented!")
+        self.inplace = inplace
         self.method = method
+        self.make_sparse = make_sparse
         self.ad.layers["counts"] = adata.X
-        self.counts = impute_fn(adata.X.copy())
+        if not (isinstance(adata.X, np.ndarray)):
+            self.counts = impute_fn(adata.X.toarray().copy())
+        else:
+            self.counts = impute_fn(adata.X.copy())
 
-    def alr(self, by: int | str, var_col: str = None) -> None:
+    def alr(self, by: int | str, var_col: str = None) -> np.ndarray:
         """Normalize counts in adata using ALR, with the counts of a specific
         gene `by` as the reference.
 
@@ -47,28 +60,31 @@ class Normalizer:
         else:
             index = by
         self.ad = ad.concat([self.ad[:, :index], self.ad[:, index + 1 :]], axis="var")
-        normalized = comp.alr(self.counts.toarray(), by)
-        self.ad.X = sparse.csr_matrix(normalized)
+        return comp.alr(self.counts.toarray(), by)
 
     @r_cleanup
-    def tmm(self) -> None:
+    def tmm(self) -> np.ndarray:
         np_cv_rules = default_converter + numpy2ri.converter
         with np_cv_rules.context():
-            ro.globalenv["mat"] = np.transpose(self.counts.toarray())
+            ro.globalenv["mat"] = np.transpose(self.counts)
         ro.r("dge <- edgeR::DGEList(mat)")
         ro.r("edgeR::normLibSizes(dge)")
         ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
-        normalized = np.transpose(np.asarray(ro.r("counts")))
-        self.ad.X = sparse.csc_matrix(normalized)
+        return np.transpose(np.asarray(ro.r("counts")))
 
-    def clr(self) -> None:
-        normalized = comp.clr(self.counts.toarray())
-        self.ad.X = sparse.csc_matrix(normalized)
+    def clr(self) -> np.ndarray:
+        return comp.clr(self.counts)
 
-    def run(self) -> ad.AnnData:
+    def run(self, **kwargs) -> ad.AnnData | None:
         match self.method:
             case "clr":
-                self.clr()
+                normalized = self.clr()
             case "tmm":
-                self.tmm()
-        return self.ad
+                normalized = self.tmm()
+            case "alr":
+                normalized = self.alr(**kwargs)
+            case _:
+                normalized = np.array()
+        self.ad.X = sparse.csc_matrix(normalized) if self.make_sparse else normalized
+        if not self.inplace:
+            return self.ad
