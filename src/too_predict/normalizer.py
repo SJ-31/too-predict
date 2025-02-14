@@ -10,7 +10,7 @@ from scipy import sparse
 
 from too_predict.utils import library, r_cleanup
 
-IMPLEMENTED_NORMALIZATION = {"clr", "tmm"}
+IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
 
 
 class Normalizer:
@@ -59,8 +59,13 @@ class Normalizer:
                 raise ValueError("Key `by` is not unique!")
         else:
             index = by
-        self.ad = ad.concat([self.ad[:, :index], self.ad[:, index + 1 :]], axis="var")
-        return comp.alr(self.counts.toarray(), by)
+        self.ad = ad.concat(
+            [self.ad[:, :index], self.ad[:, index + 1 :]],
+            axis="var",
+            merge="same",
+            uns_merge="same",
+        )
+        return comp.alr(self.counts, index)
 
     @r_cleanup
     def tmm(self) -> np.ndarray:
