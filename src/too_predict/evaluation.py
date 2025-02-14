@@ -125,3 +125,33 @@ def classification_report2df(
     if fold:
         df["fold"] = fold
     return df, report["accuracy"]
+
+
+def get_all_metrics(true, proba, classes) -> dict:
+    predictions = pd.DataFrame(proba, columns=classes)
+    pred_vals = predictions.idxmax(1)
+    rep = me.classification_report(true, pred_vals, output_dict=True)
+
+    cm = confusion_matrix_df(true, pred_vals, labels=classes)
+    rep_df, acc = classification_report2df(rep)
+    roc_df = roc_multiclass(true, predictions)
+    prec_recall_df = precision_recall_multiclass(true, predictions)
+    return {
+        "cm": cm,
+        "acc": acc,
+        "report": rep_df,
+        "prec_recall": prec_recall_df,
+        "roc": roc_df,
+    }
+
+
+def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
+    df = pd.DataFrame(me.confusion_matrix(true, pred, **kwargs))
+    if "labels" not in kwargs:
+        labels = np.unique(true)
+        df.columns = labels
+        df.index = labels
+    else:
+        df.columns = kwargs["labels"]
+        df.index = kwargs["labels"]
+    return df
