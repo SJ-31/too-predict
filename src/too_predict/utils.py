@@ -18,7 +18,7 @@ from rpy2.rinterface_lib.sexp import (
 )
 from rpy2.robjects import RObject, pandas2ri
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
-from scipy import sparse
+from scipy import sparse, stats
 
 import too_predict
 
@@ -144,3 +144,18 @@ def add_gene_metadata(
 
     join_on = keycol if keycol else None
     adata.var = adata.var.join(result, on=join_on, how="left")
+
+
+def str_mode(array: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
+    """Scipy's mode function made compatible with string arrays
+    returns a tuple of [mode, count]
+    """
+    array = array.copy()
+    uniques = np.unique(array)
+    int2name = {}
+    for i, n in enumerate(uniques):
+        array[array == n] = i
+        int2name[i] = n.item()
+    result = stats.mode(array.astype(int), **kwargs)
+    names = [int2name[n.item()] for n in result.mode]
+    return np.array(names), result.count
