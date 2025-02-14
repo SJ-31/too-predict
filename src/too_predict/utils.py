@@ -22,10 +22,6 @@ from scipy import sparse
 
 import too_predict
 
-# R libraries
-base = None
-ensembldb = None
-
 NA_TYPES: set = {
     NACharacterType,
     NAIntegerType,
@@ -44,6 +40,15 @@ def get_data(path: str) -> Path:
         if file.exists():
             return file.absolute()
         raise FileNotFoundError(f"{path} doesn't exist!")
+
+
+def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
+    with (ro.default_converter + pandas2ri.converter).context():
+        converted = ro.conversion.get_conversion().py2rpy(df)
+        if r_symbol:
+            ro.globalenv[r_symbol] = converted
+        else:
+            return converted
 
 
 def df_from_r(robj) -> pd.DataFrame:
