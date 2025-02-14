@@ -6,6 +6,7 @@ from typing import Callable, override
 import anndata as ad
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import sklearn.model_selection as ms
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
@@ -32,6 +33,7 @@ class PredBase:
         imputation: str,
         model,
         features=None,
+        feature_col="GENENAME",
     ) -> None:
         self.model = model
         if normalization:
@@ -39,6 +41,7 @@ class PredBase:
         else:
             self.n_method = None
         self.features = features
+        self.feature_col = feature_col
         self.impute: Callable = Imputer(imputation).run
         self.i_method = imputation.lower()
 
@@ -61,10 +64,17 @@ class PredBase:
             X = self.preprocess(X)
         return self.model.predict(X)
 
-    # TODO: this can also include cell and gene filtering
     def preprocess(self, adata: ad.AnnData) -> ad.AnnData:
+        sc.pp.filter_genes(
+            adata, min_cells=2
+        )  # Genes must be nonzero in at least two samples
         if self.features is not None:
-            adata = adata[:, self.features]
+            adata = adata[:, adata.obs[self.feature_col] == self.features]
+            missing = set(self.features) - set(adata.obs[self.feature_col])
+            if len(missing) > 0:
+                print("--- WARNING: Missing features!")
+                print(missing)
+                print("---")
         if self.n_method is not None:
             normalized: ad.AnnData = Normalizer(
                 adata, self.n_method, impute_fn=self.impute, inplace=False
@@ -112,12 +122,15 @@ class PredBase:
 
 
 class RandomForestPred(PredBase):
-    def __init__(self, normalization: str, imputation: str) -> None:
+    def __init__(
+        self, normalization: str, imputation: str, features=None, feature_col="GENENAME"
+    ) -> None:
         super().__init__(
             normalization=normalization,
             imputation=imputation,
             model=RandomForestClassifier(),
-            features=None,
+            features=features,
+            feature_col=feature_col,
         )
 
 
@@ -134,10 +147,15 @@ class AlrBase(PredBase):
         model,
         references: dict | list,
         features=None,
+        feature_col="GENENAME",
         weights=None,
     ) -> None:
         super().__init__(
-            normalization=None, imputation=imputation, model=None, features=features
+            normalization=None,
+            imputation=imputation,
+            model=None,
+            features=features,
+            feature_col=feature_col,
         )
         self.refs = (
             list(references.keys()) if isinstance(references, dict) else references
