@@ -147,20 +147,35 @@ class AlrBase(PredBase):
         if weights:
             self.weights = weights
         self.models = {r: clone(model) for r in self.refs}
+        self.n_fit = 0
+        self.n_pred = 0
+        self.missing_references = []
 
-    def _alr(self, X: ad.AnnData, by: str) -> ad.AnnData:
+    def _alr(self, X: ad.AnnData, by: str, vc) -> ad.AnnData:
         res: ad.AnnData = Normalizer(X, "alr", self.impute, inplace=False).run(
-            by=by, var_col="GENENAME"
+            by=by, var_col=vc
         )
         return res
 
     @override
-    def fit(self, X: ad.AnnData, label_col="tumor_type", preprocess=True) -> None:
+    def fit(
+        self, X: ad.AnnData, label_col="tumor_type", preprocess=True, var_col="GENENAME"
+    ) -> None:
+        self.missing_references = []
+        self.n_fit = 0
         if preprocess:
             X = self.preprocess(X)
         for r in self.refs:
-            transformed = self._alr(X, r)
-            self.models[r].fit(transformed.X, transformed.obs[label_col])
+            if r in X.var[var_col]:
+                transformed = self._alr(X, r, var_col)
+                self.models[r].fit(transformed.X, transformed.obs[label_col])
+                self.n_fit += 1
+            else:
+                self.missing_references.append(r)
+                print(f"WARNING: reference {r} missing")
+        print(
+            f"Fit with {self.n_fit} ({self.n_fit // len(self.refs) * 100}) references"
+        )
 
     @override
     def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
@@ -170,13 +185,27 @@ class AlrBase(PredBase):
         return np.array(proba_df.idxmax(1))
 
     @override
-    def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
+    def predict_proba(
+        self, X: ad.AnnData, preprocess=True, var_col="GENENAME"
+    ) -> np.ndarray:
         if preprocess:
             X = self.preprocess(X)
         proba = []
+        self.n_pred = 0
+        self.missing_references = []
         for r, m in self.models.items():
-            transformed = self._alr(X, r)
-            proba.append(m.predict_proba(transformed.X))
+            if r in X.var[var_col]:
+                transformed = self._alr(X, r, var_col)
+                proba.append(m.predict_proba(transformed.X))
+                self.n_pred += 1
+            else:
+                # Don't try to normalize by it if it isn't present
+                print(f"WARNING: reference {r} missing")
+                self.missing_references.append(r)
+                proba.append(np.zeros((len(self._classes()), len(X.X.shape[0]))))
+
+        message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
+        print(message)
         proba = np.array(proba)
 
         if self.weights is not None and len(self.weights) == proba.shape[0]:
