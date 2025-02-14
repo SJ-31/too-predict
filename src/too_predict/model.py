@@ -1,13 +1,13 @@
 #!/usr/bin/env ipython
 import gc
 import pickle
-from abc import abstractmethod
-from typing import Callable
+from typing import Callable, override
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 import sklearn.model_selection as ms
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 
 from too_predict.evaluation import get_all_metrics
@@ -19,7 +19,7 @@ from too_predict.normalizer import Normalizer
 # for adata objects
 
 
-class Base:
+class PredBase:
     """
     A wrapper class around an sklearn-style classifier to streamline
     interactions between the anndata object, as well as carrying out imputation
@@ -54,13 +54,14 @@ class Base:
 
     def load(self, path: str) -> None:
         """Load the fitted estimator from the saved path"""
-        self.model = pickle.load()
+        self.model = pickle.load(path)
 
     def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
         if preprocess:
-            N = self.preprocess(X)
-        return self.model.predict(N)
+            X = self.preprocess(X)
+        return self.model.predict(X)
 
+    # TODO: this can also include cell and gene filtering
     def preprocess(self, adata: ad.AnnData) -> ad.AnnData:
         if self.features is not None:
             adata = adata[:, self.features]
@@ -72,7 +73,7 @@ class Base:
             return normalized
         return adata.copy()
 
-    def _classes():
+    def _classes(self):
         return self.model.classes_
 
     def cross_validate(self, adata, cv=None, label_col="tumor_type") -> dict:
@@ -110,7 +111,7 @@ class Base:
         }
 
 
-class TooRandomForest(Base):
+class RandomForestPred(PredBase):
     def __init__(self, normalization: str, imputation: str) -> None:
         super().__init__(
             normalization=normalization,
@@ -120,4 +121,67 @@ class TooRandomForest(Base):
         )
 
 
-# TODO: going to need a meta model or something to implement the ALR normalization properly
+class AlrBase(PredBase):
+    """Base class for aggregating the results of classifier models trained on
+    ALR-transformed with multiple references e.g. different genes
+
+    Predicted labels are obtained with soft voting (weighted average probabilities)
+    """
+
+    def __init__(
+        self,
+        imputation: str,
+        model,
+        references: dict | list,
+        features=None,
+        weights=None,
+    ) -> None:
+        super().__init__(
+            normalization=None, imputation=imputation, model=None, features=features
+        )
+        self.refs = (
+            list(references.keys()) if isinstance(references, dict) else references
+        )
+
+        self.weights = references.values() if isinstance(references, dict) else None
+        if weights:
+            self.weights = weights
+        self.models = {r: clone(model) for r in self.refs}
+
+    def _alr(self, X: ad.AnnData, by: str) -> ad.AnnData:
+        res: ad.AnnData = Normalizer(X, "alr", self.impute, inplace=False).run(
+            by=by, var_col="GENENAME"
+        )
+        return res
+
+    @override
+    def fit(self, X: ad.AnnData, label_col="tumor_type", preprocess=True) -> None:
+        if preprocess:
+            X = self.preprocess(X)
+        for r in self.refs:
+            transformed = self._alr(X, r)
+            self.models[r].fit(transformed.X, transformed.obs[label_col])
+
+    @override
+    def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
+        proba_df = pd.DataFrame(
+            self.predict_proba(X, preprocess), columns=self._classes()
+        )
+        return np.array(proba_df.idxmax(1))
+
+    @override
+    def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
+        if preprocess:
+            X = self.preprocess(X)
+        proba = []
+        for r, m in self.models.items():
+            transformed = self._alr(X, r)
+            proba.append(m.predict_proba(transformed.X))
+        proba = np.array(proba)
+
+        if self.weights is not None and len(self.weights) == proba.shape[0]:
+            proba = np.reshape(self.weights, [proba.shape[0], 1, 1]) * proba
+        return proba.mean(axis=0)
+
+    def _classes(self):
+        return self.models[self.refs[0]].classes_
