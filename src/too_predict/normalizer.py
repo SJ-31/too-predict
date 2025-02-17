@@ -6,11 +6,11 @@ import numpy as np
 import rpy2.robjects as ro
 import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
-from scipy import sparse, stats
+from scipy import sparse
 
 from too_predict.utils import library, r_cleanup
 
-IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr", "dirichlet_mc"}
+IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
 
 
 class Normalizer:
@@ -23,21 +23,24 @@ class Normalizer:
         self,
         adata: ad.AnnData,
         method: str,
-        impute_fn: Callable,
+        impute_fn: Callable | None = None,
         inplace=True,
         make_sparse=True,
+        supported_methods=IMPLEMENTED_NORMALIZATION,
     ) -> None:
         self.ad = adata if inplace else adata.copy()
-        if method.lower() not in IMPLEMENTED_NORMALIZATION:
-            raise ValueError(f"Normalization method {method} not implemented!")
+        if method.lower() not in supported_methods:
+            raise ValueError(f"Method {method} not implemented!")
         self.inplace = inplace
         self.method = method
         self.make_sparse = make_sparse
         self.ad.layers["counts"] = adata.X
         if not (isinstance(adata.X, np.ndarray)):
-            self.counts = impute_fn(adata.X.toarray().copy())
+            self.counts = adata.X.toarray().copy()
         else:
-            self.counts = impute_fn(adata.X.copy())
+            self.counts = adata.X.copy()
+        if impute_fn:
+            self.counts = impute_fn(self.counts)
 
     def alr(self, by: int | str, var_col: str = None) -> np.ndarray:
         """Normalize counts in adata using ALR, with the counts of a specific
@@ -67,26 +70,6 @@ class Normalizer:
         )
         return comp.alr(self.counts, index)
 
-    def dirichlet_mc(self, n: int, prior: float = 0.5, prefix="mc_"):
-        """
-        Obtain random dirichlet instances from read counts (based on the ALDEx2 R package)
-        For each sample, use the vector of read counts as the concentration parameter
-
-        TODO: how to define the prior?
-        TODO: this isn't very performant, look into Rust (rand_distr) or parallel
-
-        Parameters:
-        -----------
-        prefix: prefix for the layer in the resulting adata object containing each instance
-        """
-        arr = self.counts + prior
-        instances = np.apply_along_axis(lambda x: stats.dirichlet.rvs(x, n), 1, arr)
-        for i in range(instances.shape[1]):
-            inst = instances[:, i, :]
-            self.ad.layers[f"{prefix}{i}"] = (
-                inst if not self.make_sparse else sparse.csr_matrix(inst)
-            )
-
     @r_cleanup
     def tmm(self) -> np.ndarray:
         np_cv_rules = default_converter + numpy2ri.converter
@@ -108,11 +91,6 @@ class Normalizer:
                 normalized = self.tmm()
             case "alr":
                 normalized = self.alr(**kwargs)
-            case "dirichlet_mc":
-                self.dirichlet_mc(**kwargs)
-                if not self.inplace:
-                    return self.ad
-                return
             case _:
                 normalized = np.array()
         self.ad.X = sparse.csc_matrix(normalized) if self.make_sparse else normalized
