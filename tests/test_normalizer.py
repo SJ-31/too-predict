@@ -1,8 +1,5 @@
 #!/usr/bin/env ipython
 import anndata as ad
-
-# TODO: write tests to make sure that normalization
-# modifies the given adata when you want it to and makes a copy when you don't
 from pyhere import here
 from too_predict.imputer import Imputer
 from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer

@@ -22,6 +22,21 @@ class Simulator(Normalizer):
         inplace=True,
         make_sparse=True,
     ) -> None:
+        """Class for simulating count data
+
+        Parameters
+        ----------
+        n : the number of simulations to carry out. Exact use on the method
+        prefix : prefix for the layers in the adata object to hold the simulated counts
+
+
+        Returns
+        -------
+        if `inplace` == False, an adata object where simulated counts are stored in the
+        layers, prefixed with `prefix`
+
+        Otherwise, the given adata is modified inplace
+        """
         super().__init__(
             adata, method, impute_fn, inplace, make_sparse, IMPLEMENTED_SIMULATION
         )

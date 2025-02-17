@@ -6,7 +6,7 @@ IMPLEMENTED_IMPUTATION = {"plus_one", "replace_one", None}
 
 class Imputer:
     def __init__(self, method: str) -> None:
-        if method.lower() not in IMPLEMENTED_IMPUTATION:
+        if method and method.lower() not in IMPLEMENTED_IMPUTATION:
             raise ValueError(f"Imputation method {method} not implemented!")
         self.method: str | None = method
 
