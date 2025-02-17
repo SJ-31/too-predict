@@ -1,14 +1,14 @@
 #!/usr/bin/env ipython
 import numpy as np
 
-IMPLEMENTED_IMPUTATION = {"plus_one", "replace_one"}
+IMPLEMENTED_IMPUTATION = {"plus_one", "replace_one", None}
 
 
 class Imputer:
     def __init__(self, method: str) -> None:
         if method.lower() not in IMPLEMENTED_IMPUTATION:
             raise ValueError(f"Imputation method {method} not implemented!")
-        self.method = method
+        self.method: str | None = method
 
     @staticmethod
     def plus_one(mat: np.ndarray):
@@ -26,3 +26,5 @@ class Imputer:
                 return self.plus_one(counts)
             case "replace_one":
                 return self.replace_one(counts)
+            case None:
+                return counts
