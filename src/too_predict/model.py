@@ -43,16 +43,19 @@ class PredBase:
         self.features = features
         self.feature_col = feature_col
         self.impute: Callable = Imputer(imputation).run
-        self.i_method = imputation.lower()
+        self.i_method: str | None = (
+            imputation.lower() if isinstance(imputation, str) else None
+        )
+        self.normalize_kwargs = {}
 
     def fit(self, X: ad.AnnData, label_col="tumor_type", preprocess=True) -> None:
         if preprocess:
-            X = self.preprocess(X)
+            X = self._preprocess(X)
         self.model.fit(X.X, X.obs[label_col])
 
     def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
         if preprocess:
-            X = self.preprocess(X)
+            X = self._preprocess(X)
         return self.model.predict_proba(X.X)
 
     def load(self, path: str) -> None:
@@ -61,13 +64,14 @@ class PredBase:
 
     def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
         if preprocess:
-            X = self.preprocess(X)
+            X = self._preprocess(X)
         return self.model.predict(X)
 
-    def preprocess(self, adata: ad.AnnData) -> ad.AnnData:
-        sc.pp.filter_genes(
-            adata, min_cells=2
+    def _filter_features(self, adata: ad.AnnData) -> ad.AnnData:
+        passed_filter = sc.pp.filter_genes(
+            adata, min_cells=2, inplace=False
         )  # Genes must be nonzero in at least two samples
+        adata = adata[:, passed_filter[0]].copy()
         if self.features is not None:
             adata = adata[:, adata.obs[self.feature_col] == self.features]
             missing = set(self.features) - set(adata.obs[self.feature_col])
@@ -75,13 +79,17 @@ class PredBase:
                 print("--- WARNING: Missing features!")
                 print(missing)
                 print("---")
+        return adata
+
+    def _preprocess(self, adata: ad.AnnData) -> ad.AnnData:
+        adata = self._filter_features(adata)
         if self.n_method is not None:
             normalized: ad.AnnData = Normalizer(
                 adata, self.n_method, impute_fn=self.impute, inplace=False
-            ).run()
+            ).run(**self.normalize_kwargs)
             gc.collect()
             return normalized
-        return adata.copy()
+        return adata
 
     def _classes(self):
         return self.model.classes_
@@ -90,7 +98,7 @@ class PredBase:
         """Determine model performance with cross-validation"""
         if not cv:
             cv = ms.StratifiedKFold(n_splits=5)
-        N = self.preprocess(adata)
+        N = self._preprocess(adata)
         cm: dict = {}
         roc, prec_recall, report = [], [], []
         accs: dict = {"fold": [], "acc": []}
@@ -182,7 +190,7 @@ class AlrBase(PredBase):
         self.missing_references = []
         self.n_fit = 0
         if preprocess:
-            X = self.preprocess(X)
+            X = self._preprocess(X)
         for r in self.refs:
             if r in X.var[var_col]:
                 transformed = self._alr(X, r, var_col)
@@ -207,7 +215,7 @@ class AlrBase(PredBase):
         self, X: ad.AnnData, preprocess=True, var_col="GENENAME"
     ) -> np.ndarray:
         if preprocess:
-            X = self.preprocess(X)
+            X = self._preprocess(X)
         proba = []
         self.n_pred = 0
         self.missing_references = []
