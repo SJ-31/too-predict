@@ -14,6 +14,7 @@ from sklearn.ensemble import RandomForestClassifier
 from too_predict.evaluation import get_all_metrics
 from too_predict.imputer import Imputer
 from too_predict.normalizer import Normalizer
+from too_predict.simulation import Simulator
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -94,11 +95,16 @@ class PredBase:
     def _classes(self):
         return self.model.classes_
 
-    def cross_validate(self, adata, cv=None, label_col="tumor_type") -> dict:
-        """Determine model performance with cross-validation"""
+    def cross_validate(
+        self, adata, cv=None, label_col="tumor_type", preprocess=True
+    ) -> dict:
+        """Evaluate model performance with cross-validation"""
         if not cv:
             cv = ms.StratifiedKFold(n_splits=5)
-        N = self._preprocess(adata)
+        if preprocess:
+            N = self._preprocess(adata)
+        else:
+            N = adata.copy()
         cm: dict = {}
         roc, prec_recall, report = [], [], []
         accs: dict = {"fold": [], "acc": []}
@@ -240,3 +246,96 @@ class AlrBase(PredBase):
 
     def _classes(self):
         return self.models[self.refs[0]].classes_
+
+
+class SimBase(PredBase):
+    def __init__(
+        self,
+        normalization: str,
+        imputation: str,
+        simulation: str,
+        model,
+        features=None,
+        prefix: str = "mc_",
+        n: int = 10,
+        feature_col="GENENAME",
+        predict_from_sim: bool = False,
+    ) -> None:
+        """A class to fit models where the data preprocessing involves some
+        form of simulation
+        e.g. generating Monte Carlo instances
+
+        Parameters
+        ----------
+        predict_from_sim : whether the model should make predictions from data after
+            running the simulation process
+        """
+        super().__init__(normalization, imputation, model, features, feature_col)
+        # TODO <2025-02-17 Mon>: too few instances, need a better way
+        self.s_method = simulation
+        self.predict_from_sim = predict_from_sim
+        self.prefix = prefix
+        self.cross_validating = False
+        self.n = n
+
+    def _get_instances(self, X: ad.AnnData, label_col: str = None):
+        X = self._filter_features(X)
+        X = Simulator(
+            X,
+            self.s_method,
+            self.n,
+            prefix=self.prefix,
+            inplace=False,
+            make_sparse=False,  # Required for concatenation
+        ).run()
+        instances = list(filter(lambda x: x.startswith(self.prefix), X.layers.keys()))
+        counts = np.concatenate([X.layers[inst] for inst in instances])
+        labels = np.concatenate(
+            [np.copy(X.obs[label_col]) for _ in range(len(instances))]
+        )
+        with_sim = ad.AnnData(X=counts, var=X.var)
+        if label_col:
+            with_sim.obs = pd.DataFrame({label_col: labels})
+        return with_sim
+
+    @override
+    def fit(
+        self,
+        X: ad.AnnData,
+        label_col="tumor_type",
+        preprocess=True,
+    ) -> None:
+        """
+        Fit the underlying model on combined data from the all the Monte Carlo instances
+
+        @param mc_kwargs
+            - n: number of Monte Carlo instances to generate
+            - prefix: number
+        @param instance_prefix: prefix denoting layers in the the adata object containing
+        the instances
+        """
+        if not self.cross_validating:
+            X = self._get_instances(X)
+        return super().fit(X, label_col=label_col, preprocess=preprocess)
+
+    @override
+    def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
+        if self.predict_from_sim and not self.cross_validating:
+            X = self._get_instances(X)
+        return super().predict_proba(X, preprocess)
+
+    @override
+    def predict(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
+        if self.predict_from_sim and not self.cross_validating:
+            X = self._get_instances(X)
+        return super().predict(X, preprocess)
+
+    @override
+    def cross_validate(
+        self, adata, cv=None, label_col="tumor_type", preprocess=True
+    ) -> dict:
+        self.cross_validating = True
+        adata = self._get_instances(adata, label_col=label_col)
+        result = super().cross_validate(adata, cv, label_col, preprocess)
+        self.cross_validating = False
+        return result
