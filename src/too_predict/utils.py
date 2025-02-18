@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 import importlib.resources as res
+from functools import reduce
 from pathlib import Path
 from typing import Callable
 
@@ -159,3 +160,83 @@ def str_mode(array: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
     result = stats.mode(array.astype(int), **kwargs)
     names = [int2name[n.item()] for n in result.mode]
     return np.array(names), result.count
+
+
+def get_star_strandedness(
+    sample_name: str,
+    df: pd.DataFrame,
+    unstranded_col: str = "unstranded",
+    forward_col: str = "stranded_first",
+    reverse_col: str = "stranded_second",
+) -> pd.DataFrame:
+    counts: dict = df.loc[:, [unstranded_col, forward_col, reverse_col]].sum().to_dict()
+    counts["name"] = sample_name
+    return pd.DataFrame(counts, index=[0])
+
+
+def read_gdc_counts(
+    path: str,
+    name: str,
+    count_col: str,
+    var_col: tuple = ("gene_id", "gene_name"),
+    var_blacklist: tuple = (
+        "N_unmapped",
+        "N_multimapping",
+        "N_noFeature",
+        "N_ambiguous",
+    ),
+) -> pd.DataFrame:
+    df: pd.DataFrame = pd.read_csv(path, sep="\t", comment="#")
+    df = df.loc[~df[var_col[0]].isin(var_blacklist), :]
+    print(get_star_strandedness(name, df))
+    vars: pd.DataFrame = df.loc[:, var_col]
+    df = df.drop(columns=list(var_col))
+    df = df.loc[:, [count_col]].rename({count_col: name}, axis="columns")
+    if len(var_col) > 1:
+        df.index = pd.MultiIndex.from_frame(vars)
+    else:
+        df.index = vars.iloc[:, 0]
+    return df
+
+
+def collect_gdc_counts(
+    dir: str,
+    count_col: str = "unstranded",
+    sample_sheet: str = "",
+    case_table: str = "",
+    case_cols: tuple = ("primary_site",),
+    case_id_col: str = "submitter_id",
+) -> ad.AnnData:
+    if not sample_sheet:
+        sample_sheet = str(next(Path(dir).glob("gdc_sample_sheet*")))
+    samples: pd.DataFrame = pd.read_csv(sample_sheet, sep="\t").rename(
+        columns=lambda x: x.replace(" ", "_")
+    )
+    missing_cases: set = set(samples["Case_ID"])
+    count_dfs = []
+    for d, p, c in zip(samples["File_ID"], samples["File_Name"], samples["Case_ID"]):
+        try:
+            cur = read_gdc_counts(Path(dir).joinpath(d).joinpath(p), c, count_col)
+            missing_cases.remove(c)
+            count_dfs.append(cur)
+        except FileNotFoundError:
+            print(f"WARNING: Case {c} not found")
+    joined = reduce(
+        lambda x, y: x.join(y, on=["gene_id", "gene_name"], how="outer"), count_dfs
+    )
+    samples = samples.loc[~samples["Case_ID"].isin(missing_cases), :]
+    var_df = joined.index.to_frame(index=False)
+    if case_table:
+        cases: pd.DataFrame = pd.read_csv(case_table, sep="\t")
+        cases = cases.loc[:, [case_id_col] + list(case_cols)].drop_duplicates()
+        samples = samples.merge(
+            cases, how="left", left_on="Case_ID", right_on=case_id_col
+        ).drop(case_id_col, axis="columns")
+    return ad.AnnData(X=np.transpose(joined.values), obs=samples, var=var_df)
+
+
+def read_existing[T](filename: Path, expr: Callable[[Path], T], read_fn) -> T:
+    if filename.exists():
+        return read_fn(filename)
+    else:
+        return expr(filename)
