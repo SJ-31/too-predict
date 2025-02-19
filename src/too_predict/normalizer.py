@@ -12,6 +12,11 @@ from too_predict.utils import library, r_cleanup
 
 IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
 
+"""
+References
+[1] Pachter, L. (2011). Models for transcript quantification from RNA-Seq. ArXiv. https://arxiv.org/abs/1104.3889
+"""
+
 
 class Normalizer:
     """Class for normalizing counts in the given adata object. Inplace by default
@@ -80,6 +85,42 @@ class Normalizer:
         ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
         return np.transpose(np.asarray(ro.r("counts")))
 
+    def tpm(
+        self, length_col: str = "SEQLENGTH", avg_fragment_size: float = 0
+    ) -> np.ndarray:
+        """Transcripts per million
+
+        Notes
+        -----
+        Calculation adapted from [1], but using gene length instead of effective length
+        if average fragment size isn't given
+        """
+        lengths = self.ad.var[length_col]
+        if avg_fragment_size:
+            lengths = lengths - avg_fragment_size + 1
+        numer = np.log(self.counts) - np.reshape(np.log(lengths), (1, -1))
+        denom = np.log(np.nansum(np.exp(numer), axis=1)).reshape(-1, 1)
+        tpm = np.exp(numer - denom + np.log(1e6))
+        return np.nan_to_num(tpm, neginf=0)
+
+    def fkpm(
+        self, length_col: str = "SEQLENGTH", avg_fragment_size: float = 0
+    ) -> np.ndarray:
+        """Fragments/reads per kilobase million
+
+        Notes
+        -----
+        Calculation adapted from [1], but using gene length instead of effective length
+        if average fragment size isn't given
+        """
+        lengths = self.ad.var[length_col]
+        if avg_fragment_size:
+            lengths = lengths - avg_fragment_size + 1
+        numer = np.log(self.counts) - np.log(lengths).values.reshape(1, -1)
+        denom = np.log(np.nansum(self.counts, axis=1).reshape(-1, 1))
+        fpkm = np.exp(numer - denom + np.log(1e9))
+        return np.nan_to_num(fpkm, neginf=0)
+
     def clr(self) -> np.ndarray:
         return comp.clr(self.counts)
 
@@ -91,6 +132,8 @@ class Normalizer:
                 normalized = self.tmm()
             case "alr":
                 normalized = self.alr(**kwargs)
+            case "tpm":
+                normalized = self.tpm(**kwargs)
             case _:
                 normalized = np.array()
         self.ad.X = sparse.csc_matrix(normalized) if self.make_sparse else normalized
