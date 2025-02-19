@@ -15,6 +15,7 @@ IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
 """
 References
 [1] Pachter, L. (2011). Models for transcript quantification from RNA-Seq. ArXiv. https://arxiv.org/abs/1104.3889
+[2] Bennett, A. R., Lundstrøm, J., Chatterjee, S., & Bojar, D. (2025). Compositional data analysis enables statistical rigor in comparative glycomics. Nature Communications, 16(1), 1-15. https://doi.org/10.1038/s41467-025-56249-3
 """
 
 
@@ -47,7 +48,14 @@ class Normalizer:
         if impute_fn:
             self.counts = impute_fn(self.counts)
 
-    def alr(self, by: int | str, var_col: str = None) -> np.ndarray:
+    def alr(
+        self,
+        by: int | str,
+        var_col: str = None,
+        condition_col: str = "",
+        scales: dict | list = None,
+        gamma: float = 0,
+    ) -> np.ndarray:
         """Normalize counts in adata using ALR, with the counts of a specific
         gene `by` as the reference.
 
@@ -73,7 +81,47 @@ class Normalizer:
             merge="same",
             uns_merge="same",
         )
+        if gamma and condition_col and scales:
+            return self._alr_scale(index, gamma, scales, condition_col)
         return comp.alr(self.counts, index)
+
+    def _alr_scale(
+        self, by: int, gamma, scales: dict | list, condition_col: str
+    ) -> np.ndarray:
+        """ALR with informed scale adjustment, adapted from [2]
+
+        Parameters
+        ----------
+        scales : a dictionary mapping condition names to custom scale values for
+           those conditions
+
+        Returns
+        -------
+
+
+        Notes
+        -----
+
+        """
+        gamma = max(gamma, 0.1)
+        rng = np.random.default_rng(1)
+        indices = np.arange(self.ad.shape[0])
+        uniques = self.ad.obs[condition_col].unique()
+        if not isinstance(scales, dict):
+            lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
+        else:
+            lookup: dict = scales
+        alr_adjusted = np.empty((self.counts.shape[0], self.counts.shape[1] - 1))
+        ref_vals = self.conts[:, by]
+        self.counts = np.delete(self.counts, (by), axis=1)
+        for u in uniques:
+            scale_factor = np.log2(lookup.get(u, 1))
+            locs = indices[self.ad.obs[condition_col] == u]
+            draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
+            ref_adj = np.log2(ref_vals) - draws
+            adj = np.log2(self.counts[locs, :]) - ref_adj
+            alr_adjusted[locs, :] = adj
+        return alr_adjusted
 
     @r_cleanup
     def tmm(self) -> np.ndarray:
@@ -121,7 +169,42 @@ class Normalizer:
         fpkm = np.exp(numer - denom + np.log(1e9))
         return np.nan_to_num(fpkm, neginf=0)
 
-    def clr(self) -> np.ndarray:
+    def _clr_scale(self, gamma, scales: dict | list, condition_col: str) -> np.ndarray:
+        """CLR with informed scale model, adapted from [2]
+
+        Parameters
+        ----------
+        scales : a dictionary mapping condition names to custom scale values for
+            those conditions
+
+        Returns
+        -------
+
+
+        Notes
+        -----
+
+        """
+        gamma = max(gamma, 0.1)
+        rng = np.random.default_rng(1)
+        indices = np.arange(self.ad.shape[0])
+        clr_adjusted = np.empty(self.ad.shape)
+        uniques = self.ad.obs[condition_col].unique()
+        if not isinstance(scales, dict):
+            lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
+        else:
+            lookup: dict = scales
+        for u in uniques:
+            scale_factor = np.log2(lookup.get(u, 1))
+            locs = indices[self.ad.obs[condition_col] == u]
+            draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
+            adj = np.log2(self.counts[locs, :]) + draws
+            clr_adjusted[locs, :] = adj
+        return clr_adjusted
+
+    def clr(self, **kwargs) -> np.ndarray:
+        if "gamma" in kwargs and "scales" in kwargs:
+            return self._clr_scale(**kwargs)
         return comp.clr(self.counts)
 
     def run(self, **kwargs) -> ad.AnnData | None:
