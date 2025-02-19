@@ -4,11 +4,13 @@ from typing import Callable
 
 import anndata as ad
 import numpy as np
+import rpy2.robjects as ro
 from scipy import sparse, stats
 
 from too_predict.normalizer import Normalizer
+from too_predict.utils import df_to_r, r_cleanup
 
-IMPLEMENTED_SIMULATION = {"dirichlet"}
+IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 
 
 class Simulator(Normalizer):
@@ -43,6 +45,49 @@ class Simulator(Normalizer):
         self.prefix = prefix
         self.n = n
 
+    @r_cleanup
+    def dirichlet_scale(self, gamma, condition_col) -> None:
+        """Generate dirichlet instances with ALDEx2's scale simulation
+
+        Parameters
+        ----------
+        gamma : uncertainty
+        group : group
+
+        Returns
+        -------
+
+
+        Notes
+        -----
+
+        """
+        ro.r("library(ALDEx2)")
+        with (ro.default_converter + ro.numpy2ri.converter).context():
+            ro.globalenv["counts"] = np.transpose(self.counts)
+        ro.globalenv["names"] = ro.StrVector(self.ad.var["gene_id"])
+        ro.r("rownames(counts) <- names")
+        gamma = 1e-3
+        ro.globalenv["cond"] = ro.StrVector(self.ad.obs[condition_col])
+        ro.r("mat <- model.matrix(~ cond)")
+        ro.r(f"""
+        clr <- aldex.clr(counts, mat, gamma = {gamma}, mc.samples = {int(self.n)},
+        verbose = TRUE)
+        """)
+
+        kept_features = list(ro.r("getFeatureNames(clr)"))
+        self.ad = self.ad[:, self.ad.var["gene_id"].isin(kept_features)]
+
+        with (ro.default_converter + ro.numpy2ri.converter).context():
+            for i in range(self.n):
+                inst = np.transpose(ro.r(f"getDirichletSample(clr, {i + 1})"))
+                self.ad.layers[f"{self.prefix}{i}"] = self._format(inst)
+
+    def _format(self, mat: np.ndarray):
+        if self.make_sparse:
+            return sparse.csc_matrix(mat)
+        return mat
+
     def dirichlet(self, prior: float = 0.5):
         """
         Obtain random dirichlet instances from read counts (based on the ALDEx2 R package)
@@ -66,13 +111,13 @@ class Simulator(Normalizer):
         )
         for i in range(instances.shape[1]):
             inst = instances[:, i, :]
-            self.ad.layers[f"{self.prefix}{i}"] = (
-                inst if not self.make_sparse else sparse.csr_matrix(inst)
-            )
+            self.ad.layers[f"{self.prefix}{i}"] = self._format(inst)
 
     def run(self, **kwargs) -> ad.AnnData | None:
         match self.method:
             case "dirichlet":
                 self.dirichlet(**kwargs)
+            case "dirichlet_scale":
+                self.dirichlet_scale(**kwargs)
         if not self.inplace:
             return self.ad
