@@ -35,12 +35,14 @@ class PredBase:
         model,
         features=None,
         feature_col="GENENAME",
+        n_kwargs: dict | None = None,
     ) -> None:
         self.model = model
         if normalization:
             self.n_method = normalization.lower()
         else:
             self.n_method = None
+        self.normalize_kwargs: dict = n_kwargs if n_kwargs else {}
         self.features = features
         self.feature_col = feature_col
         self.impute: Callable = Imputer(imputation).run
