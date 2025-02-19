@@ -34,9 +34,9 @@ aldex_glm_wrapper <- function(data, group, technical_factors = c(),
     df[[var_col]] <- rownames(df)
     df$contrast <- x
     df
-  }) |> bind_rows()
+  }) |> dplyr::bind_rows()
   test[[var_col]] <- rownames(test)
   rownames(test) <- NULL
   rownames(combined_effect) <- NULL
-  return(list(effect = combined_effect, test = test))
+  return(list(effect = as.data.frame(combined_effect), test = as.data.frame(test)))
 }

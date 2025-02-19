@@ -19,16 +19,30 @@ all_tcga = [
     "TCGA_COAD-READ",
     "TCGA_HCC",
     "TCGA_HNSC-KICH-KIRC-KIRP",
-    "TCGA_LAML-LGG-LUAD TCGA_LUSC-MESO-OV-PAAD",
+    "TCGA_LAML-LGG-LUAD",
+    "TCGA_LUSC-MESO-OV-PAAD",
     "TCGA_PCPG-PRAD-SARC-SKCM-STAD",
     "TCGA_TGCT-THCA-THYM-UCEC-UCS-UVM",
 ]
 
-for t in all_tcga:
 
-    def fn(p):
-        adata = collect_gdc_counts(here(public_data, t), case_table=tcga_cases)
-        adata.write_h5ad(p)
-        return adata
+def get_coad(f):
+    adata = collect_gdc_counts(
+        here(public_data, "TCGA_COAD-READ"), count_col="tpm_unstranded"
+    )
+    adata.write_h5ad(f)
 
-    read_existing(here(outdir, f"{t}.h5ad"), fn, lambda x: x)
+
+read_existing(here(public_data, "TCGA_COAD-READ_tpm.h5ad"), get_coad, lambda x: x)
+
+allowed_types = {"Primary Tumor", "Recurrent Tumor", "Metastatic"}
+for project, cases in zip([all_tcga], [tcga_cases]):
+    for t in project:
+
+        def fn(p):
+            adata = collect_gdc_counts(here(public_data, t), case_table=cases)
+            adata = adata[adata.obs["Sample_Type"].isin(allowed_types), :]
+            adata.write_h5ad(p)
+            return adata
+
+        read_existing(here(outdir, f"{t}.h5ad"), fn, lambda x: x)
