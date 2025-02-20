@@ -6,7 +6,7 @@ import numpy as np
 import rpy2.robjects as ro
 import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
-from scipy import sparse
+from scipy import sparse, stats
 
 from too_predict.utils import library, r_cleanup
 
@@ -16,13 +16,13 @@ IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
 References
 [1] Pachter, L. (2011). Models for transcript quantification from RNA-Seq. ArXiv. https://arxiv.org/abs/1104.3889
 [2] Bennett, A. R., Lundstrøm, J., Chatterjee, S., & Bojar, D. (2025). Compositional data analysis enables statistical rigor in comparative glycomics. Nature Communications, 16(1), 1-15. https://doi.org/10.1038/s41467-025-56249-3
+[3] Godichon-Baggioni, A., Maugis-Rabusseau, C., & Rau, A. (2018). Clustering transformed compositional data using K-means, with applications in gene expression and bicycle sharing system data. Journal of Applied Statistics, 46(1), 47–65. https://doi.org/10.1080/02664763.2018.1454894
 """
 
 
 class Normalizer:
     """Class for normalizing counts in the given adata object. Inplace by default
     Count data are temporarily converted to a numpy array for normalization if necessary
-
     """
 
     def __init__(
@@ -44,7 +44,7 @@ class Normalizer:
         if not (isinstance(adata.X, np.ndarray)):
             self.counts = adata.X.toarray().copy()
         else:
-            self.counts = adata.X.copy()
+            self.counts = adata.X.copy()  # A sample x gene ndarray
         if impute_fn:
             self.counts = impute_fn(self.counts)
 
@@ -202,9 +202,54 @@ class Normalizer:
             clr_adjusted[locs, :] = adj
         return clr_adjusted
 
-    def clr(self, **kwargs) -> np.ndarray:
-        if "gamma" in kwargs and "scales" in kwargs:
-            return self._clr_scale(**kwargs)
+    def log_clr(self, features=None, feature_col="gene_id") -> np.ndarray:
+        """Implementation of logCLR [3]
+
+        Notes
+        -----
+        <2025-02-20 Thu> This extension of CLR was developed in the context of
+        k-means clustering, unsure of its performance for machine learning
+        """
+        normalized = np.empty_like(self.counts.shape)
+        if features:
+            gmean = stats.gmean(
+                self.counts[:, self.ad.var[feature_col].isin(features)],
+                axis=1,
+                nan_policy="omit",
+            ).reshape((-1, 1))
+        else:
+            gmean = stats.gmean(self.counts, axis=1, nan_policy="omit").reshape((-1, 1))
+        log_gmean = np.log(gmean)
+
+        def helper(index: int) -> None:
+            cur = self.counts[index, :]
+            ratio = cur / gmean[index]
+            log_cur = np.log(cur)
+            less_than = ratio <= 1
+            normalized[index, less_than] = -(
+                -(np.log(1 - log_cur[less_than] - log_gmean[index]) ** 2)
+            )
+            normalized[index, ~less_than] = (
+                log_cur[~less_than] - log_gmean[index]
+            ) ** 2
+
+        _ = [helper(i) for i in range(self.counts.shape[0])]
+
+        return normalized
+
+    def clr(
+        self, features=None, gamma=None, scales=None, feature_col: str = "gene_id"
+    ) -> np.ndarray:
+        if gamma and scales:
+            return self._clr_scale(gamma=gamma, scales=scales)
+        elif features:
+            gmean = stats.gmean(
+                self.counts[:, self.ad.var[feature_col].isin(features)],
+                axis=1,
+                nan_policy="omit",
+            ).reshape((-1, 1))
+            clr = np.log(self.counts) - np.log(gmean)
+            return clr
         return comp.clr(self.counts)
 
     def run(self, **kwargs) -> ad.AnnData | None:
