@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Callable
 
 import anndata as ad
+import anndata2ri
+import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
@@ -18,6 +20,7 @@ from rpy2.rinterface_lib.sexp import (
     NARealType,
 )
 from rpy2.robjects import RObject, pandas2ri
+from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
 
@@ -32,6 +35,11 @@ NA_TYPES: set = {
 }
 
 
+def register_biocparallel(workers: int, param="MulticoreParam") -> None:
+    ro.r("library(BiocParallel)")
+    ro.r(f"register({param}(workers = {workers}))")
+
+
 def get_data(path: str) -> Path:
     """Retrieve the path of a file in this package's `data` directory
     :param: path relative path to the desired file
@@ -41,6 +49,18 @@ def get_data(path: str) -> Path:
         if file.exists():
             return file.absolute()
         raise FileNotFoundError(f"{path} doesn't exist!")
+
+
+def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
+    with localconverter(anndata2ri.converter):
+        ro.globalenv["adata_tmp"] = adata
+        id = r_symbol if r_symbol else "sce_tmp"
+        ro.r(f"{id} <- as(adata_tmp, 'SingleCellExperiment')")
+        if to_matrix:
+            ro.r(f"assays({id})$X <- as.matrix(assays({id})$X)")
+        ro.r("rm(adata_tmp)")
+    if not r_symbol:
+        return ro.r(id)
 
 
 def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
@@ -54,6 +74,10 @@ def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
 
 def df_from_r(robj) -> pd.DataFrame:
     with (ro.default_converter + pandas2ri.converter).context():
+        ro.globalenv["df_from_r_tmp"] = robj
+        if ro.r("class(df_from_r_tmp)")[0] not in {"data.frame"}:
+            raise ValueError("The given object is not a data.frame")
+        ro.r("rm(df_from_r_tmp)")
         converted = ro.conversion.get_conversion().rpy2py(robj)
         # BUG <2025-02-11 Tue>: rpy2 doesn't convert R NAs correctly
         df = converted.map(lambda x: np.nan if type(x) in NA_TYPES else x)
@@ -115,7 +139,7 @@ def library(package: str) -> InstalledSTPackage | InstalledPackage:
 def add_gene_metadata(
     adata: ad.AnnData,
     keycol: str = "",
-    columns=("GENENAME", "GENEID", "GENEBIOTYPE", "SEQNAME"),
+    columns=("GENENAME", "GENEID", "GENEBIOTYPE", "SEQNAME", "SEQLENGTH"),
     ensdb_path: str = "",
     keytpe: str = "GENEID",
 ) -> None:
@@ -188,7 +212,7 @@ def read_gdc_counts(
 ) -> pd.DataFrame:
     df: pd.DataFrame = pd.read_csv(path, sep="\t", comment="#")
     df = df.loc[~df[var_col[0]].isin(var_blacklist), :]
-    print(get_star_strandedness(name, df))
+    # print(get_star_strandedness(name, df))
     vars: pd.DataFrame = df.loc[:, var_col]
     df = df.drop(columns=list(var_col))
     df = df.loc[:, [count_col]].rename({count_col: name}, axis="columns")
@@ -206,25 +230,27 @@ def collect_gdc_counts(
     case_table: str = "",
     case_cols: tuple = ("primary_site",),
     case_id_col: str = "submitter_id",
+    use_dask=True,
 ) -> ad.AnnData:
     if not sample_sheet:
         sample_sheet = str(next(Path(dir).glob("gdc_sample_sheet*")))
     samples: pd.DataFrame = pd.read_csv(sample_sheet, sep="\t").rename(
         columns=lambda x: x.replace(" ", "_")
     )
-    missing_cases: set = set(samples["Case_ID"])
+    missing: set = set(samples["File_ID"])
     count_dfs = []
-    for d, p, c in zip(samples["File_ID"], samples["File_Name"], samples["Case_ID"]):
+    for d, p in zip(samples["File_ID"], samples["File_Name"]):
         try:
-            cur = read_gdc_counts(Path(dir).joinpath(d).joinpath(p), c, count_col)
-            missing_cases.remove(c)
+            cur = read_gdc_counts(Path(dir).joinpath(d).joinpath(p), d, count_col)
+            if d in missing:  # Account for multiple samples from same case
+                missing.remove(d)
             count_dfs.append(cur)
         except FileNotFoundError:
-            print(f"WARNING: Case {c} not found")
+            print(f"WARNING: File in directory {d} not found")
     joined = reduce(
         lambda x, y: x.join(y, on=["gene_id", "gene_name"], how="outer"), count_dfs
     )
-    samples = samples.loc[~samples["Case_ID"].isin(missing_cases), :]
+    samples = samples.loc[~samples["Case_ID"].isin(missing), :]
     var_df = joined.index.to_frame(index=False)
     if case_table:
         cases: pd.DataFrame = pd.read_csv(case_table, sep="\t")
@@ -240,3 +266,19 @@ def read_existing[T](filename: Path, expr: Callable[[Path], T], read_fn) -> T:
         return read_fn(filename)
     else:
         return expr(filename)
+
+
+def phi_proportionality(x: np.ndarray, y: np.ndarray):
+    """Calculate Goodness of Fit to Proportionality []
+    Parameters
+    ----------
+    x, y : Ideally log-ratio transformed data e.g. CLR
+
+    Return
+    ------
+    Phi(log x, log y)
+    The Phi statistic, which is zero when x and y are perfectly proportional
+    The closer x and y are to zero, the stronger the proportionality
+    """
+    log_x = np.log(x)
+    return np.var(log_x - np.log(y)) / np.var(log_x)
