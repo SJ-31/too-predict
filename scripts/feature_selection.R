@@ -13,6 +13,7 @@ data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
 data <- data[1:50, ]
 # TODO: replace this with the complete dataset
 outdir <- here("data", "output", "feature_selection")
+date <- "" # TODO: need to get the date before running
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
 # for their effects
