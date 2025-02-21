@@ -4,7 +4,7 @@ import anndata as ad
 from pyhere import here
 from rpy2.robjects.packages import importr
 from sklearn.ensemble import RandomForestClassifier
-from too_predict.model import RandomForestPred, SimBase
+from too_predict.model import AlrBase2, RandomForestPred, SimBase
 from too_predict.utils import dgelist2anndata
 
 base = importr("base")

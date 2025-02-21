@@ -1,30 +1,35 @@
-library(reticulate)
+library(BiocParallel)
 library(ALDEx2)
-rdirichlet <- function(n, a)
-                       ## pick n random deviates from the Dirichlet function with shape parameters a
-## a are the concentration parameters
-{
-  if (length(n) > 1 || length(n) < 1 || n < 1) stop("n must be a single positive integer value")
-  if (length(a) < 2) stop("a must be a vector of numeric value")
-  n <- floor(n)
-  l <- length(a)
-  x <- matrix(rgamma(l * n, a), ncol = l, byrow = TRUE)
-  return(x / rowSums(x))
-}
+library(tidyverse)
+library(zellkonverter)
+library(scRNAseq)
+library(here)
 
-# Calculate dirichlet from (len(a) * n) random samples from gamma distribution
-# (variant with shape and scale parameters),
-# with shape a
+register(MulticoreParam(workers = 2))
+source(here("src", "R", "utils.R"))
 
-stats <- import("scipy.stats")
+data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
 
-data(selex)
-test <- selex[300:700, ]
+# TODO: can include the sequencing tech and the tumor type as factors to account
+# for their effects
+## --- CODE BLOCK ---
+group <- "Project_ID"
+technical_factors <- c("Sample_Type")
 
-lapply(test, \(x) print(x))
+data <- data[1:50, ]
 
-rdirichlet(10, test[[1]])
+project_id <- colData(data)$Project_ID
+mm <- model.matrix(~Project_ID, data = colData(data))
 
-rd <- rdirichlet(1, test[[1]])
+model.matrix(~project_id) == mm
 
-scipy <- stats$dirichlet$rvs(as.integer(test[[1]]), size = as.integer(1))
+counts <- assays(data)$X
+rownames(counts) <- rowData(data)$gene_id
+result <- aldex.clr(counts, mm, gamma = 0.5, verbose = TRUE)
+
+
+names <- getFeatureNames(result)
+n_instances <- numMCInstances(result)
+n_samples <- nump
+
+getDirichletSample(result, 1) |> dim()
