@@ -9,7 +9,8 @@ import pandas as pd
 import scanpy as sc
 import sklearn.model_selection as ms
 from sklearn.base import clone
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.utils.validation import check_is_fitted
 
 from too_predict.evaluation import get_all_metrics
 from too_predict.imputer import Imputer
@@ -43,6 +44,7 @@ class PredBase:
         else:
             self.n_method = None
         self.normalize_kwargs: dict = n_kwargs if n_kwargs else {}
+        self._is_fitted = False
         self.features = features
         self.feature_col = feature_col
         self.impute: Callable = Imputer(imputation).run
@@ -50,11 +52,23 @@ class PredBase:
             imputation.lower() if isinstance(imputation, str) else None
         )
         self.normalize_kwargs = {}
+        self.var = None
 
     def fit(self, X: ad.AnnData, label_col="tumor_type", preprocess=True) -> None:
+        if label_col not in X.obs.columns:
+            raise ValueError(f"The column '{label_col}' is not present in X.obs")
         if preprocess:
             X = self._preprocess(X)
+        self.var = X.var
+        self._is_fitted = True
         self.model.fit(X.X, X.obs[label_col])
+
+    @property
+    def feature_importances_(self):
+        return self.model.feature_importances_
+
+    def __sklearn_is_fitted__(self):
+        return self._is_fitted
 
     def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
         if preprocess:
@@ -149,12 +163,15 @@ class RandomForestPred(PredBase):
             feature_col=feature_col,
         )
 
+        # <2025-02-21 Fri> be sure to try out extra trees
+
 
 class AlrBase(PredBase):
     """Base class for aggregating the results of classifier models trained on
     ALR-transformed with multiple references e.g. different genes
 
     Predicted labels are obtained with soft voting (weighted average probabilities)
+    TODO: try to parallelize training here
     """
 
     def __init__(
@@ -164,6 +181,7 @@ class AlrBase(PredBase):
         references: dict | list,
         features=None,
         feature_col="GENENAME",
+        n_kwargs: dict | None = None,
         weights=None,
     ) -> None:
         super().__init__(
@@ -172,11 +190,11 @@ class AlrBase(PredBase):
             model=None,
             features=features,
             feature_col=feature_col,
+            n_kwargs=n_kwargs,
         )
         self.refs = (
             list(references.keys()) if isinstance(references, dict) else references
         )
-
         self.weights = references.values() if isinstance(references, dict) else None
         if weights:
             self.weights = weights
