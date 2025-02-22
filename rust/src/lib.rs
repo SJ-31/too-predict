@@ -1,12 +1,36 @@
-use ndarray::{arr2, s, Array1, Array2, ArrayBase, ArrayView1};
+use ndarray::{arr2, s, Array1, Array2, ArrayBase, ArrayView1, ArrayView2};
+use num_traits::{Float, FromPrimitive, Num, NumCast};
 use numpy::ndarray::{ArrayD, ArrayViewD, ArrayViewMutD};
-use numpy::{IntoPyArray, PyArrayDyn, PyArrayMethods, PyReadonlyArrayDyn};
-use pyo3::{pymodule, types::PyModule, Bound, PyResult, Python};
+use numpy::{
+    IntoPyArray, PyArray, PyArray2, PyArrayDyn, PyArrayMethods, PyReadonlyArray2,
+    PyReadonlyArrayDyn,
+};
+use pyo3::types::PyModuleMethods;
+use pyo3::wrap_pyfunction;
+use pyo3::{pyfunction, pymodule, types::PyModule, Bound, PyResult, Python};
 use rayon::prelude::*;
 
-fn phi_proportionality(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
+#[pymodule]
+fn _rust_helpers(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(phi_matrix, m)?)?;
+    Ok(())
+}
+
+#[pyfunction]
+fn phi_matrix<'py>(
+    py: Python<'py>,
+    arr: PyReadonlyArray2<'py, f64>,
+    do_parallel: bool,
+) -> Bound<'py, PyArray2<f64>> {
+    println!("hello");
+    let converted: ArrayView2<f64> = arr.as_array();
+    let result = do_pairwise(converted, do_parallel, phi_proportionality_rs);
+    result.into_pyarray_bound(py)
+}
+
+fn phi_proportionality_rs(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
     let log = x.ln();
-    (&log - y.ln()).var(1.0) / log.var(1.0)
+    (&log - y.ln()).var(1.) / log.var(1.)
 }
 
 /// Perform a calculation pairwise across all features in the matrix
@@ -14,7 +38,7 @@ fn phi_proportionality(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
 /// # Arguments
 /// * arr : a sample x feature matrix
 ///
-fn do_pairwise<F>(arr: &Array2<f64>, do_parallel: bool, calc_fn: F) -> Array2<f64>
+fn do_pairwise<F>(arr: ArrayView2<f64>, do_parallel: bool, calc_fn: F) -> Array2<f64>
 where
     F: Fn(ArrayView1<f64>, ArrayView1<f64>) -> f64 + Sync + 'static,
 {
@@ -46,6 +70,6 @@ fn test_phi_prop() {
     let dim = h.raw_dim();
     let s1 = h.slice(s![0, ..]);
     let s2 = h.slice(s![1, ..]);
-    let phi = do_pairwise(&h, true, phi_proportionality);
+    let phi = do_pairwise(h.view(), true, phi_proportionality_rs);
     println!("{:?}", phi);
 }

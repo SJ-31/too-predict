@@ -19,6 +19,6 @@ dependencies = [
   "scikit-learn>=1.6.1",
 ]
 
-[tool.poetry]
-name = "too-predict"
-packages = [{ include = "tpre", from = "src" }]
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
