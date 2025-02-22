@@ -1,0 +1,16 @@
+[package]
+name = "too_predict"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "_rust_helpers"
+crate-type = ["cdylib"]
+
+# array is required to allow use dynamically-sized vectors in queries
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+ndarray = "0.16.1"
+rayon = "1.10.0"

@@ -3,6 +3,8 @@ __pycache__/
 *.py[oc]
 build/
 dist/
+rust/target
+rust/Cargo.lock
 wheels/
 *.egg-info
 
