@@ -392,27 +392,23 @@ class AlrEstimator:
         self.n_pred = 0
         self.missing_references = []
 
-    def _alr(self, X: ad.AnnData, by: str, vc) -> ad.AnnData:
-        res: ad.AnnData = Normalizer(X, "alr", None, inplace=False).run(
-            by=by, var_col=vc
-        )
-        return res
+    def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
+        result: np.ndarray = Normalizer(X, "alr", None).run(by=by, **kwargs)
+        return result
 
     def fit(
         self,
         X: pd.DataFrame,
         y,
-        label_col="tumor_type",
-        var_col="GENENAME",
+        **kwargs,
     ) -> None:
         self.missing_references = []
         self.n_fit = 0
-        adata = adata_from_df(X, labels=y, label_col=label_col, var_col=var_col)
         self._is_fitted = True
         for r in self.refs:
-            if r in adata.var[var_col]:
-                transformed = self._alr(adata, r, var_col)
-                self.models[r].fit(transformed.X, transformed.obs[label_col])
+            if r in X.columns:
+                transformed = self._alr(X, r, **kwargs)
+                self.models[r].fit(transformed, y)
                 self.n_fit += 1
             else:
                 self.missing_references.append(r)
@@ -433,19 +429,18 @@ class AlrEstimator:
         X : a dataframe where columns are features
         """
         proba = []
-        adata = self._adata_from_df(X)
         self.n_pred = 0
         self.missing_references = []
         for r, m in self.models.items():
-            if r in adata.var["feature"]:
-                transformed = self._alr(adata, r, "feature")
-                proba.append(m.predict_proba(transformed.X))
+            if r in X.columns:
+                transformed = self._alr(X, r)
+                proba.append(m.predict_proba(transformed))
                 self.n_pred += 1
             else:
                 # Don't try to normalize by it if it isn't present
                 print(f"WARNING: reference {r} missing")
                 self.missing_references.append(r)
-                proba.append(np.zeros((len(self._classes()), len(adata.X.shape[0]))))
+                proba.append(np.zeros((len(self._classes()), len(X.shape[0]))))
 
         message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
         print(message)
