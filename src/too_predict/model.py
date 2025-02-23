@@ -131,7 +131,8 @@ class PredBase:
             return normalized
         return adata
 
-    def _classes(self):
+    @property
+    def classes_(self):
         return self.model.classes_
 
     def cross_validate(
@@ -155,7 +156,7 @@ class PredBase:
             y_true = N.obs[label_col].iloc[test_i]  # True values
 
             proba = self.predict_proba(x_test, preprocess=False)
-            res: dict = get_all_metrics(y_true, proba, self._classes())
+            res: dict = get_all_metrics(y_true, proba, self.classes_)
             accs["fold"].append(fold)
             accs["acc"].append(res["acc"])
             cm[fold] = res["cm"]
@@ -268,99 +269,6 @@ class AlrBase(PredBase):
         return self.model.predict_proba(df)
 
 
-class SimBase(PredBase):
-    def __init__(
-        self,
-        normalization: str,
-        imputation: str,
-        simulation: str,
-        model,
-        features=None,
-        prefix: str = "mc_",
-        n: int = 10,
-        feature_col="GENENAME",
-        predict_from_sim: bool = False,
-    ) -> None:
-        """A class to fit models where the data preprocessing involves some
-        form of simulation
-        e.g. generating Monte Carlo instances
-
-        Parameters
-        ----------
-        predict_from_sim : whether the model should make predictions from data after
-            running the simulation process
-        """
-        super().__init__(normalization, imputation, model, features, feature_col)
-        # TODO <2025-02-17 Mon>: too few instances, need a better way
-        self.s_method = simulation
-        self.predict_from_sim = predict_from_sim
-        self.prefix = prefix
-        self.cross_validating = False
-        self.n = n
-
-    def _get_instances(self, X: ad.AnnData, label_col: str = None):
-        X = self._filter_features(X)
-        X = Simulator(
-            X,
-            self.s_method,
-            self.n,
-            prefix=self.prefix,
-            inplace=False,
-            make_sparse=False,  # Required for concatenation
-        ).run()
-        instances = list(filter(lambda x: x.startswith(self.prefix), X.layers.keys()))
-        counts = np.concatenate([X.layers[inst] for inst in instances])
-        labels = np.concatenate(
-            [np.copy(X.obs[label_col]) for _ in range(len(instances))]
-        )
-        with_sim = ad.AnnData(X=counts, var=X.var)
-        if label_col:
-            with_sim.obs = pd.DataFrame({label_col: labels})
-        return with_sim
-
-    @override
-    def fit(
-        self,
-        X: ad.AnnData,
-        label_col="tumor_type",
-        preprocess=True,
-    ) -> None:
-        """
-        Fit the underlying model on combined data from the all the Monte Carlo instances
-
-        @param mc_kwargs
-            - n: number of Monte Carlo instances to generate
-            - prefix: number
-        @param instance_prefix: prefix denoting layers in the the adata object containing
-        the instances
-        """
-        if not self.cross_validating:
-            X = self._get_instances(X)
-        return super().fit(X, label_col=label_col, preprocess=preprocess)
-
-    @override
-    def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
-        if self.predict_from_sim and not self.cross_validating:
-            X = self._get_instances(X)
-        return super().predict_proba(X, preprocess)
-
-    @override
-    def predict(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
-        if self.predict_from_sim and not self.cross_validating:
-            X = self._get_instances(X)
-        return super().predict(X, preprocess)
-
-    @override
-    def cross_validate(
-        self, adata, cv=None, label_col="tumor_type", preprocess=True
-    ) -> dict:
-        self.cross_validating = True
-        adata = self._get_instances(adata, label_col=label_col)
-        result = super().cross_validate(adata, cv, label_col, preprocess)
-        self.cross_validating = False
-        return result
-
-
 # * Estimators
 # Lower-level estimators that more directly follow the sklearn API
 # intended to be passed to the 'model' argument of classes inheriting
@@ -418,7 +326,7 @@ class AlrEstimator:
         )
 
     def predict(self, X) -> np.ndarray:
-        proba_df = pd.DataFrame(self.predict_proba(X), columns=self._classes())
+        proba_df = pd.DataFrame(self.predict_proba(X), columns=self.classes_)
         return np.array(proba_df.idxmax(1))
 
     def predict_proba(self, X) -> np.ndarray:
@@ -440,7 +348,7 @@ class AlrEstimator:
                 # Don't try to normalize by it if it isn't present
                 print(f"WARNING: reference {r} missing")
                 self.missing_references.append(r)
-                proba.append(np.zeros((len(self._classes()), len(X.shape[0]))))
+                proba.append(np.zeros((len(self.classes_), len(X.shape[0]))))
 
         message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
         print(message)
@@ -450,5 +358,78 @@ class AlrEstimator:
             proba = np.reshape(self.weights, [proba.shape[0], 1, 1]) * proba
         return proba.mean(axis=0)
 
-    def _classes(self):
+    @property
+    def classes_(self):
         return self.models[self.refs[0]].classes_
+
+
+# <2025-02-23 Sun> TODO: still haven't tested this yet
+class SimEstimator:
+    def __init__(
+        self,
+        simulation: str,
+        model,
+        prefix: str = "mc_",
+        n: int = 10,
+        predict_from_sim: bool = False,
+    ) -> None:
+        """A class to fit models where the data preprocessing involves some
+        form of simulation
+        e.g. generating Monte Carlo instances
+
+        Parameters
+        ----------
+        predict_from_sim : whether the model should make predictions from data after
+            running the simulation process
+        """
+        self.model = model
+        self.s_method = simulation
+        self.predict_from_sim = predict_from_sim
+        self.prefix = prefix
+        self.cross_validating = False
+        self.n = n
+
+    def _get_instances(self, X, labels=None):
+        instances = Simulator(
+            X,
+            self.s_method,
+            self.n,
+            prefix=self.prefix,
+            inplace=False,
+            make_sparse=False,  # Required for concatenation
+        ).run()
+        counts = np.concatenate(instances)
+        if labels is not None:
+            labels = np.concatenate([np.copy(labels) for _ in range(self.n)])
+        return counts, labels
+
+    def fit(
+        self,
+        X,
+        y,
+    ) -> None:
+        """
+        Fit the underlying model on combined data from the all the Monte Carlo instances
+
+        @param mc_kwargs
+            - n: number of Monte Carlo instances to generate
+            - prefix: number
+        @param instance_prefix: prefix denoting layers in the the adata object containing
+        the instances
+        """
+        X, y = self._get_instances(X, y)
+        self.model.fit(X, y)
+
+    def predict_proba(self, X) -> np.ndarray:
+        if self.predict_from_sim:
+            X, _ = self._get_instances(X)
+        return self.model.predict_proba(X)
+
+    def predict(self, X) -> np.ndarray:
+        if self.predict_from_sim:
+            X = self._get_instances(X)
+        return self.model.predict(X)
+
+    @property
+    def classes_(self):
+        return self.model.classes_
