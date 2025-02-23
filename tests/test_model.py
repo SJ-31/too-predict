@@ -35,6 +35,13 @@ def test_base():
     print(results)
 
 
+def test_alr():
+    # TODO <2025-02-23 Sun> write this test
+    rf = RandomForestPred("clr", "plus_one")
+    results = rf.cross_validate(adata)
+    print(results)
+
+
 def test_dirichlet():
     dir = SimBase(
         "clr", None, simulation="dirichlet", model=RandomForestClassifier(), n=2
