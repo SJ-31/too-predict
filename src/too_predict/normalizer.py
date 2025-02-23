@@ -1,16 +1,17 @@
 #!/usr/bin/env ipython
-from typing import Callable
+from typing import Callable, Iterable
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import rpy2.robjects as ro
 import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
-from too_predict.utils import library, r_cleanup
+from too_predict.utils import r_cleanup
 
-IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr"}
+IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr", "log_clr", "tpm", "fpkm"}
 
 """
 References
@@ -18,6 +19,11 @@ References
 [2] Bennett, A. R., Lundstrøm, J., Chatterjee, S., & Bojar, D. (2025). Compositional data analysis enables statistical rigor in comparative glycomics. Nature Communications, 16(1), 1-15. https://doi.org/10.1038/s41467-025-56249-3
 [3] Godichon-Baggioni, A., Maugis-Rabusseau, C., & Rau, A. (2018). Clustering transformed compositional data using K-means, with applications in gene expression and bicycle sharing system data. Journal of Applied Statistics, 46(1), 47–65. https://doi.org/10.1080/02664763.2018.1454894
 """
+
+# <2025-02-23 Sun> TODO: refactor this so it can take only counts as input
+# basically all you need to do is remove the reliance of self.ad in any methods
+# Sun Feb 23 14:56:42 2025 did it for alr
+#
 
 
 class Normalizer:
@@ -27,24 +33,35 @@ class Normalizer:
 
     def __init__(
         self,
-        adata: ad.AnnData,
+        data: ad.AnnData | np.ndarray | pd.DataFrame,
         method: str,
         impute_fn: Callable | None = None,
         inplace=True,
         make_sparse=True,
         supported_methods=IMPLEMENTED_NORMALIZATION,
     ) -> None:
-        self.ad = adata if inplace else adata.copy()
-        if method.lower() not in supported_methods:
-            raise ValueError(f"Method {method} not implemented!")
-        self.inplace = inplace
+        self.counts: np.ndarray | pd.DataFrame
+        self.adata: ad.AnnData | None
         self.method = method
         self.make_sparse = make_sparse
-        self.ad.layers["counts"] = adata.X
-        if not (isinstance(adata.X, np.ndarray)):
-            self.counts = adata.X.toarray().copy()
+        if method.lower() not in supported_methods:
+            raise ValueError(f"Method {method} not implemented!")
+
+        if isinstance(data, ad.AnnData):
+            self.counts_only = False
+            self.adata = data if inplace else data.copy()
+            self.inplace = inplace
+            self.adata.layers["counts"] = data.X
+            if not (isinstance(data.X, np.ndarray)):
+                self.counts = data.X.toarray().copy()
+            else:
+                self.counts = data.X.copy()  # A sample x feature ndarray
         else:
-            self.counts = adata.X.copy()  # A sample x gene ndarray
+            self.adata = None
+            self.inplace = False
+            self.counts_only = True
+            self.counts = data
+
         if impute_fn:
             self.counts = impute_fn(self.counts)
 
@@ -64,29 +81,38 @@ class Normalizer:
         :param: var_col column in adata.var containing the gene name.
         """
         index: int
-        if isinstance(by, str) and var_col:
-            query = np.where(self.ad.var[var_col] == by)
+        if isinstance(by, str) and self.counts_only:
+            query = np.where(self.counts.columns == by)
+            index = query[0][0]
+        elif isinstance(by, str) and var_col:
+            query = np.where(self.adata.var[var_col] == by)
             index = query[0][0]
             if len(query) > 1:
                 raise ValueError("Key `by` is not unique!")
         elif isinstance(by, str):
-            index = self.ad.var.index.get_loc(by)
+            index = self.adata.var.index.get_loc(by)
             if len(by) > 1:
                 raise ValueError("Key `by` is not unique!")
         else:
             index = by
-        self.ad = ad.concat(
-            [self.ad[:, :index], self.ad[:, index + 1 :]],
-            axis="var",
-            merge="same",
-            uns_merge="same",
-        )
+        if not self.counts_only:
+            self.adata = ad.concat(
+                [self.adata[:, :index], self.adata[:, index + 1 :]],
+                axis="var",
+                merge="same",
+                uns_merge="same",
+            )
         if gamma and condition_col and scales:
             return self._alr_scale(index, gamma, scales, condition_col)
         return comp.alr(self.counts, index)
 
     def _alr_scale(
-        self, by: int, gamma, scales: dict | list, condition_col: str
+        self,
+        by: int,
+        gamma,
+        scales: dict | list,
+        condition_col: str = "",
+        conditions: np.ndarray | None = None,
     ) -> np.ndarray:
         """ALR with informed scale adjustment, adapted from [2]
 
@@ -105,18 +131,30 @@ class Normalizer:
         """
         gamma = max(gamma, 0.1)
         rng = np.random.default_rng(1)
-        indices = np.arange(self.ad.shape[0])
-        uniques = self.ad.obs[condition_col].unique()
+        indices = np.arange(self.counts.shape[0])
+
+        if not self.counts_only:
+            uniques = self.adata.obs[condition_col].unique()
+        elif conditions is not None and len(conditions) == self.counts.shape[0]:
+            uniques = set(conditions)
+        else:
+            raise ValueError(
+                "Conditions for each sample must be provided if passing only counts!"
+            )
+
         if not isinstance(scales, dict):
             lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
         else:
             lookup: dict = scales
         alr_adjusted = np.empty((self.counts.shape[0], self.counts.shape[1] - 1))
-        ref_vals = self.conts[:, by]
+        ref_vals = self.counts[:, by]
         self.counts = np.delete(self.counts, (by), axis=1)
         for u in uniques:
             scale_factor = np.log2(lookup.get(u, 1))
-            locs = indices[self.ad.obs[condition_col] == u]
+            if not self.counts_only:
+                locs = indices[self.adata.obs[condition_col] == u]
+            else:
+                locs = indices[conditions == u]
             draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
             ref_adj = np.log2(ref_vals) - draws
             adj = np.log2(self.counts[locs, :]) - ref_adj
@@ -134,7 +172,10 @@ class Normalizer:
         return np.transpose(np.asarray(ro.r("counts")))
 
     def tpm(
-        self, length_col: str = "SEQLENGTH", avg_fragment_size: float = 0
+        self,
+        length_col: str = "SEQLENGTH",
+        avg_fragment_size: float = 0,
+        gene_lengths: Iterable | None = None,
     ) -> np.ndarray:
         """Transcripts per million
 
@@ -143,16 +184,26 @@ class Normalizer:
         Calculation adapted from [1], but using gene length instead of effective length
         if average fragment size isn't given
         """
-        lengths = self.ad.var[length_col]
+        if not self.counts_only:
+            lengths = self.adata.var[length_col]
+        elif not isinstance(gene_lengths, np.ndarray) and gene_lengths is not None:
+            lengths = np.array(gene_lengths)
+        elif gene_lengths is not None:
+            lengths = gene_lengths
+        else:
+            raise ValueError("Gene lengths not provided")
         if avg_fragment_size:
-            lengths = lengths - avg_fragment_size + 1
+            lengths = lengths - avg_fragment_size + 1  # Get effective length
         numer = np.log(self.counts) - np.reshape(np.log(lengths), (1, -1))
         denom = np.log(np.nansum(np.exp(numer), axis=1)).reshape(-1, 1)
         tpm = np.exp(numer - denom + np.log(1e6))
         return np.nan_to_num(tpm, neginf=0)
 
     def fkpm(
-        self, length_col: str = "SEQLENGTH", avg_fragment_size: float = 0
+        self,
+        length_col: str = "SEQLENGTH",
+        avg_fragment_size: float = 0,
+        gene_lengths: Iterable | None = None,
     ) -> np.ndarray:
         """Fragments/reads per kilobase million
 
@@ -161,7 +212,14 @@ class Normalizer:
         Calculation adapted from [1], but using gene length instead of effective length
         if average fragment size isn't given
         """
-        lengths = self.ad.var[length_col]
+        if not self.counts_only:
+            lengths = self.adata.var[length_col]
+        elif not isinstance(gene_lengths, np.ndarray) and gene_lengths is not None:
+            lengths = np.array(gene_lengths)
+        elif gene_lengths is not None:
+            lengths = gene_lengths
+        else:
+            raise ValueError("Gene lengths not provided")
         if avg_fragment_size:
             lengths = lengths - avg_fragment_size + 1
         numer = np.log(self.counts) - np.log(lengths).values.reshape(1, -1)
@@ -169,7 +227,13 @@ class Normalizer:
         fpkm = np.exp(numer - denom + np.log(1e9))
         return np.nan_to_num(fpkm, neginf=0)
 
-    def _clr_scale(self, gamma, scales: dict | list, condition_col: str) -> np.ndarray:
+    def _clr_scale(
+        self,
+        gamma,
+        scales: dict | list,
+        condition_col: str,
+        conditions: np.ndarray | None = None,
+    ) -> np.ndarray:
         """CLR with informed scale model, adapted from [2]
 
         Parameters
@@ -187,16 +251,28 @@ class Normalizer:
         """
         gamma = max(gamma, 0.1)
         rng = np.random.default_rng(1)
-        indices = np.arange(self.ad.shape[0])
-        clr_adjusted = np.empty(self.ad.shape)
-        uniques = self.ad.obs[condition_col].unique()
+        indices = np.arange(self.counts.shape[0])
+
+        if not self.counts_only:
+            uniques = self.adata.obs[condition_col].unique()
+        elif conditions is not None and len(conditions) == self.counts.shape[0]:
+            uniques = set(conditions)
+        else:
+            raise ValueError(
+                "Conditions for each sample must be provided if passing only counts!"
+            )
+        clr_adjusted = np.empty(self.counts)
+
         if not isinstance(scales, dict):
             lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
         else:
             lookup: dict = scales
         for u in uniques:
             scale_factor = np.log2(lookup.get(u, 1))
-            locs = indices[self.ad.obs[condition_col] == u]
+            if not self.counts_only:
+                locs = indices[self.adata.obs[condition_col] == u]
+            else:
+                locs = indices[conditions == u]
             draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
             adj = np.log2(self.counts[locs, :]) + draws
             clr_adjusted[locs, :] = adj
@@ -212,10 +288,12 @@ class Normalizer:
         """
         normalized = np.empty_like(self.counts.shape)
         if features:
+            if not self.counts_only:
+                subset = self.adata.var[feature_col].isin(features)
+            else:
+                subset = self.counts.columns.isin(features)
             gmean = stats.gmean(
-                self.counts[:, self.ad.var[feature_col].isin(features)],
-                axis=1,
-                nan_policy="omit",
+                self.counts[:, subset], axis=1, nan_policy="omit"
             ).reshape((-1, 1))
         else:
             gmean = stats.gmean(self.counts, axis=1, nan_policy="omit").reshape((-1, 1))
@@ -242,28 +320,40 @@ class Normalizer:
     ) -> np.ndarray:
         if gamma and scales:
             return self._clr_scale(gamma=gamma, scales=scales)
-        elif features:
+        elif features is None:
+            return comp.clr(self.counts)
+        else:
+            if not self.counts_only:
+                subset = self.adata.var[feature_col].isin(features)
+            else:
+                subset = self.counts.columns.isin(features)
             gmean = stats.gmean(
-                self.counts[:, self.ad.var[feature_col].isin(features)],
-                axis=1,
-                nan_policy="omit",
+                self.counts[:, subset], axis=1, nan_policy="omit"
             ).reshape((-1, 1))
             clr = np.log(self.counts) - np.log(gmean)
             return clr
-        return comp.clr(self.counts)
 
-    def run(self, **kwargs) -> ad.AnnData | None:
+    def run(self, **kwargs) -> ad.AnnData | None | np.ndarray:
         match self.method:
             case "clr":
-                normalized = self.clr()
+                normalized = self.clr(**kwargs)
             case "tmm":
                 normalized = self.tmm()
             case "alr":
                 normalized = self.alr(**kwargs)
             case "tpm":
                 normalized = self.tpm(**kwargs)
+            case "fpkm":
+                normalized = self.fpkm(**kwargs)
+            case "log_clr":
+                normalized = self.log_clr(**kwargs)
             case _:
                 normalized = np.array()
-        self.ad.X = sparse.csc_matrix(normalized) if self.make_sparse else normalized
-        if not self.inplace:
-            return self.ad
+        if not self.counts_only:
+            self.adata.X = (
+                sparse.csc_matrix(normalized) if self.make_sparse else normalized
+            )
+            if not self.inplace:
+                return self.adata
+        else:
+            return normalized
