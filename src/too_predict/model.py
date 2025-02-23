@@ -44,8 +44,16 @@ class PredBase:
         else:
             self.n_method = None
         self.normalize_kwargs: dict = n_kwargs if n_kwargs else {}
+        self._estimator_type = "classifier"
         self._is_fitted = False
-        self.features = features
+        self.discarded_features = (
+            None  # Any features discarded during preprocessing e.g.
+        )
+        # due to not being in enough samples
+        self.features = features  # Requested features to subset data by
+        self.missing_features = (
+            None  # Requested features to subset by that weren't found
+        )
         self.feature_col = feature_col
         self.impute: Callable = Imputer(imputation).run
         self.i_method: str | None = (
@@ -54,7 +62,18 @@ class PredBase:
         self.normalize_kwargs = {}
         self.var = None
 
-    def fit(self, X: ad.AnnData, label_col="tumor_type", preprocess=True) -> None:
+    def fit(
+        self,
+        X: ad.AnnData,
+        label_col="tumor_type",
+        preprocess=True,
+    ) -> None:
+        """Fit model to the given adata object
+
+        Parameters
+        ----------
+        X : data to fit to
+        """
         if label_col not in X.obs.columns:
             raise ValueError(f"The column '{label_col}' is not present in X.obs")
         if preprocess:
@@ -85,13 +104,15 @@ class PredBase:
         return self.model.predict(X)
 
     def _filter_features(self, adata: ad.AnnData) -> ad.AnnData:
-        passed_filter = sc.pp.filter_genes(
+        passed_filter: np.ndarray = sc.pp.filter_genes(
             adata, min_cells=2, inplace=False
         )  # Genes must be nonzero in at least two samples
+        self.discarded_features = adata.var.loc[~(passed_filter[0]), :]
         adata = adata[:, passed_filter[0]].copy()
         if self.features is not None:
             adata = adata[:, adata.obs[self.feature_col] == self.features]
             missing = set(self.features) - set(adata.obs[self.feature_col])
+            self.missing_features = missing
             if len(missing) > 0:
                 print("--- WARNING: Missing features!")
                 print(missing)
