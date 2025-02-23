@@ -10,6 +10,7 @@ import scanpy as sc
 import sklearn.model_selection as ms
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.feature_selection import RFECV
 from sklearn.utils.validation import check_is_fitted
 
 from too_predict.evaluation import get_all_metrics
@@ -170,6 +171,31 @@ class PredBase:
             "prec_recall": pd.concat(prec_recall),
             "roc": pd.concat(roc),
         }
+
+    def rfecv(
+        self,
+        X: ad.AnnData,
+        label_col="tumor_type",
+        preprocess: bool = True,
+        rfecv_params: dict = None,
+    ) -> RFECV:
+        """Perform recursive feature elimination with cross validation
+
+        Parameters
+        ----------
+        X : anndata object to pass to RFECV.fit
+        rfecv_params : parameters to pass to rfecv
+
+        Returns
+        -------
+        Fitted RFECV object
+        """
+        if preprocess:
+            X = self._preprocess(X)
+        params = rfecv_params if rfecv_params else {}
+        rfecv = RFECV(self.model, **params)
+        rfecv.fit(X.X, X.obs[label_col])
+        return rfecv
 
 
 class RandomForestPred(PredBase):
