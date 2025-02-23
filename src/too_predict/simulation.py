@@ -4,11 +4,12 @@ from typing import Callable
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import rpy2.robjects as ro
 from scipy import sparse, stats
 
 from too_predict.normalizer import Normalizer
-from too_predict.utils import df_to_r, r_cleanup
+from too_predict.utils import r_cleanup
 
 IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 
@@ -16,7 +17,7 @@ IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 class Simulator(Normalizer):
     def __init__(
         self,
-        adata: ad.AnnData,
+        data: ad.AnnData | np.ndarray | pd.DataFrame,
         method: str,
         n: int = 5,
         prefix: str = "mc_",
@@ -40,10 +41,11 @@ class Simulator(Normalizer):
         Otherwise, the given adata is modified inplace
         """
         super().__init__(
-            adata, method, impute_fn, inplace, make_sparse, IMPLEMENTED_SIMULATION
+            data, method, impute_fn, inplace, make_sparse, IMPLEMENTED_SIMULATION
         )
         self.prefix = prefix
         self.n = n
+        self.instances = np.zeros([n, *self.counts.shape])
 
     @r_cleanup
     def dirichlet_scale(self, gamma, condition_col) -> None:
@@ -76,12 +78,13 @@ class Simulator(Normalizer):
         """)
 
         kept_features = list(ro.r("getFeatureNames(clr)"))
-        self.ad = self.ad[:, self.ad.var["gene_id"].isin(kept_features)]
+        if not self.counts_only:
+            self.adata = self.adata[:, self.adata.var["gene_id"].isin(kept_features)]
 
         with (ro.default_converter + ro.numpy2ri.converter).context():
             for i in range(self.n):
                 inst = np.transpose(ro.r(f"getDirichletSample(clr, {i + 1})"))
-                self.ad.layers[f"{self.prefix}{i}"] = self._format(inst)
+                self.instances[i] = inst
 
     def _format(self, mat: np.ndarray):
         if self.make_sparse:
@@ -110,14 +113,18 @@ class Simulator(Normalizer):
             lambda x: stats.dirichlet.rvs(x, self.n), 1, arr
         )
         for i in range(instances.shape[1]):
-            inst = instances[:, i, :]
-            self.ad.layers[f"{self.prefix}{i}"] = self._format(inst)
+            self.instances[i] = instances[:, i, :]
 
-    def run(self, **kwargs) -> ad.AnnData | None:
+    def run(self, **kwargs) -> ad.AnnData | None | np.ndarray:
         match self.method:
             case "dirichlet":
                 self.dirichlet(**kwargs)
             case "dirichlet_scale":
                 self.dirichlet_scale(**kwargs)
-        if not self.inplace:
-            return self.ad
+        if self.counts_only:
+            return self.instances
+        else:
+            for i in range(self.n):
+                self.adata.layers[f"{self.prefix}{i}"] = self._format(self.instances[i])
+            if not self.inplace:
+                return self.adata
