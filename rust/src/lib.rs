@@ -19,7 +19,6 @@ fn phi_matrix<'py>(
     arr: PyReadonlyArray2<'py, f64>,
     do_parallel: bool,
 ) -> Bound<'py, PyArray2<f64>> {
-    println!("hello");
     let converted: ArrayView2<f64> = arr.as_array();
     let result = phi_proportionality_rs(converted, do_parallel);
     result.into_pyarray_bound(py)
@@ -31,6 +30,7 @@ fn phi_proportionality_test(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
 }
 
 fn phi_proportionality_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64> {
+    println!("Computing phi matrix...");
     let ncols = arr.ncols();
     let mut result: Array2<f64> = Array2::zeros([ncols, ncols]);
     let lns: Array2<f64> = arr.ln();

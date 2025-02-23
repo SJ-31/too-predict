@@ -14,7 +14,9 @@ import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
 from numpy import float64
 from sklearn.ensemble import RandomForestClassifier
-from too_predict.model import AlrBase, AlrEstimator, PredBase
+from too_predict.model import AlrBase, AlrEstimator, PredBase, SimEstimator
+from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
+from too_predict.simulation import Simulator
 
 sk.set_config(enable_metadata_routing=True)
 
@@ -75,6 +77,9 @@ myalr = AlrBase(
 counts = np.random.randint(1, 1000, adata.shape)
 adata.X = counts
 myalr.fit(adata, var_col="gene_ids")
+
+
+res = myalr.predict(adata, var_col="gene_ids")
 # alrest = AlrEstimator(
 #     tree,
 # )
@@ -84,3 +89,9 @@ myalr.fit(adata, var_col="gene_ids")
 # alrest.predict_proba(for_alr)
 
 # #  --- CODE BLOCK ---
+sim = Simulator(adata.X, "dirichlet")
+result = sim.run()
+
+simest = SimEstimator("dirichlet", tree)
+simest.fit(counts, adata.obs["tumor_type"])
+simest.predict(counts)
