@@ -102,7 +102,7 @@ class PredBase:
     def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
         if preprocess:
             X = self._preprocess(X)
-        return self.model.predict(X)
+        return self.model.predict(X.X)
 
     def _filter_features(self, adata: ad.AnnData) -> ad.AnnData:
         passed_filter: np.ndarray = sc.pp.filter_genes(
@@ -214,13 +214,6 @@ class RandomForestPred(PredBase):
 
 
 class AlrBase(PredBase):
-    """Base class for aggregating the results of classifier models trained on
-    ALR-transformed with multiple references e.g. different genes
-
-    Predicted labels are obtained with soft voting (weighted average probabilities)
-    TODO: try to parallelize training here
-    """
-
     def __init__(
         self,
         imputation: str,
@@ -234,85 +227,44 @@ class AlrBase(PredBase):
         super().__init__(
             normalization=None,
             imputation=imputation,
-            model=None,
+            model=AlrEstimator(model=model, references=references, weights=weights),
             features=features,
             feature_col=feature_col,
             n_kwargs=n_kwargs,
         )
-        self.refs = (
-            list(references.keys()) if isinstance(references, dict) else references
-        )
-        self.weights = references.values() if isinstance(references, dict) else None
-        if weights:
-            self.weights = weights
-        self.models = {r: clone(model) for r in self.refs}
-        self.n_fit = 0
-        self.n_pred = 0
-        self.missing_references = []
-
-    def _alr(self, X: ad.AnnData, by: str, vc) -> ad.AnnData:
-        res: ad.AnnData = Normalizer(X, "alr", self.impute, inplace=False).run(
-            by=by, var_col=vc
-        )
-        return res
 
     @override
     def fit(
         self, X: ad.AnnData, label_col="tumor_type", preprocess=True, var_col="GENENAME"
     ) -> None:
-        self.missing_references = []
-        self.n_fit = 0
         if preprocess:
             X = self._preprocess(X)
-        for r in self.refs:
-            if r in X.var[var_col]:
-                transformed = self._alr(X, r, var_col)
-                self.models[r].fit(transformed.X, transformed.obs[label_col])
-                self.n_fit += 1
-            else:
-                self.missing_references.append(r)
-                print(f"WARNING: reference {r} missing")
-        print(
-            f"Fit with {self.n_fit} ({self.n_fit // len(self.refs) * 100}) references"
-        )
+        if not isinstance(X.X, np.ndarray):
+            vals = X.X.toarray()
+        else:
+            vals = X.X
+        counts = pd.DataFrame(vals, columns=X.var[var_col], index=None)
+        self.var = X.var
+        self._is_fitted = True
+        self.model.fit(counts, X.obs[label_col])
 
     @override
-    def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
-        proba_df = pd.DataFrame(
-            self.predict_proba(X, preprocess), columns=self._classes()
-        )
-        return np.array(proba_df.idxmax(1))
-
-    @override
-    def predict_proba(
-        self, X: ad.AnnData, preprocess=True, var_col="GENENAME"
+    def predict(
+        self, X: ad.AnnData, preprocess: bool = True, var_col="GENENAME"
     ) -> np.ndarray:
         if preprocess:
             X = self._preprocess(X)
-        proba = []
-        self.n_pred = 0
-        self.missing_references = []
-        for r, m in self.models.items():
-            if r in X.var[var_col]:
-                transformed = self._alr(X, r, var_col)
-                proba.append(m.predict_proba(transformed.X))
-                self.n_pred += 1
-            else:
-                # Don't try to normalize by it if it isn't present
-                print(f"WARNING: reference {r} missing")
-                self.missing_references.append(r)
-                proba.append(np.zeros((len(self._classes()), len(X.X.shape[0]))))
+        df = AlrEstimator._adata_to_df(X, var_col=var_col)
+        return self.model.predict(df)
 
-        message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
-        print(message)
-        proba = np.array(proba)
-
-        if self.weights is not None and len(self.weights) == proba.shape[0]:
-            proba = np.reshape(self.weights, [proba.shape[0], 1, 1]) * proba
-        return proba.mean(axis=0)
-
-    def _classes(self):
-        return self.models[self.refs[0]].classes_
+    @override
+    def predict_proba(
+        self, X: ad.AnnData, preprocess: bool = True, var_col="GENENAME"
+    ) -> np.ndarray:
+        if preprocess:
+            X = self._preprocess(X)
+        df = AlrEstimator._adata_to_df(X, var_col=var_col)
+        return self.model.predict_proba(df)
 
 
 class SimBase(PredBase):
@@ -406,3 +358,123 @@ class SimBase(PredBase):
         result = super().cross_validate(adata, cv, label_col, preprocess)
         self.cross_validating = False
         return result
+
+
+# * Estimators
+# Lower-level estimators that more directly follow the sklearn API
+# intended to be passed to the 'model' argument of classes inheriting
+# PredBase
+
+
+class AlrEstimator:
+    """Base class for aggregating the results of classifier models trained on
+    ALR-transformed with multiple references e.g. different genes
+
+    Predicted labels are obtained with soft voting (weighted average probabilities)
+    TODO: try to parallelize training here
+    """
+
+    def __init__(
+        self,
+        model,
+        references: dict | list,
+        weights=None,
+    ) -> None:
+        self.refs = (
+            list(references.keys()) if isinstance(references, dict) else references
+        )
+        self.weights = references.values() if isinstance(references, dict) else None
+        if weights:
+            self.weights = weights
+        self.models = {r: clone(model) for r in self.refs}
+        self.n_fit = 0
+        self.n_pred = 0
+        self.missing_references = []
+
+    def _alr(self, X: ad.AnnData, by: str, vc) -> ad.AnnData:
+        res: ad.AnnData = Normalizer(X, "alr", None, inplace=False).run(
+            by=by, var_col=vc
+        )
+        return res
+
+    @staticmethod
+    def _adata_from_df(
+        df: pd.DataFrame,
+        labels: list = None,
+        label_col: str = "label",
+        var_col: str = "feature",
+    ) -> ad.AnnData:
+        adata = ad.AnnData(
+            X=df, var=pd.DataFrame({var_col: df.columns}, index=df.columns)
+        )
+        if labels is not None and len(labels) == df.shape[0]:
+            adata.obs = pd.DataFrame({label_col: labels})
+        return adata
+
+    @staticmethod
+    def _adata_to_df(adata: ad.AnnData, var_col: str = "feature"):
+        if not isinstance(adata.X, np.ndarray):
+            counts = adata.X.toarray()
+        else:
+            counts = adata.X
+        return pd.DataFrame(counts, columns=adata.var[var_col], index=None)
+
+    def fit(
+        self,
+        X: pd.DataFrame,
+        y,
+        label_col="tumor_type",
+        var_col="GENENAME",
+    ) -> None:
+        self.missing_references = []
+        self.n_fit = 0
+        adata = self._adata_from_df(X, labels=y, label_col=label_col, var_col=var_col)
+        self._is_fitted = True
+        for r in self.refs:
+            if r in adata.var[var_col]:
+                transformed = self._alr(adata, r, var_col)
+                self.models[r].fit(transformed.X, transformed.obs[label_col])
+                self.n_fit += 1
+            else:
+                self.missing_references.append(r)
+                print(f"WARNING: reference {r} missing")
+        print(
+            f"Fit with {self.n_fit} ({self.n_fit // len(self.refs) * 100}) references"
+        )
+
+    def predict(self, X) -> np.ndarray:
+        proba_df = pd.DataFrame(self.predict_proba(X), columns=self._classes())
+        return np.array(proba_df.idxmax(1))
+
+    def predict_proba(self, X) -> np.ndarray:
+        """Get predictions using all trained estimators for each reference
+
+        Parameters
+        ----------
+        X : a dataframe where columns are features
+        """
+        proba = []
+        adata = self._adata_from_df(X)
+        self.n_pred = 0
+        self.missing_references = []
+        for r, m in self.models.items():
+            if r in adata.var["feature"]:
+                transformed = self._alr(adata, r, "feature")
+                proba.append(m.predict_proba(transformed.X))
+                self.n_pred += 1
+            else:
+                # Don't try to normalize by it if it isn't present
+                print(f"WARNING: reference {r} missing")
+                self.missing_references.append(r)
+                proba.append(np.zeros((len(self._classes()), len(adata.X.shape[0]))))
+
+        message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
+        print(message)
+        proba = np.array(proba)
+
+        if self.weights is not None and len(self.weights) == proba.shape[0]:
+            proba = np.reshape(self.weights, [proba.shape[0], 1, 1]) * proba
+        return proba.mean(axis=0)
+
+    def _classes(self):
+        return self.models[self.refs[0]].classes_
