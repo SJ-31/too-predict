@@ -17,6 +17,7 @@ from too_predict.evaluation import get_all_metrics
 from too_predict.imputer import Imputer
 from too_predict.normalizer import Normalizer
 from too_predict.simulation import Simulator
+from too_predict.utils import adata_from_df, adata_to_df
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -254,7 +255,7 @@ class AlrBase(PredBase):
     ) -> np.ndarray:
         if preprocess:
             X = self._preprocess(X)
-        df = AlrEstimator._adata_to_df(X, var_col=var_col)
+        df = adata_to_df(X, var_col=var_col)
         return self.model.predict(df)
 
     @override
@@ -263,7 +264,7 @@ class AlrBase(PredBase):
     ) -> np.ndarray:
         if preprocess:
             X = self._preprocess(X)
-        df = AlrEstimator._adata_to_df(X, var_col=var_col)
+        df = adata_to_df(X, var_col=var_col)
         return self.model.predict_proba(df)
 
 
@@ -397,28 +398,6 @@ class AlrEstimator:
         )
         return res
 
-    @staticmethod
-    def _adata_from_df(
-        df: pd.DataFrame,
-        labels: list = None,
-        label_col: str = "label",
-        var_col: str = "feature",
-    ) -> ad.AnnData:
-        adata = ad.AnnData(
-            X=df, var=pd.DataFrame({var_col: df.columns}, index=df.columns)
-        )
-        if labels is not None and len(labels) == df.shape[0]:
-            adata.obs = pd.DataFrame({label_col: labels})
-        return adata
-
-    @staticmethod
-    def _adata_to_df(adata: ad.AnnData, var_col: str = "feature"):
-        if not isinstance(adata.X, np.ndarray):
-            counts = adata.X.toarray()
-        else:
-            counts = adata.X
-        return pd.DataFrame(counts, columns=adata.var[var_col], index=None)
-
     def fit(
         self,
         X: pd.DataFrame,
@@ -428,7 +407,7 @@ class AlrEstimator:
     ) -> None:
         self.missing_references = []
         self.n_fit = 0
-        adata = self._adata_from_df(X, labels=y, label_col=label_col, var_col=var_col)
+        adata = adata_from_df(X, labels=y, label_col=label_col, var_col=var_col)
         self._is_fitted = True
         for r in self.refs:
             if r in adata.var[var_col]:

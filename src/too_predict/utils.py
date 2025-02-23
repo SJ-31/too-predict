@@ -282,3 +282,23 @@ def phi_proportionality(x: np.ndarray, y: np.ndarray):
     """
     log_x = np.log(x)
     return np.var(log_x - np.log(y)) / np.var(log_x)
+
+
+def adata_from_df(
+    df: pd.DataFrame,
+    labels: list = None,
+    label_col: str = "label",
+    var_col: str = "feature",
+) -> ad.AnnData:
+    adata = ad.AnnData(X=df, var=pd.DataFrame({var_col: df.columns}, index=df.columns))
+    if labels is not None and len(labels) == df.shape[0]:
+        adata.obs = pd.DataFrame({label_col: labels})
+    return adata
+
+
+def adata_to_df(adata: ad.AnnData, var_col: str = "feature"):
+    if not isinstance(adata.X, np.ndarray):
+        counts = adata.X.toarray()
+    else:
+        counts = adata.X
+    return pd.DataFrame(counts, columns=adata.var[var_col], index=None)
