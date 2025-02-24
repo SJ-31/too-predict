@@ -11,6 +11,8 @@ import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
+import scanpy as sc
+from anndata._io.h5ad import idx_chunks_along_axis
 from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
     NACharacterType,
@@ -171,6 +173,68 @@ def add_gene_metadata(
     adata.var = adata.var.join(result, on=join_on, how="left")
 
 
+def rename_genes(
+    data: pd.DataFrame | ad.AnnData,
+    old: str,
+    new: str,
+    use_ensembl_versions: bool = False,
+    id_col: str = "",
+    mapping_file: str = "",
+) -> tuple:
+    """Rename gene ids between Ensembl ids, Gene symbols and Entrez (NCBI)
+    Returns
+    -------
+    tuple of two dataframes, the first element containing successfully renamed entries,
+        the second being failed entries i.e. old name not found in the lookup
+    """
+    options: set = {"ensembl", "entrez", "symbol"}
+    if len({old, new} & options) != 2:
+        raise ValueError(f"Only {options} are supported for `old`, `new`")
+    if mapping_file:
+        id_map = pd.read_csv(mapping_file, sep="\t")
+    else:
+        id_map = pd.read_csv(get_data("ensembl_113_id_mapping.tsv"), sep="\t")
+
+    if isinstance(data, ad.AnnData):
+        was_adata = True
+        df = data.var
+    else:
+        was_adata = False
+        df = data
+
+    old_names: pd.Series = df.index.to_series() if not id_col else df[id_col]
+    if use_ensembl_versions and old == "ensembl":
+        old = "ensembl_w_id"
+    if old == "symbol":
+
+        def get_correct_symbol(symbol, synonym):
+            if symbol in old_names:
+                return symbol
+            elif synonym in old_names:
+                return synonym
+            return np.nan
+
+        id_map.loc[:, "symbol"] = id_map["symbol"].combine(
+            id_map["symbol_synonym"], get_correct_symbol
+        )
+
+    lookup: dict = {k: v for k, v in zip(id_map[old], id_map[new])}
+    new_names: pd.Series = old_names.apply(lambda x: lookup.get(x, np.nan))
+    row_mask = new_names.notna()
+    passed, failed = df.loc[row_mask, :], df.loc[~row_mask, :]
+    new_names = new_names.dropna()
+    if not id_col:
+        passed.index = new_names
+    else:
+        passed[id_col] = new_names
+
+    if was_adata:
+        ad_passed, ad_failed = data[:, row_mask], data[:, ~row_mask]
+        ad_passed.var, ad_failed.var = passed, failed
+        return ad_passed, ad_failed
+    return passed, failed
+
+
 def str_mode(array: np.ndarray, **kwargs) -> tuple[np.ndarray, np.ndarray]:
     """Scipy's mode function made compatible with string arrays
     returns a tuple of [mode, count]
@@ -302,3 +366,8 @@ def adata_to_df(adata: ad.AnnData, var_col: str = "feature"):
     else:
         counts = adata.X
     return pd.DataFrame(counts, columns=adata.var[var_col], index=None)
+
+
+def into_pseudobulks(adata: ad.AnnData, id_col: str, how="sum") -> ad.AnnData:
+    aggregated = sc.get.aggregate(adata, by=id_col, func=[how])
+    return ad.AnnData(X=aggregated.layers[how])
