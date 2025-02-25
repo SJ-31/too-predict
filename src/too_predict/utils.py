@@ -371,3 +371,37 @@ def adata_to_df(adata: ad.AnnData, var_col: str = "feature"):
 def into_pseudobulks(adata: ad.AnnData, id_col: str, how="sum") -> ad.AnnData:
     aggregated = sc.get.aggregate(adata, by=id_col, func=[how])
     return ad.AnnData(X=aggregated.layers[how])
+
+
+def cluster_gini(adata: ad.AnnData, clusters, label_col: str):
+    """Calculate Gini index of each cluster with respect to a specific
+    label
+
+    Parameters
+    ----------
+    clusters : either a column in adata.obs containing cluster assignments, or array-like
+        with the assignments
+
+    Returns
+    -------
+    dictionary mapping cluster to its impurity, and the impurity of the entire cluster
+
+    Notes
+    -----
+    The gini index ranges from 0 - 1; the closer to 0, the purer the cluster
+    """
+    assignments = adata.obs[clusters] if isinstance(clusters, str) else clusters
+    n_samples: int = len(adata)
+    ginis = []
+
+    def gini_one(cluster):
+        current = adata[np.where(assignments == cluster)]
+        n = len(current)
+        label_freq = (current.obs[label_col].value_counts() / n).values
+        gini = np.sum(label_freq * (1 - label_freq))
+        ginis.append(gini)
+        return gini * (n / n_samples)
+
+    unique = set(clusters)
+    whole_gini = sum(map(gini_one, unique))
+    return {k: v for k, v in zip(unique, ginis)}, whole_gini
