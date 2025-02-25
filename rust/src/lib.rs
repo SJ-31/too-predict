@@ -1,15 +1,17 @@
 use core::f64;
 
-use ndarray::{s, Array1, Array2, ArrayBase, ArrayView1, ArrayView2, ArrayViewD, Axis};
+use ndarray::{s, Array1, Array2, ArrayBase, ArrayView1, ArrayView2, Axis};
+use ndarray_stats::CorrelationExt;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::types::PyModuleMethods;
 use pyo3::wrap_pyfunction;
 use pyo3::{pyfunction, pymodule, types::PyModule, Bound, PyResult, Python};
-use rayon::{prelude::*, result};
+use rayon::prelude::*;
 
 #[pymodule]
 fn _rust_helpers(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(phi_matrix, m)?)?;
+    m.add_function(wrap_pyfunction!(rho_matrix, m)?)?;
     Ok(())
 }
 
@@ -24,9 +26,55 @@ fn phi_matrix<'py>(
     result.into_pyarray_bound(py)
 }
 
+#[pyfunction]
+fn rho_matrix<'py>(
+    py: Python<'py>,
+    arr: PyReadonlyArray2<'py, f64>,
+    do_parallel: bool,
+) -> Bound<'py, PyArray2<f64>> {
+    let converted: ArrayView2<f64> = arr.as_array();
+    let result = proportionality_coeff_rs(converted, do_parallel);
+    result.into_pyarray_bound(py)
+}
+
 fn phi_proportionality_test(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
     let log = x.ln();
     (&log - y.ln()).var(1.) / log.var(1.)
+}
+
+/// Compute the proportionality coefficient
+///
+fn proportionality_coeff_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64> {
+    let cov: Array2<f64> = arr.t().cov(1.0).unwrap();
+    let vars: Vec<f64> = arr.var_axis(Axis(0), 1.).to_vec();
+    let ncols = arr.ncols();
+    let mut result: Array2<f64> = Array2::zeros([ncols, ncols]);
+    if !do_parallel {
+        for i in 0..ncols {
+            let mut calculated_row: Array1<f64> = Array1::zeros(ncols);
+            for j in 0..ncols {
+                let numer: f64 = 2. * cov[[i, j]];
+                let denom = vars.get(i).unwrap() + vars.get(j).unwrap();
+                let rho: f64 = numer / denom;
+                calculated_row.slice_mut(s![j]).fill(rho);
+            }
+            result.slice_mut(s![.., i]).assign(&calculated_row);
+        }
+    } else {
+        for i in 0..ncols {
+            let tmp: Vec<f64> = (0..ncols)
+                .into_par_iter()
+                .map(|j| {
+                    let numer: f64 = 2. * cov[[i, j]];
+                    let denom = vars.get(i).unwrap() + vars.get(j).unwrap();
+                    numer / denom
+                })
+                .collect();
+            let row: Array1<f64> = ArrayBase::from_vec(tmp);
+            result.slice_mut(s![.., i]).assign(&row);
+        }
+    }
+    result
 }
 
 fn phi_proportionality_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64> {
@@ -106,4 +154,12 @@ fn test_phi_prop() {
     let phi2 = phi_proportionality_rs(h.view(), false);
     println!("{:?}", phi);
     println!("{:?}", phi2);
+}
+
+#[test]
+fn test_prop_coeff() {
+    use ndarray::arr2;
+    let h = arr2(&[[8, 1, 2, 3], [4, 5, 6, 7]]).mapv(|x| x as f64);
+    let rho = proportionality_coeff_rs(h.view(), false);
+    println!("{:?}", rho);
 }
