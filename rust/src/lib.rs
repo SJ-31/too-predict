@@ -42,8 +42,11 @@ fn phi_proportionality_test(x: ArrayView1<f64>, y: ArrayView1<f64>) -> f64 {
     (&log - y.ln()).var(1.) / log.var(1.)
 }
 
-/// Compute the proportionality coefficient
+/// Construct a pairwise matrix of the proportionality coefficient (rho)
 ///
+/// rho has range of -1 to 1
+///
+/// * arr : a sample x feature matrix
 fn proportionality_coeff_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64> {
     let cov: Array2<f64> = arr.t().cov(1.0).unwrap();
     let vars: Vec<f64> = arr.var_axis(Axis(0), 1.).to_vec();
@@ -77,6 +80,9 @@ fn proportionality_coeff_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f
     result
 }
 
+/// Construct a pairwise matrix of Goodness of fit to proportionalty
+///
+/// * arr : a sample x feature matrix
 fn phi_proportionality_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64> {
     println!("Computing phi matrix...");
     let ncols = arr.ncols();
@@ -112,37 +118,6 @@ fn phi_proportionality_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64
     result
 }
 
-/// Perform a calculation pairwise across all features in the matrix
-///
-/// # Arguments
-/// * arr : a sample x feature matrix
-///
-fn do_pairwise<F>(arr: ArrayView2<f64>, do_parallel: bool, calc_fn: F) -> Array2<f64>
-where
-    F: Fn(ArrayView1<f64>, ArrayView1<f64>) -> f64 + Sync + 'static,
-{
-    let ncols = arr.ncols();
-    let mut result = Array2::zeros([ncols, ncols]);
-    if !do_parallel {
-        for i in 0..ncols {
-            let calculated_row: Array1<f64> = (0..ncols)
-                .map(|j| calc_fn(arr.slice(s![.., i]), arr.slice(s![.., j])))
-                .collect();
-            result.slice_mut(s![.., i]).assign(&calculated_row);
-        }
-    } else {
-        for i in 0..ncols {
-            let calculated_row: Vec<f64> = (0..ncols)
-                .into_par_iter()
-                .map(|j| calc_fn(arr.slice(s![.., i]), arr.slice(s![.., j])))
-                .collect();
-            let row: Array1<f64> = ArrayBase::from_vec(calculated_row);
-            result.slice_mut(s![.., i]).assign(&row);
-        }
-    }
-    result
-}
-
 #[test]
 fn test_phi_prop() {
     use ndarray::arr2;
@@ -150,9 +125,7 @@ fn test_phi_prop() {
     let dim = h.raw_dim();
     let s1 = h.slice(s![0, ..]);
     let s2 = h.slice(s![1, ..]);
-    let phi = do_pairwise(h.view(), true, phi_proportionality_test);
     let phi2 = phi_proportionality_rs(h.view(), false);
-    println!("{:?}", phi);
     println!("{:?}", phi2);
 }
 
