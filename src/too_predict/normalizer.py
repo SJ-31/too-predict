@@ -199,7 +199,7 @@ class Normalizer:
         tpm = np.exp(numer - denom + np.log(1e6))
         return np.nan_to_num(tpm, neginf=0)
 
-    def fkpm(
+    def fpkm(
         self,
         length_col: str = "SEQLENGTH",
         avg_fragment_size: float = 0,
@@ -261,7 +261,7 @@ class Normalizer:
             raise ValueError(
                 "Conditions for each sample must be provided if passing only counts!"
             )
-        clr_adjusted = np.empty(self.counts)
+        clr_adjusted = np.empty_like(self.counts)
 
         if not isinstance(scales, dict):
             lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
@@ -286,7 +286,7 @@ class Normalizer:
         <2025-02-20 Thu> This extension of CLR was developed in the context of
         k-means clustering, unsure of its performance for machine learning
         """
-        normalized = np.empty_like(self.counts.shape)
+        normalized = np.empty_like(self.counts)
         if features:
             if not self.counts_only:
                 subset = self.adata.var[feature_col].isin(features)
