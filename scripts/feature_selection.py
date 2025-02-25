@@ -9,6 +9,7 @@ import rpy2.robjects as ro
 import scanpy as sc
 import seaborn as sns
 import sklearn.feature_selection as fs
+import too_predict._rust_helpers as rh
 from pyhere import here
 from rpy2.robjects.packages import importr
 from sklearn.ensemble import RandomForestClassifier
@@ -17,13 +18,16 @@ from too_predict.model import RandomForestPred
 from too_predict.normalizer import Normalizer
 from too_predict.utils import df_to_r, read_existing
 
-TEST = True
+# #  --- CODE BLOCK ---
+
 date = "2025-02-25"  # Insert date
 outdir = here("data", "output", "feature_selection")
+TEST = True
 if TEST:
     data_file = here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad")
 else:
-    data_file = "foo"
+    public_data = here("remote", "public_data")
+    data_file = here(public_data, "all_tumors_rnaseq.h5ad")
 
 adata = ad.read_h5ad(data_file)
 
@@ -37,7 +41,7 @@ n_counts = normalized.X.toarray()
 labels = adata.obs["primary_site"]
 # Need to normalize first to move out of simplex
 #
-
+# #  --- CODE BLOCK ---
 # * Identify stable features for ALR
 
 # ** Variance-based
@@ -58,8 +62,23 @@ def variance_threshold(f):
 
 # low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
 
+
 # ** Highest proportionality
-# TODO
+def get_proportionality(f):
+    pairwise = rh.rho_matrix(n_counts, True)
+    pair_df = pd.DataFrame(
+        pairwise, columns=adata.var["gene_id"], index=adata.var["gene_id"]
+    )
+    central_prop = pair_df.median().sort_values(ascending=False)
+    flattened_pairs = [
+        (f"{i} - {j}", pair_df.loc[i, j])
+        for i in pair_df.columns
+        for j in pair_df.index
+        if i != j
+    ]
+    best_pairs = sorted(flattened_pairs, key=lambda x: x[1], reverse=True)
+    pair_df.to_csv(f, index=False)
+
 
 # * Identify useful features
 
@@ -82,6 +101,8 @@ def sfm(f):
 # can compare this with different estimators
 # also see if you can make this compatible with the ALR model
 # cv =
+# <2025-02-24 Mon> this will take forever to run, you should narrow done the list
+# using a threshold of some kind
 def recursive_selection(f, est, prefix: str):
     rfecv = fs.RFECV(estimator=RandomForestClassifier(), verbose=1)
     rfecv.fit(n_counts, y=labels)

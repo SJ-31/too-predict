@@ -9,8 +9,16 @@ library(here)
 register(MulticoreParam(workers = 2))
 source(here("src", "R", "utils.R"))
 
-data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
-data <- data[1:50, ]
+TEST <- TRUE
+if (TEST) {
+  data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
+  data <- data[1:50, ]
+} else {
+  public_data <- here("remote", "public_data")
+  combined_file <- here(public_data, "all_tumors_rnaseq.h5ad")
+  data <- readH5AD(combined_file)
+}
+
 # TODO: replace this with the complete dataset
 outdir <- here("data", "output", "feature_selection")
 date <- "" # TODO: need to get the date before running
@@ -20,11 +28,10 @@ date <- "" # TODO: need to get the date before running
 ## --- CODE BLOCK ---
 p_threshold <- 0.05
 group <- "Project_ID"
-technical_factors <- c("Sample_Type")
+technical_factors <- c("Sample_Type", "Project_ID")
 
 colData(data)$Project_ID <- str_replace(colData(data)$Project_ID, "-", ".")
 colData(data)$Sample_Type <- str_replace(colData(data)$Sample_Type, " ", "_")
-
 counts <- assays(data)$X |> `rownames<-`(rowData(data)[, 1])
 
 ## * DGE with ALDEx2
@@ -73,8 +80,7 @@ get_aldex <- function(f) {
   write_tsv(test, here(outdir, "ALDEx2_test.tsv"))
 }
 aldex_average_file <- here(outdir, "ALDEx2_averaged_effect.tsv")
-
-## aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
+aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
 
 ## * With edgeR
 
@@ -111,7 +117,7 @@ get_edgeR <- function(f) {
 }
 
 edgeR_top_file <- here(outdir, "edgeR_top_types.tsv")
-## edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
+edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
 
 ## * With Seurat
 # <2025-02-21 Fri> isn't too useful since it doesn't give you the values used to

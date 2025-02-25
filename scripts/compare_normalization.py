@@ -39,7 +39,9 @@ if TEST:
     adata: ad.AnnData = ad.concat([loader(t, p) for p, t in test_sets.items()])
     adata.var.index = adata.var.index.to_series().str.replace("\\..*", "", regex=True)
 else:
-    adata: ad.AnnData = ad.read_h5ad()  # TODO: put in the combined file
+    public_data = here("remote", "public_data")
+    combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
+    adata: ad.AnnData = ad.read_h5ad(combined_file)
 
 
 add_gene_metadata(adata)  # Adds seqlengths among other things
