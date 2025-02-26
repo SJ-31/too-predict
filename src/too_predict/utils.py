@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 import importlib.resources as res
+import pickle
 from functools import reduce
 from pathlib import Path
 from typing import Callable
@@ -465,3 +466,14 @@ def training_data_internal() -> ad.AnnData:
     print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
     print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
     return adata
+
+
+def write_pickle(obj, filename) -> None:
+    with open(filename, "wb") as pck:
+        pickle.dump(obj, pck, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def load_pickle(filename):
+    with open(filename, "rb") as pck:
+        obj = pickle.load(pck)
+    return obj

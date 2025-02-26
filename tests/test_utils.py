@@ -40,6 +40,7 @@ from too_predict.utils import (
     library,
     phi_proportionality,
     r_cleanup,
+    rename_genes,
     source,
     str_mode,
 )
@@ -66,40 +67,5 @@ def loader(path, type):
 
 adata: ad.AnnData = ad.concat([loader(t, p) for p, t in test_sets.items()])
 adata.var.index = adata.var.index.to_series().str.replace("\\..*", "", regex=True)
-
-# * Creating proportionality matrix
-# #  --- CODE BLOCK ---
-
-result = np.zeros((10, 10))
-length = adata.var.index[:10]
-for i, _ in enumerate(length):
-    # for j, _ in enumerate(length):
-    #     if i != j and j >= i:
-    #         result[i, j] = i * j
-    #         The below has the same effect as this
-    if i == len(length) - 1:
-        break
-    for j in range(i + 1, len(length)):
-        result[i, j] = i * j
-    # Want to get start, stop of j
-
-counts = adata.X.toarray()
-from dask.distributed import Client, as_completed
-from dask_jobqueue import SLURMCluster
-
-cluster = SLURMCluster(cores=2, memory="20GB")
-client = Client(cluster)
-tmp = []
-for i, _ in enumerate(adata.var.index):
-    futures = client.map(
-        lambda x: phi_proportionality(counts[:, i], counts[:, x]),
-        range(len(adata.var.index)),
-    )
-    tmp.append([r for r, _ in as_completed(futures)])
-phi_matrix = np.array(result)
-print("Completed phi")
-print(phi_matrix.shape)
-
-#
 
 # #  --- CODE BLOCK ---
