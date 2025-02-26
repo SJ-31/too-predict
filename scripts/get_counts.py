@@ -10,13 +10,20 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from pyhere import here
-from too_predict.utils import collect_gdc_counts, into_pseudobulks, read_existing
+from scipy.io import mmread
+from too_predict.utils import (
+    add_gene_metadata,
+    collect_gdc_counts,
+    into_pseudobulks,
+    read_existing,
+    rename_genes,
+)
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename=here("get_counts.log", level=logging.DEBUG))
+logging.basicConfig(filename=here("get_counts.log"), level=logging.DEBUG)
 
 public_data = here("remote", "public_data")
-outdir = here(public_data, "h5ad")
+outdir: Path = here(public_data, "h5ad")
 metadata_dir = here(public_data, "metadata")
 id_mapping_file = here("data", "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv")
 
@@ -52,7 +59,15 @@ def get_coad(f):
 
 # read_existing(here(public_data, "TCGA_COAD-READ_tpm.h5ad"), get_coad, lambda x: x)
 
-allowed_types = {"Primary Tumor", "Recurrent Tumor", "Metastatic"}
+allowed_types = {
+    "Primary Tumor",
+    "Recurrent Tumor",
+    "Metastatic",
+    "Primary Blood Derived Cancer - Bone Marrow",
+    "Primary Blood Derived Cancer - Peripheral Blood",
+    "Recurrent Blood Derived Cancer - Bone Marrow",
+    "Recurrent Blood Derived Cancer - Peripheral Blood",
+}
 for project, cases in zip(
     [all_tcga, all_target, all_cptac, all_cgci],
     [tcga_cases, target_cases, cptac_cases, cgci_cases],
@@ -61,7 +76,11 @@ for project, cases in zip(
 
         def fn(p):
             adata = collect_gdc_counts(here(public_data, t), case_table=cases)
-            adata = adata[adata.obs["Sample_Type"].isin(allowed_types), :]
+            adata = adata[
+                adata.obs["Sample_Type"].isin(allowed_types)
+                | adata.obs["Sample_Type"].str.contains("Primary Tumor"),
+                :,
+            ]
             adata.write_h5ad(p)
             return adata
 
@@ -122,15 +141,14 @@ def geo_reader_hf(
     accession = re.sub("-.*", "", dirname)
     adata: ad.AnnData = reader(here(GEO_PATH, dirname))
     # 'reader' must specify Case_ID
-    obs = pd.DataFrame(
-        {
-            "tumor_type": tumor_type,
-            "Sample_Type": "Organoid",
-            "Project_ID": accession,
-            "primary_site": primary_site,
-        }
-    )
-    adata.obs = pd.concat([adata.obs, obs], axis="columns")
+    obs = {
+        "tumor_type": tumor_type,
+        "Sample_Type": "Organoid",
+        "Project_ID": accession,
+        "primary_site": primary_site,
+    }
+    for o in obs.keys():
+        adata.obs.loc[:, o] = obs[o]
     return adata
 
 
@@ -147,7 +165,7 @@ def count_reader(
             df = pd.read_csv(filename)
         else:
             df = pd.read_csv(filename, sep="\t")
-        if count_col and id_col:
+        if (count_col is not None) and (id_col is not None):
             df = df.iloc[:, [id_col, count_col]]
         gene_ids = df.iloc[:, 0]
         df = df.iloc[:, 1:]
@@ -162,6 +180,8 @@ def count_reader(
             var=pd.DataFrame(index=gene_ids),
             obs=pd.DataFrame({"Case_ID": name}, index=counts.index),
         )
+        adata.var_names_make_unique()
+        adata.obs_names_make_unique()
         return adata
 
     if path.is_dir():
@@ -172,7 +192,7 @@ def count_reader(
 
 def count_reader_scrnaseq(
     path: Path,
-    id_col,
+    id_col: str = "",
     prefixes=(),
     counts_files=(),
     anno_files=(),
@@ -187,18 +207,25 @@ def count_reader_scrnaseq(
         elif counts_files and anno_files:
             cf = counts_files[index]
             af = anno_files[index]
-            counts = pd.read_csv(cf, sep="," if "csv" in cf else "\t")
-            anno = pd.read_csv(af, sep="," if "csv" in af else "\t")
-            adata = ad.AnnData(
-                X=counts, obs=anno, var=pd.DataFrame(index=counts.iloc[:, 0])
+            counts = pd.read_csv(path.joinpath(cf), sep="," if "csv" in cf else "\t")
+            anno = pd.read_csv(path.joinpath(af), sep="," if "csv" in af else "\t")
+            adata: ad.AnnData = ad.AnnData(
+                X=np.transpose(counts),
+                obs=anno,
+                var=pd.DataFrame(index=counts.iloc[:, 0]),
             )
         else:
             raise ValueError(
                 "Either a 10x prefix must be provided, or the names of counts and annotations files"
             )
+        adata.obs_names_make_unique()
+        adata.var_names_make_unique()
         if not one_per_file:
             by_sample = adata.obs.groupby(id_col).agg("first")
+            print(f"Shape before: {adata.shape}")
+            print(by_sample.shape)
             pb = into_pseudobulks(adata, how="sum", id_col=id_col)
+            print(f"Shape after pseudobulking: {pb.shape}")
             return ad.AnnData(
                 X=pb.X, obs=by_sample, var=pd.DataFrame(index=pb.var.index)
             )
@@ -206,7 +233,7 @@ def count_reader_scrnaseq(
             counts = adata.X.sum(axis=0)
             return ad.AnnData(
                 X=counts,
-                obs=pd.DataFrame({"Case_ID": one_per_file[index]}),
+                obs=pd.DataFrame({"Case_ID": one_per_file[index]}, index=[0]),
                 var=pd.DataFrame(index=adata.var.index),
             )
 
@@ -226,23 +253,10 @@ def get_GSE202263(x):
     adata = count_reader_scrnaseq(
         x,
         id_col=id_col,
-        counts_files=("GSE202263_UMIcounts_all_samples_HGSOC_organoids_v2.tsv.gz"),
-        anno_files=("GSE202263_cell_type_sample_annotation_v2.tsv.gz"),
+        counts_files=["GSE202263_UMIcounts_all_samples_HGSOC_organoids_v2.tsv.gz"],
+        anno_files=["GSE202263_cell_type_sample_annotation_v2.tsv.gz"],
     )
     wanted = adata.obs[id_col].str.contains("organoid\\.primary")
-    adata = adata[wanted, :]
-    return adata
-
-
-def get_GSE203608(x):
-    id_col = "Patient"
-    adata = count_reader_scrnaseq(
-        x,
-        id_col=id_col,
-        counts_files=("GSE203608_gene_by_cell_count_matrix.txt.gz"),
-        anno_files=("GSE203608_cell_annotation.csv.gz"),
-    )
-    wanted = adata.obs["SampleType"] == "Tumoroid"
     adata = adata[wanted, :]
     return adata
 
@@ -252,30 +266,45 @@ def get_GSE218385(x):
         " "
     )
     dfs = [pd.read_csv(x.joinpath(p), sep=" ").sum(axis=1) for p in paths]
-    case_ids = [p.stem for p in paths]
+    case_ids = [p.replace(".csv.gz", "") for p in paths]
     all = pd.concat(dfs, axis="columns")
     return ad.AnnData(
-        X=all,
+        X=np.transpose(all),
         obs=pd.DataFrame({"Case_ID": case_ids}),
         var=pd.DataFrame(index=all.index),
     )
+
+
+def get_GSE198697(x):
+    adata = count_reader(x, 4, 0)
+    adata.obs["Case_ID"] = (
+        "GSM5955281",
+        "GSM5955282",
+        "GSM5955283",
+        "GSM5955305",
+        "GSM5955306",
+        "GSM5955307",
+        "GSM5955329",
+        "GSM5955330",
+        "GSM5955331",
+    )
+    return adata
 
 
 # ** Get all GEO
 # Map of dirname -> [tumor type, primary_site, fn to read]
 geo_map = {
     "GSE185335-pdac_organoid": ["PAAD", "pancreas", count_reader],
-    "GSE198697-crc_organoid": ["COAD-READ", "colon", lambda x: count_reader(x, 0, 4)],
+    "GSE198697-crc_organoid": ["COAD-READ", "colon", get_GSE198697],
     "GSE201740-rb_organoid": ["RB", "eye and adnexa", count_reader],
-    "GSE202263-ovary_organoid": ["OV", "ovary", get_GSE202263],
-    "GSE203608-crc_organoid": ["COAD-READ", "colon", get_GSE203608],
+    "GSE202263-ovary_organoid": ["OV", "ovary", get_GSE202263],  # BUG
     "GSE212014-pdac_organoid": ["PAAD", "pancreas", count_reader],
     "GSE214295-pc_organoid": [
         "PAAD",
         "pancreas",
         lambda x: count_reader_scrnaseq(
             x,
-            prefixes=["GSM6603327_PDO001_", "GSM6603327_PDO002_", "GSM6603327_PDO003_"],
+            prefixes=["GSM6603327_PDO001_", "GSM6603328_PDO002_", "GSM6603329_PDO003_"],
             one_per_file=["PDO001", "PDO002", "PDO003"],
         ),
     ],
@@ -285,12 +314,12 @@ geo_map = {
     "GSE230383-eac_organoid": ["ESCA", "esophagus", count_reader],
     "GSE233468-lung_organoid": ["LUSC", "bronchus and lung", count_reader],
     "GSE233532-brain_organoid": [
-        "HGG",
+        "GBM",
         "brain",
         lambda x: count_reader_scrnaseq(
             x,
             prefixes=[
-                "GSM7429909_19040X1_filtered_feature_bc_matrix.h5"
+                "GSM7429909_19040X1_filtered_feature_bc_matrix.h5",
                 "GSM7429910_19040X2_filtered_feature_bc_matrix.h5",
                 "GSM7429911_19476X1_filtered_feature_bc_matrix.h5",
                 "GSM7429912_19476X2_filtered_feature_bc_matrix.h5",
@@ -383,16 +412,174 @@ geo_map = {
 geo_adatas = []
 index_outdir = here("data", "indices_tmp_Monday_Feb-24-2025")
 case_outdir = here("data", "cases_tmp_Monday_Feb-24-2025")
-for dir, tup in geo_map.items():
-    try:
-        current: ad.AnnData = geo_reader_hf(dir, *tup)
-        current.var.index.to_series().to_csv(here(index_outdir, f"{dir}.csv"))
-        current.obs["Case_ID"].to_csv(here(case_outdir, f"{dir}.csv"))
-    except Exception as e:
-        logger.debug(f"------\n Reading {dir} failed")
-        logger.debug(str(e))
-        logger.debug("------------------------")
 
-    # current.write
-    # TODO: need to unify gene naming schemes...
-    # geo_adatas.append(current)
+hugo_names: set = {
+    "GSE214295-pc_organoid",
+    "GSE218385-rhabdoid_organoid",
+    "GSE223554-salivary_organoid",
+    "GSE233532-brain_organoid",
+    "GSE235548-pdac_organoid",
+    "GSE243649-pdac_organoid",
+    "GSE249670-pdac_organoid",
+    "GSE247380-brain_organoid",
+    "GSE253558-crc_organoid",
+    "GSE261012-crc_organoid",
+    "GSE277147-ead_organoid",
+    "GSE278302-osteosarcoma_organoid",
+}
+entrez_names: set = {"GSE262110-breast_organoid", "GSE270210-crc_organoid"}
+
+
+# ** Run function
+def get_all_geo(f):
+    PROBLEMATIC: set = {"GSE202263-ovary_organoid"}
+    for dir, tup in geo_map.items():
+        final_var = here(index_outdir, f"var_{dir}.csv")
+        failed_genes = here(index_outdir, f"{dir}_failed_rename.csv")
+        if dir not in PROBLEMATIC:
+            current: ad.AnnData = geo_reader_hf(dir, *tup)
+            if dir in entrez_names:
+                current, failed = rename_genes(current, "entrez", "ensembl")
+                failed.var.to_csv(failed_genes)
+            elif dir in hugo_names:
+                current, failed = rename_genes(current, "symbol", "ensembl")
+                failed.var.to_csv(failed_genes, index=False)
+                print(f"Reading {dir} success")
+            current.var.index.rename("gene_id", inplace=True)
+            current.var.to_csv(final_var)
+            if len(current.var.index) > 0 and "." in current.var.index[0]:
+                current.var.index = current.var.index.to_series().str.replace(
+                    "\\..*", "", regex=True
+                )
+            current.var_names_make_unique()
+            current.obs_names_make_unique()
+            geo_adatas.append(current)
+    geo_all = ad.concat(geo_adatas, axis="obs", join="outer", merge="same")
+    geo_all.write_h5ad(f)
+
+
+geo_all_file = here(outdir, "geo_all.h5ad")
+read_existing(
+    geo_all_file,
+    get_all_geo,
+)
+
+
+# * Combine all samples
+
+
+def get_types(project_id: str, ttype):
+    if "-COAD" in project_id or "-READ" in project_id:
+        return "COAD-READ"
+    if "TCGA-" in project_id or "CHULA-" in project_id:
+        return re.sub(".*-", "", project_id, count=1)
+    elif "GSE" in project_id:
+        return ttype
+    else:
+        tumor_type_map: dict = {
+            "TARGET-NBL": "NBL",
+            "TARGET-OS": "SARC",
+            "TARGET-WT": "WT",
+            "TARGET-RT": "RHBD",
+        }
+        return tumor_type_map.get(project_id, np.nan)
+
+
+def classify(disease_type: str, primary_site: str, tumor_type: str):
+    if isinstance(tumor_type, str) and len(tumor_type) > 0:
+        return tumor_type
+    disease_type = str(disease_type)
+    if re.match("Neoplasms", disease_type) and primary_site in {}:
+        return "COAD-READ"
+    elif re.match("Squamous", disease_type) and primary_site == "Bronchus and lung":
+        return "LUSC"
+    elif (
+        disease_type in {"Adenomas and Adenocarcinomas", "Epithelial Neoplasms, NOS"}
+        and primary_site == "Bronchus and lung"
+    ):
+        return "LUAD"
+    elif primary_site == "Cervix uteri":
+        return "CESC"
+    elif (
+        primary_site == "Uterus, NOS" and disease_type == "Adenomas and Adenocarcinomas"
+    ):
+        return "UCEC"
+    elif primary_site == "Kidney":
+        return "KIRC"
+    elif primary_site == "Breast":
+        return "BRCA"
+    elif (primary_site == "Ovary") or (
+        primary_site == "Retroperitoneum and peritoneum"
+        and disease_type == "Cystic, Mucinous and Serous Neoplasms"
+    ):
+        return "OV"
+    elif primary_site == "Pancreas":
+        return "PAAD"
+    elif primary_site == "Brain":
+        return "LGG"  # Could also be GBM but there is no way of knowing
+    elif (
+        disease_type == "Mature B-Cell Lymphomas"
+        or primary_site == "Hematopoietic and reticuloendothelial systems"
+    ):
+        return "DLBC"
+    elif primary_site == "Colon" or primary_site == "Rectum":
+        return "COAD-READ"
+    return "Unknown"
+
+
+def read_helper(p):
+    adata: ad.AnnData = ad.read_h5ad(p)
+    if len(adata) == 0:
+        print(f"WARNING: {p} is empty")
+    if "gene_id" not in adata.var:
+        adata.var["gene_id"] = adata.var.index.to_series()
+    else:
+        adata.var.index = adata.var["gene_id"]
+    adata, failed = rename_genes(adata, remove_versions=True)
+    # all_ens = adata.var.index.to_series().str.match("ENS")
+    adata.var_names_make_unique()
+    return adata
+
+
+def clean_sample_type(x):
+    if "Primary Tumor" in x:
+        return "Primary"
+    elif "Recurrent Tumor" in x:
+        return "Recurrent"
+    elif "Primary Blood" in x:
+        return "Primary Blood"
+    elif "Recurrent Blood" in x:
+        return "Recurrent Blood"
+    return x
+
+
+combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
+all_ads = [read_helper(p) for p in outdir.iterdir()]
+all_ads = list(filter(lambda x: len(x) > 0, all_ads))
+combined = ad.concat(all_ads, axis="obs", join="outer", merge="same")
+combined.obs["tumor_type"] = [
+    get_types(p, t)
+    for p, t in zip(combined.obs["Project_ID"], combined.obs["tumor_type"])
+]
+combined.obs["tumor_type"] = [
+    classify(d, p, t)
+    for d, p, t in combined.obs.loc[
+        :, ["disease_type", "primary_site", "tumor_type"]
+    ].itertuples(index=False)
+]
+
+combined.obs["Sample_Type"] = combined.obs["Sample_Type"].apply(clean_sample_type)
+for col in ["primary_site", "Sample_Type"]:
+    combined.obs[col] = (
+        combined.obs[col]
+        .str.replace(" ", "_", regex=True)
+        .str.lower()
+        .str.replace(",", "")
+    )
+combined.obs_names_make_unique()
+add_gene_metadata(combined)
+combined.obs.to_csv(here("all_obs.csv"))
+combined.write_h5ad(combined_file)
+
+# When you make the combined adata obj, be sure to extract the genes that are missing in at least one sample. Check with a plot to see which samples could be outliers
+# e.g. not aligned to hg38
