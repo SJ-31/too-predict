@@ -7,12 +7,11 @@ from typing import Callable
 
 import anndata as ad
 import anndata2ri
-import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
-from anndata._io.h5ad import idx_chunks_along_axis
+from pyhere import here
 from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
     NACharacterType,
@@ -96,9 +95,28 @@ def r_cleanup(fn: Callable):
     return wrp
 
 
-# TODO: make a wrapper for skbio.stats.composition.alr to take a colname if it's been
-# given a df or adata
-#
+def filter_by_obs(
+    adata: ad.AnnData, key: str, min: int = 0, max: int = np.inf
+) -> tuple[ad.AnnData, list[str]]:
+    """Filter adata by a category/factor column `key` in adata.obs
+
+    Removes levels of the `key` that do not meet the min and max requirements
+
+    Parameters
+    ----------
+    min : level must have at least this many observations to be kept
+    max : level must have at most this many observations to be kept
+
+    Returns
+    -------
+    A tuple of [filtered adata, list of discarded levels]
+
+    """
+    counts = adata.obs[key].value_counts()
+    mask = (counts >= min) & (counts < max)
+    discarded = counts[~mask].index.to_list()
+    counts = counts[mask]
+    return adata[adata.obs[key].isin(counts.index), :], discarded
 
 
 @r_cleanup
@@ -427,3 +445,23 @@ def cluster_gini(adata: ad.AnnData, clusters, label_col: str):
     unique = set(clusters)
     whole_gini = sum(map(gini_one, unique))
     return {k: v for k, v in zip(unique, ginis)}, whole_gini
+
+
+def training_data_internal() -> ad.AnnData:
+    public_data = here("remote", "public_data")
+    combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
+    adata: ad.AnnData = ad.read_h5ad(combined_file)
+    old_shape = adata.shape
+    print(f"Initial shape: {old_shape}")
+    min_samples = round(len(adata) * 0.1)  # Roughly at least 10% of samples
+    sc.pp.filter_cells(adata, min_counts=5000)
+    sc.pp.filter_genes(adata, min_cells=min_samples)
+    sc.pp.filter_genes(adata, min_counts=200)
+    adata, discarded_types = filter_by_obs(adata, "tumor_type", min=50)
+    adata, discarded_sites = filter_by_obs(adata, "primary_site", min=50)
+    print(f"Discarded primary_site: {discarded_sites}")
+    print(f"Discarded tumor_type: {discarded_types}")
+    print(f"Final shape after filtering: {adata.shape}")
+    print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
+    print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
+    return adata
