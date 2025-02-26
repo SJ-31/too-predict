@@ -175,9 +175,10 @@ def add_gene_metadata(
 
 def rename_genes(
     data: pd.DataFrame | ad.AnnData,
-    old: str,
-    new: str,
+    old: str = "",
+    new: str = "",
     use_ensembl_versions: bool = False,
+    remove_versions: bool = False,
     id_col: str = "",
     mapping_file: str = "",
 ) -> tuple:
@@ -188,7 +189,7 @@ def rename_genes(
         the second being failed entries i.e. old name not found in the lookup
     """
     options: set = {"ensembl", "entrez", "symbol"}
-    if len({old, new} & options) != 2:
+    if len({old, new} & options) != 2 and (not remove_versions):
         raise ValueError(f"Only {options} are supported for `old`, `new`")
     if mapping_file:
         id_map = pd.read_csv(mapping_file, sep="\t")
@@ -203,23 +204,26 @@ def rename_genes(
         df = data
 
     old_names: pd.Series = df.index.to_series() if not id_col else df[id_col]
-    if use_ensembl_versions and old == "ensembl":
-        old = "ensembl_w_id"
-    if old == "symbol":
+    if not remove_versions:
+        if use_ensembl_versions and old == "ensembl":
+            old = "ensembl_w_id"
+        if old == "symbol":
 
-        def get_correct_symbol(symbol, synonym):
-            if symbol in old_names:
-                return symbol
-            elif synonym in old_names:
-                return synonym
-            return np.nan
+            def get_correct_symbol(symbol, synonym):
+                if symbol in old_names:
+                    return symbol
+                elif synonym in old_names:
+                    return synonym
+                return np.nan
 
-        id_map.loc[:, "symbol"] = id_map["symbol"].combine(
-            id_map["symbol_synonym"], get_correct_symbol
-        )
+            id_map.loc[:, "symbol"] = id_map["symbol"].combine(
+                id_map["symbol_synonym"], get_correct_symbol
+            )
 
-    lookup: dict = {k: v for k, v in zip(id_map[old], id_map[new])}
-    new_names: pd.Series = old_names.apply(lambda x: lookup.get(x, np.nan))
+        lookup: dict = {k: v for k, v in zip(id_map[old], id_map[new])}
+        new_names: pd.Series = old_names.apply(lambda x: lookup.get(x, np.nan))
+    else:
+        new_names = old_names.str.replace("\\..*", "", regex=True)
     row_mask = new_names.notna()
     passed, failed = df.loc[row_mask, :], df.loc[~row_mask, :]
     new_names = new_names.dropna()
@@ -292,9 +296,10 @@ def collect_gdc_counts(
     count_col: str = "unstranded",
     sample_sheet: str = "",
     case_table: str = "",
-    case_cols: tuple = ("primary_site",),
+    case_cols: tuple = ("primary_site", "disease_type"),
     case_id_col: str = "submitter_id",
     use_dask=True,
+    verbose: bool = False,
 ) -> ad.AnnData:
     if not sample_sheet:
         sample_sheet = str(next(Path(dir).glob("gdc_sample_sheet*")))
@@ -302,18 +307,29 @@ def collect_gdc_counts(
         columns=lambda x: x.replace(" ", "_")
     )
     missing: set = set(samples["File_ID"])
+    not_found: list = []
     count_dfs = []
     for d, p in zip(samples["File_ID"], samples["File_Name"]):
         try:
             cur = read_gdc_counts(Path(dir).joinpath(d).joinpath(p), d, count_col)
+            if verbose:
+                print(f"Reading {dir} successful")
+                print(cur)
             if d in missing:  # Account for multiple samples from same case
                 missing.remove(d)
             count_dfs.append(cur)
         except FileNotFoundError:
             print(f"WARNING: File in directory {d} not found")
+            not_found.append(d)
+    if verbose:
+        n_not_found = len(samples["File_ID"])
+        print(f"Number of directories not found: {n_not_found}")
+        print(not_found)
+        print()
     joined = reduce(
         lambda x, y: x.join(y, on=["gene_id", "gene_name"], how="outer"), count_dfs
     )
+    print(f"Shape of joined dfs: {joined.shape}")
     samples = samples.loc[~samples["Case_ID"].isin(missing), :]
     var_df = joined.index.to_frame(index=False)
     if case_table:
@@ -325,9 +341,15 @@ def collect_gdc_counts(
     return ad.AnnData(X=np.transpose(joined.values), obs=samples, var=var_df)
 
 
-def read_existing[T](filename: Path, expr: Callable[[Path], T], read_fn) -> T:
-    if filename.exists():
+def read_existing[T](
+    filename: Path,
+    expr: Callable[[Path], T],
+    read_fn: Callable[[Path], T] | None = None,
+) -> T | None:
+    if filename.exists() and read_fn is not None:
         return read_fn(filename)
+    elif filename.exists():
+        return
     else:
         return expr(filename)
 
