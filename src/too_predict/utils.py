@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
+import too_predict
 from pyhere import here
 from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
@@ -25,8 +26,6 @@ from rpy2.robjects import RObject, pandas2ri
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
-
-import too_predict
 
 NA_TYPES: set = {
     NACharacterType,

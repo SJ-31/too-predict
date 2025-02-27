@@ -4,12 +4,14 @@ __pycache__/
 build/
 dist/
 rust/target
+src/too_predict/_rust_helpers*
 rust/Cargo.lock
 wheels/
 *.egg-info
 
 # Virtual environments
 .venv
+data
 /.stfolder/
 /.stignore
 /.here

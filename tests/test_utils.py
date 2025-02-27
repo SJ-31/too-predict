@@ -10,12 +10,14 @@ import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
 import skbio.stats.composition as comp
+import sklearn.metrics as sm
 import too_predict
 from pyhere import here
 from rpy2.rinterface import SexpVector
 from rpy2.robjects import default_converter, numpy2ri
 from rpy2.robjects.packages import importr
 from scipy import sparse, stats
+from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import (
     StratifiedKFold,
@@ -67,5 +69,12 @@ def loader(path, type):
 
 adata: ad.AnnData = ad.concat([loader(t, p) for p, t in test_sets.items()])
 adata.var.index = adata.var.index.to_series().str.replace("\\..*", "", regex=True)
+
+kmm = KMeans(n_clusters=4)
+assignments = kmm.fit_predict(adata.X)
+
+
+sc.pp.pca(adata)
+sc.pl.pca(adata, color="tumor_type")
 
 # #  --- CODE BLOCK ---

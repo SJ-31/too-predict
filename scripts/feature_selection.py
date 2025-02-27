@@ -19,9 +19,8 @@ from too_predict.utils import read_existing, training_data_internal
 
 # #  --- CODE BLOCK ---
 
-date = "2025-02-25"  # Insert date
 outdir = here("data", "output", "feature_selection")
-TEST = True
+TEST = False
 if TEST:
     data_file = here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad")
     adata = ad.read_h5ad(data_file)
@@ -42,9 +41,9 @@ labels = adata.obs["primary_site"]
 # #  --- CODE BLOCK ---
 
 # * Output files
-low_variance_file = here(outdir, f"sklearn_low_variance-{date}.csv")
-proportionality_file = here(outdir, f"proportionality_matrix-{date}.csv")
-mutual_info_file = here(outdir, f"mutual_info-{date}.csv")
+low_variance_file = here(outdir, "sklearn_low_variance.csv")
+proportionality_file = here(outdir, "proportionality_matrix.csv")
+mutual_info_file = here(outdir, "mutual_info.csv")
 
 # * Identify stable features for ALR
 
@@ -58,7 +57,7 @@ def variance_threshold(f):
     low_variance.loc[:, "variance"] = np.nanvar(n_counts, axis=0)[~vt.get_support()]
     low_variance = low_variance.sort_values("variance")
     sns.histplot(low_variance["variance"])
-    plt.savefig(here(outdir, f"sklearn_variance-{date}.png"))
+    plt.savefig(here(outdir, "sklearn_variance.png"))
     low_variance.to_csv(f, index=False)
 
 
@@ -126,15 +125,28 @@ def recursive_selection(f, est, prefix: str):
     kept_features = adata.var.loc[rfecv.get_support(), :]
 
 
-# rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
-# rfecv.fit(adata, y=labels)
+# * Run
 
-if not TEST:
-    cluster = SLURMCluster(cores=4, memory="25 GB")
+
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--memory", default="30")
+    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-n", "--no_dask", default=False, action="store_true")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
     client = Client(cluster)
-
-    with joblib.parallel_backend("dask"):
+    backend = "dask" if not args.no_dask else "loky"
+    with joblib.parallel_backend(backend):
         low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
         mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
         prop = read_existing(proportionality_file, get_proportionality, pd.read_csv)
         # TODO: add in recursive selection
+        # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
+        # rfecv.fit(adata, y=labels)

@@ -13,14 +13,14 @@ py_config()
 register(MulticoreParam(workers = 8))
 source(here("src", "R", "utils.R"))
 
-TEST <- TRUE
+TEST <- FALSE
 if (TEST) {
   data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
   data <- data[1:50, ]
 } else {
   pyutils <- new.env()
   source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
-  data <- AnnData2SCE(pyutils$training_data_internal())
+  data <- AnnData2SCE(pyutils$training_data_internal(TRUE))
   rm(pyutils)
 }
 
@@ -89,7 +89,7 @@ aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
 
 # Goal: finding the top DEGs in each class
 get_edgeR <- function(f) {
-  dge <- DGEList(counts = assays(data)$X, samples = colData(data), genes = rowData(data))
+  dge <- DGEList(counts = counts, samples = colData(data), genes = rowData(data))
   normLibSizes(dge)
   factor_str <- paste0(c(group, technical_factors), collapse = " + ")
   mm <- model.matrix(as.formula(paste("~0+", factor_str)), data = colData(data))

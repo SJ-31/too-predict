@@ -1,12 +1,13 @@
 #!/usr/bin/env ipython
 
 import logging
-import pickle
 
 import anndata as ad
 import joblib
+import numpy as np
 import pandas as pd
 import scanpy as sc
+import sklearn.metrics as sm
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
@@ -75,45 +76,75 @@ if TEST:
 else:
     adata = training_data_internal()
 
-cluster = SLURMCluster(cores=8, memory="25 GB")
-client = Client(cluster)
-
 
 date = "Thursday_Feb-27-2025"
 vars = ["tumor_type", "primary_site"]
-all_ginis = []
-with joblib.parallel_backend("dask"):
-    for i in IMPLEMENTED_IMPUTATION:
-        for n in IMPLEMENTED_NORMALIZATION:
-            if "alr" in n or i is None:
-                continue
-            normalized = helper(adata, i=i, n=n)
-            if normalized is not None:
-                try:
-                    for v in vars:
-                        if not ((var_dir := here(outdir, v)).exists()):
-                            var_dir.mkdir(exist_ok=True)
-                        filename = here(var_dir, f"{date}-{i}_{n}.png")
-                        n_clusters = len(normalized.obs[v].unique())
-                        kmm = KMeans(n_clusters=n_clusters)
-                        assignments = kmm.fit_predict(normalized.X)
-                        normalized.obs["kmm"] = assignments
+all_metrics = []
 
-                        ginis, whole = cluster_gini(normalized, "kmm", v)
-                        gini_df = pd.DataFrame(ginis, index=[0])
-                        gini_df["whole"] = whole
-                        gini_df["label"] = v
-                        gini_df["normalization"] = n
-                        gini_df["imputation"] = i
-                        all_ginis.append(gini_df)
-                        fig = sc.pl.pca(normalized, color=[v, "kmm"], return_fig=True)
-                        fig.set_size_inches(15, 15)
-                        fig.savefig(filename, dpi=500, bbox_inches="tight")
-                except ValueError as e:
-                    logger.error(
-                        f"ValueError with imputation {i} and normalization {n}"
-                    )
-                    logger.error(e)
 
-    all_df = pd.concat(all_ginis, ignore_index=True)
-    all_df.to_csv(here(outdir, f"{date}-gini_impurity.csv"), index=False)
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--memory", default="30")
+    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-n", "--no_dask", default=False, action="store_true")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    cluster = SLURMCluster(cores=args.cores, memory=f"{args.memory} GB")
+    client = Client(cluster)
+    backend = "dask" if not args.no_dask else "loky"
+    with joblib.parallel_backend(backend):
+        for i in IMPLEMENTED_IMPUTATION:
+            for n in IMPLEMENTED_NORMALIZATION:
+                if "alr" in n or i is None:
+                    continue
+                normalized = helper(adata, i=i, n=n)
+                if normalized is not None:
+                    try:
+                        for v in vars:
+                            if not ((var_dir := here(outdir, v)).exists()):
+                                var_dir.mkdir(exist_ok=True)
+                            filename = here(var_dir, f"{date}-{i}_{n}.png")
+                            n_clusters = len(normalized.obs[v].unique())
+                            kmm = KMeans(n_clusters=n_clusters)
+                            assignments = kmm.fit_predict(normalized.X)
+                            normalized.obs["kmm"] = assignments
+
+                            ginis, whole = cluster_gini(normalized, "kmm", v)
+                            metric_df = pd.DataFrame(ginis, index=[0])
+                            metric_df["whole"] = whole
+                            metric_df["silhouette_score"] = sm.silhouette_score(
+                                normalized.X, normalized.obs[v]
+                            )
+                            counts = (
+                                normalized.X
+                                if isinstance(normalized.X, np.ndarray)
+                                else normalized.X.toarray()
+                            )
+                            metric_df["davies_bouldin_score"] = sm.davies_bouldin_score(
+                                counts, normalized.obs[v]
+                            )
+                            metric_df["calinski_harabasz_score"] = (
+                                sm.calinski_harabasz_score(counts, normalized.obs[v])
+                            )
+                            metric_df["label"] = v
+                            metric_df["normalization"] = n
+                            metric_df["imputation"] = i
+                            all_metrics.append(metric_df)
+                            fig = sc.pl.pca(
+                                normalized, color=[v, "kmm"], return_fig=True
+                            )
+                            fig.set_size_inches(15, 15)
+                            fig.savefig(filename, dpi=500, bbox_inches="tight")
+                    except ValueError as e:
+                        logger.error(
+                            f"ValueError with imputation {i} and normalization {n}"
+                        )
+                        logger.error(e)
+
+        all_df = pd.concat(all_metrics, ignore_index=True)
+        all_df.to_csv(here(outdir, f"{date}-gini_impurity.csv"), index=False)
