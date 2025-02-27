@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from pyhere import here
+from scipy import sparse
 from scipy.io import mmread
 from too_predict.utils import (
     add_gene_metadata,
@@ -553,33 +554,37 @@ def clean_sample_type(x):
     return x
 
 
+def get_combined(f):
+    all_ads = [read_helper(p) for p in outdir.iterdir()]
+    all_ads = list(filter(lambda x: len(x) > 0, all_ads))
+    combined = ad.concat(all_ads, axis="obs", join="outer", merge="same")
+    combined.obs["tumor_type"] = [
+        get_types(p, t)
+        for p, t in zip(combined.obs["Project_ID"], combined.obs["tumor_type"])
+    ]
+    combined.obs["tumor_type"] = [
+        classify(d, p, t)
+        for d, p, t in combined.obs.loc[
+            :, ["disease_type", "primary_site", "tumor_type"]
+        ].itertuples(index=False)
+    ]
+
+    combined.obs["Sample_Type"] = combined.obs["Sample_Type"].apply(clean_sample_type)
+    for col in ["primary_site", "Sample_Type"]:
+        combined.obs[col] = (
+            combined.obs[col]
+            .str.replace(" ", "_", regex=True)
+            .str.lower()
+            .str.replace(",", "")
+        )
+    combined.obs_names_make_unique()
+    add_gene_metadata(combined)
+    combined.obs.to_csv(here("all_obs.csv"))
+    combined.X[np.isnan(combined.X)] = 0
+    combined.X = sparse.csr_matrix(combined.X)
+    sc.pp.calculate_qc_metrics(combined, inplace=True)
+    combined.write_h5ad(f)
+
+
 combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
-all_ads = [read_helper(p) for p in outdir.iterdir()]
-all_ads = list(filter(lambda x: len(x) > 0, all_ads))
-combined = ad.concat(all_ads, axis="obs", join="outer", merge="same")
-combined.obs["tumor_type"] = [
-    get_types(p, t)
-    for p, t in zip(combined.obs["Project_ID"], combined.obs["tumor_type"])
-]
-combined.obs["tumor_type"] = [
-    classify(d, p, t)
-    for d, p, t in combined.obs.loc[
-        :, ["disease_type", "primary_site", "tumor_type"]
-    ].itertuples(index=False)
-]
-
-combined.obs["Sample_Type"] = combined.obs["Sample_Type"].apply(clean_sample_type)
-for col in ["primary_site", "Sample_Type"]:
-    combined.obs[col] = (
-        combined.obs[col]
-        .str.replace(" ", "_", regex=True)
-        .str.lower()
-        .str.replace(",", "")
-    )
-combined.obs_names_make_unique()
-add_gene_metadata(combined)
-combined.obs.to_csv(here("all_obs.csv"))
-combined.write_h5ad(combined_file)
-
-# When you make the combined adata obj, be sure to extract the genes that are missing in at least one sample. Check with a plot to see which samples could be outliers
-# e.g. not aligned to hg38
+combined = read_existing(combined_file, get_combined, ad.read_h5ad)
