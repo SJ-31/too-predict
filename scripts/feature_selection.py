@@ -1,22 +1,21 @@
 #!/usr/bin/env ipython
 
 import anndata as ad
+import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import rpy2
-import rpy2.robjects as ro
-import scanpy as sc
 import seaborn as sns
 import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
+from dask.distributed import Client
+from dask_jobqueue import SLURMCluster
 from pyhere import here
-from rpy2.robjects.packages import importr
 from sklearn.ensemble import RandomForestClassifier
 from too_predict.imputer import Imputer
 from too_predict.model import RandomForestPred
 from too_predict.normalizer import Normalizer
-from too_predict.utils import df_to_r, read_existing
+from too_predict.utils import read_existing, training_data_internal
 
 # #  --- CODE BLOCK ---
 
@@ -25,11 +24,10 @@ outdir = here("data", "output", "feature_selection")
 TEST = True
 if TEST:
     data_file = here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad")
+    adata = ad.read_h5ad(data_file)
 else:
-    public_data = here("remote", "public_data")
-    data_file = here(public_data, "all_tumors_rnaseq.h5ad")
+    adata = training_data_internal()
 
-adata = ad.read_h5ad(data_file)
 
 if TEST:
     adata = adata[:, 0:100]
@@ -42,11 +40,15 @@ labels = adata.obs["primary_site"]
 # Need to normalize first to move out of simplex
 #
 # #  --- CODE BLOCK ---
+
+# * Output files
+low_variance_file = here(outdir, f"sklearn_low_variance-{date}.csv")
+proportionality_file = here(outdir, f"proportionality_matrix-{date}.csv")
+mutual_info_file = here(outdir, f"mutual_info-{date}.csv")
+
 # * Identify stable features for ALR
 
 # ** Variance-based
-
-low_variance_file = here(outdir, f"sklearn_low_variance-{date}.csv")
 
 
 def variance_threshold(f):
@@ -58,9 +60,6 @@ def variance_threshold(f):
     sns.histplot(low_variance["variance"])
     plt.savefig(here(outdir, f"sklearn_variance-{date}.png"))
     low_variance.to_csv(f, index=False)
-
-
-# low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
 
 
 # ** Highest proportionality
@@ -95,6 +94,23 @@ def sfm(f):
     kept_features.to_csv()
 
 
+# ** Information
+# Try out information gain method
+# gene expression data is continuous though
+def entropy(y, base=2) -> float:
+    p = pd.Series(y).value_counts() / len(y)
+    entropy = -np.sum(p * np.emath.logn(base, p))
+    return entropy
+
+
+def mutual_info(f):
+    info = fs.mutual_info_classif(n_counts, labels)
+    info_df = pd.DataFrame({"feature": adata.var["gene_id"], "mutual_info": info})
+    info_df.sort_values("mutual_info", ascending=False, inplace=True)
+    info_df.to_csv(f, index=False)
+    # The higher the better here
+
+
 # ** Recursive
 #
 # <2025-02-21 Fri> define a different shuffle split
@@ -112,3 +128,13 @@ def recursive_selection(f, est, prefix: str):
 
 # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
 # rfecv.fit(adata, y=labels)
+
+if not TEST:
+    cluster = SLURMCluster(cores=4, memory="25 GB")
+    client = Client(cluster)
+
+    with joblib.parallel_backend("dask"):
+        low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
+        mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
+        prop = read_existing(proportionality_file, get_proportionality, pd.read_csv)
+        # TODO: add in recursive selection
