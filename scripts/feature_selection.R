@@ -5,8 +5,12 @@ library(zellkonverter)
 library(scRNAseq)
 library(edgeR)
 library(here)
+Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
+library(reticulate)
+use_python(here(".venv", "bin", "python3"))
+py_config()
 
-register(MulticoreParam(workers = 2))
+register(MulticoreParam(workers = 8))
 source(here("src", "R", "utils.R"))
 
 TEST <- TRUE
@@ -14,24 +18,22 @@ if (TEST) {
   data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
   data <- data[1:50, ]
 } else {
-  public_data <- here("remote", "public_data")
-  combined_file <- here(public_data, "all_tumors_rnaseq.h5ad")
-  data <- readH5AD(combined_file)
+  pyutils <- new.env()
+  source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+  data <- AnnData2SCE(pyutils$training_data_internal())
+  rm(pyutils)
 }
 
-# TODO: replace this with the complete dataset
 outdir <- here("data", "output", "feature_selection")
-date <- "" # TODO: need to get the date before running
+date <- "Thursday_Feb-27-2025" # TODO: need to get the date before running
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
 # for their effects
 ## --- CODE BLOCK ---
 p_threshold <- 0.05
-group <- "Project_ID"
+group <- "tumor_type"
 technical_factors <- c("Sample_Type", "Project_ID")
 
-colData(data)$Project_ID <- str_replace(colData(data)$Project_ID, "-", ".")
-colData(data)$Sample_Type <- str_replace(colData(data)$Sample_Type, " ", "_")
 counts <- assays(data)$X |> `rownames<-`(rowData(data)[, 1])
 
 ## * DGE with ALDEx2
@@ -79,6 +81,7 @@ get_aldex <- function(f) {
   write_tsv(effect, here(outdir, "ALDEx2_all_effect.tsv"))
   write_tsv(test, here(outdir, "ALDEx2_test.tsv"))
 }
+
 aldex_average_file <- here(outdir, "ALDEx2_averaged_effect.tsv")
 aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
 

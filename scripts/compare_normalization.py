@@ -27,6 +27,34 @@ datadir = here("data", "tests")
 outdir = here("data", "output", "normalization_comparison")
 logging.basicConfig(filename=here(outdir, "log"))
 
+
+def helper(adata, i: str, n: str) -> ad.AnnData | None:
+    if i == "labelled_median":
+        impute_fn = lambda x: Imputer(i).run(x, labels=adata.obs["tumor_type"])
+    else:
+        impute_fn = Imputer(i).run
+    output = here(outdir, "storage", f"{date}-{n}-{i}.h5ad")
+    if not output.exists():
+        normalized: ad.AnnData = Normalizer(
+            adata,
+            method=n,
+            impute_fn=impute_fn,
+            make_sparse=False,
+            inplace=False,
+        ).run()
+        try:
+            sc.pp.pca(normalized)
+            if "counts" in normalized.layers:
+                del normalized.layers["counts"]
+            normalized.write_h5ad(output)
+            return normalized
+        except ValueError as e:
+            logger.error(f"ValueError with imputation {i} and normalization {n}")
+            logger.error(e)
+    else:
+        return ad.read_h5ad(output)
+
+
 # #  --- CODE BLOCK ---
 TEST = False
 if TEST:
@@ -50,7 +78,8 @@ else:
 cluster = SLURMCluster(cores=8, memory="25 GB")
 client = Client(cluster)
 
-date = "Wednesday_Feb-26-2025"
+
+date = "Thursday_Feb-27-2025"
 vars = ["tumor_type", "primary_site"]
 all_ginis = []
 with joblib.parallel_backend("dask"):
@@ -58,49 +87,33 @@ with joblib.parallel_backend("dask"):
         for n in IMPLEMENTED_NORMALIZATION:
             if "alr" in n or i is None:
                 continue
-            if i == "labelled_median":
-                impute_fn = lambda x: Imputer(i).run(x, labels=adata.obs["tumor_type"])
-            else:
-                impute_fn = Imputer(i).run
-            normalized: ad.AnnData = Normalizer(
-                adata,
-                method=n,
-                impute_fn=impute_fn,
-                make_sparse=False,
-                inplace=False,
-            ).run()
+            normalized = helper(adata, i=i, n=n)
+            if normalized is not None:
+                try:
+                    for v in vars:
+                        if not ((var_dir := here(outdir, v)).exists()):
+                            var_dir.mkdir(exist_ok=True)
+                        filename = here(var_dir, f"{date}-{i}_{n}.png")
+                        n_clusters = len(normalized.obs[v].unique())
+                        kmm = KMeans(n_clusters=n_clusters)
+                        assignments = kmm.fit_predict(normalized.X)
+                        normalized.obs["kmm"] = assignments
 
-            try:
-                sc.pp.pca(normalized)
-                pca_file = here(outdir, f"{date}-{n}-{i}-pca.pickle")
-                pca_dict = {
-                    "PCs": normalized.varm["PCs"],
-                    "pca": normalized.uns["pca"],
-                    "X_pca": normalized.obsm["X_pca"],
-                }
-                write_pickle(pca_dict, pca_file)
-                for v in vars:
-                    if not ((var_dir := here(outdir, v)).exists()):
-                        var_dir.mkdir(exist_ok=True)
-                    filename = here(var_dir, f"{date}-{i}_{n}.png")
-                    n_clusters = len(normalized.obs[v].unique())
-                    kmm = KMeans(n_clusters=n_clusters)
-                    assignments = kmm.fit_predict(normalized.X)
-                    normalized.obs["kmm"] = assignments
-
-                    ginis, whole = cluster_gini(normalized, "kmm", v)
-                    gini_df = pd.DataFrame(ginis, index=[0])
-                    gini_df["whole"] = whole
-                    gini_df["label"] = v
-                    gini_df["normalization"] = n
-                    gini_df["imputation"] = i
-                    all_ginis.append(gini_df)
-                    fig = sc.pl.pca(normalized, color=[v, "kmm"], return_fig=True)
-                    fig.set_size_inches(15, 15)
-                    fig.savefig(filename, dpi=500, bbox_inches="tight")
-            except ValueError as e:
-                logger.error(f"ValueError with imputation {i} and normalization {n}")
-                logger.error(e)
+                        ginis, whole = cluster_gini(normalized, "kmm", v)
+                        gini_df = pd.DataFrame(ginis, index=[0])
+                        gini_df["whole"] = whole
+                        gini_df["label"] = v
+                        gini_df["normalization"] = n
+                        gini_df["imputation"] = i
+                        all_ginis.append(gini_df)
+                        fig = sc.pl.pca(normalized, color=[v, "kmm"], return_fig=True)
+                        fig.set_size_inches(15, 15)
+                        fig.savefig(filename, dpi=500, bbox_inches="tight")
+                except ValueError as e:
+                    logger.error(
+                        f"ValueError with imputation {i} and normalization {n}"
+                    )
+                    logger.error(e)
 
     all_df = pd.concat(all_ginis, ignore_index=True)
     all_df.to_csv(here(outdir, f"{date}-gini_impurity.csv"), index=False)
