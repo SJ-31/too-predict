@@ -452,7 +452,24 @@ def cluster_gini(adata: ad.AnnData, clusters, label_col: str):
     return {k: v for k, v in zip(unique, ginis)}, whole_gini
 
 
-def training_data_internal() -> ad.AnnData:
+def find_confounded(x, y) -> list[tuple[str, str]]:
+    """Return pairs where all instances of some class in set x
+    can only be found in a single instance of a class in set y
+
+    Returns
+    -------
+    A list of (x_i, y_i) where instance x_i can only be found with y_i
+    """
+    tabulated: pd.DataFrame = pd.crosstab(x, y)
+    problem_pairs = []
+    for x_i in tabulated.index:
+        if len(indices := np.where(tabulated.loc[x_i, :] > 0)[0]) == 1:
+            value = tabulated.columns[indices][0]
+            problem_pairs.append((x_i, value))
+    return problem_pairs
+
+
+def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
     public_data = here("remote", "public_data")
     combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
     adata: ad.AnnData = ad.read_h5ad(combined_file)
@@ -462,18 +479,26 @@ def training_data_internal() -> ad.AnnData:
     sc.pp.filter_cells(adata, min_counts=5000)
     sc.pp.filter_genes(adata, min_cells=min_samples)
     sc.pp.filter_genes(adata, min_counts=200)
-    adata, discarded_types = filter_by_obs(adata, "tumor_type", min=50)
-    adata, discarded_sites = filter_by_obs(adata, "primary_site", min=50)
-    print(f"Discarded primary_site: {discarded_sites}")
-    print(f"Discarded tumor_type: {discarded_types}")
+    adata, discarded_types = filter_by_obs(adata, [label], min=50)
+    print(f"Discarded {label}: {discarded_types}")
     print(f"Final shape after filtering: {adata.shape}")
     print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
     print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
     return adata
 
 
-def training_data_internal_test() -> ad.AnnData:
-    return ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
+def training_data_internal_test(
+    sample: float = 0.3, label: str = "tumor_type"
+) -> ad.AnnData:
+    adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
+    sc.pp.subsample(adata, sample)
+    sc.pp.filter_genes(adata, min_cells=10)
+    sc.pp.filter_cells(adata, min_counts=5000)
+    sc.pp.filter_genes(adata, min_counts=200)
+    adata, discarded_types = filter_by_obs(adata, [label], min=10)
+    print(f"Discarded {label}: {discarded_types}")
+    print(f"Test data shape: {adata.shape}")
+    return adata
 
 
 def write_pickle(obj, filename) -> None:
