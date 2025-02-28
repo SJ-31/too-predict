@@ -15,17 +15,16 @@ from sklearn.cluster import KMeans
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
 from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
 from too_predict.utils import (
-    add_gene_metadata,
     cluster_gini,
-    dgelist2anndata,
     training_data_internal,
-    write_pickle,
+    training_data_internal_test,
 )
 
 logger = logging.getLogger()
 
 datadir = here("data", "tests")
 outdir = here("data", "output", "normalization_comparison")
+storage = here("remote", "repos", "too-predict", "normalization_comparison")
 logging.basicConfig(filename=here(outdir, "log"))
 
 
@@ -34,7 +33,7 @@ def helper(adata, i: str, n: str) -> ad.AnnData | None:
         impute_fn = lambda x: Imputer(i).run(x, labels=adata.obs["tumor_type"])
     else:
         impute_fn = Imputer(i).run
-    output = here(outdir, "storage", f"{date}-{n}-{i}.h5ad")
+    output = here(storage, f"{date}-{n}-{i}.h5ad")
     if not output.exists():
         normalized: ad.AnnData = Normalizer(
             adata,
@@ -57,24 +56,6 @@ def helper(adata, i: str, n: str) -> ad.AnnData | None:
 
 
 # #  --- CODE BLOCK ---
-TEST = False
-if TEST:
-    hcc = here(datadir, "tcga_hcc.rds")
-    chol = here(datadir, "tcga_chol.rds")
-    coad = here(datadir, "tcga_coad-read.rds")
-    test_sets = {"LIHC": hcc, "CHOL": chol, "COAD": coad}
-
-    def loader(path, type):
-        adata = dgelist2anndata(str(path))
-        adata = adata[:100]
-        adata.obs["tumor_type"] = type
-        return adata
-
-    adata: ad.AnnData = ad.concat([loader(t, p) for p, t in test_sets.items()])
-    adata.var.index = adata.var.index.to_series().str.replace("\\..*", "", regex=True)
-    add_gene_metadata(adata)
-else:
-    adata = training_data_internal()
 
 
 date = "Thursday_Feb-27-2025"
@@ -88,13 +69,19 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-n", "--no_dask", default=False, action="store_true")
     return parser.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    cluster = SLURMCluster(cores=args.cores, memory=f"{args.memory} GB")
+    if args.test:
+        print("Using test subset")
+        adata = training_data_internal_test()
+    else:
+        adata = training_data_internal()
+    cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
     client = Client(cluster)
     backend = "dask" if not args.no_dask else "loky"
     with joblib.parallel_backend(backend):

@@ -12,7 +12,6 @@ import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
-import too_predict
 from pyhere import here
 from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
@@ -26,6 +25,8 @@ from rpy2.robjects import RObject, pandas2ri
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
+
+import too_predict
 
 NA_TYPES: set = {
     NACharacterType,
@@ -465,6 +466,10 @@ def training_data_internal() -> ad.AnnData:
     print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
     print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
     return adata
+
+
+def training_data_internal_test() -> ad.AnnData:
+    return ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
 
 
 def write_pickle(obj, filename) -> None:

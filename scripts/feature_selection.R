@@ -1,28 +1,39 @@
-library(BiocParallel)
-library(ALDEx2)
-library(tidyverse)
-library(zellkonverter)
-library(scRNAseq)
-library(edgeR)
-library(here)
+suppressMessages({
+  library(BiocParallel)
+  library(ALDEx2)
+  library(tidyverse)
+  library(zellkonverter)
+  library(scRNAseq)
+  library(edgeR)
+  library(here)
+})
+
 Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
 library(reticulate)
 use_python(here(".venv", "bin", "python3"))
 py_config()
 
-register(MulticoreParam(workers = 8))
+
+if (sys.nframe() == 0) {
+  library("optparse")
+  parser <- OptionParser()
+  parser <- add_option(parser, c("-t", "--test"), type = "logical", default = FALSE, action = "store_true")
+  parser <- add_option(parser, c("-c", "--cores"), type = "integer", default = 8)
+  args <- parse_args(parser)
+}
+
+register(MulticoreParam(workers = args$cores))
 source(here("src", "R", "utils.R"))
 
-TEST <- FALSE
-if (TEST) {
-  data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
-  data <- data[1:50, ]
+pyutils <- new.env()
+source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+if (args$test) {
+  print("Using test subset")
+  data <- AnnData2SCE((pyutils$training_data_internal_test()))
 } else {
-  pyutils <- new.env()
-  source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
-  data <- AnnData2SCE(pyutils$training_data_internal(TRUE))
-  rm(pyutils)
+  data <- AnnData2SCE(pyutils$training_data_internal())
 }
+rm(pyutils)
 
 outdir <- here("data", "output", "feature_selection")
 date <- "Thursday_Feb-27-2025" # TODO: need to get the date before running
@@ -34,7 +45,11 @@ p_threshold <- 0.05
 group <- "tumor_type"
 technical_factors <- c("Sample_Type", "Project_ID")
 
-counts <- assays(data)$X |> `rownames<-`(rowData(data)[, 1])
+counts <- assays(data)$X |>
+  as.matrix() |>
+  `rownames<-`(rowData(data)[, 1])
+mode(counts) <- "integer"
+assays(data, withDimnames = FALSE)$X <- counts
 
 ## * DGE with ALDEx2
 

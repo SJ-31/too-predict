@@ -15,30 +15,15 @@ from sklearn.ensemble import RandomForestClassifier
 from too_predict.imputer import Imputer
 from too_predict.model import RandomForestPred
 from too_predict.normalizer import Normalizer
-from too_predict.utils import read_existing, training_data_internal
-
-# #  --- CODE BLOCK ---
+from too_predict.utils import (
+    read_existing,
+    training_data_internal,
+    training_data_internal_test,
+)
 
 outdir = here("data", "output", "feature_selection")
-TEST = False
-if TEST:
-    data_file = here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad")
-    adata = ad.read_h5ad(data_file)
-else:
-    adata = training_data_internal()
+adata: ad.AnnData
 
-
-if TEST:
-    adata = adata[:, 0:100]
-
-# <2025-02-21 Fri> when you run the real thing, choose the best normalization method
-# or do it in a loop and see what happens
-normalized = Normalizer(adata, "clr", Imputer("plus_one").run, inplace=False).run()
-n_counts = normalized.X.toarray()
-labels = adata.obs["primary_site"]
-# Need to normalize first to move out of simplex
-#
-# #  --- CODE BLOCK ---
 
 # * Output files
 low_variance_file = here(outdir, "sklearn_low_variance.csv")
@@ -65,7 +50,7 @@ def variance_threshold(f):
 def get_proportionality(f):
     pairwise = rh.rho_matrix(n_counts, True)
     pair_df = pd.DataFrame(
-        pairwise, columns=adata.var["gene_id"], index=adata.var["gene_id"]
+        pairwise, columns=adata.var["GENEID"], index=adata.var["GENEID"]
     )
     central_prop = pair_df.median().sort_values(ascending=False)
     flattened_pairs = [
@@ -104,7 +89,7 @@ def entropy(y, base=2) -> float:
 
 def mutual_info(f):
     info = fs.mutual_info_classif(n_counts, labels)
-    info_df = pd.DataFrame({"feature": adata.var["gene_id"], "mutual_info": info})
+    info_df = pd.DataFrame({"feature": adata.var["GENEID"], "mutual_info": info})
     info_df.sort_values("mutual_info", ascending=False, inplace=True)
     info_df.to_csv(f, index=False)
     # The higher the better here
@@ -133,6 +118,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--memory", default="30")
+    parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-c", "--cores", default=8)
     parser.add_argument("-n", "--no_dask", default=False, action="store_true")
     return parser.parse_args()
@@ -140,6 +126,19 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    if args.test:
+        print("Using test subset")
+        adata = training_data_internal_test()
+    else:
+        adata = training_data_internal()
+
+    # <2025-02-21 Fri> when you run the real thing, choose the best normalization method
+    # or do it in a loop and see what happens
+    normalized = Normalizer(adata, "clr", Imputer("plus_one").run, inplace=False).run()
+    n_counts = normalized.X.toarray()
+    labels = adata.obs["primary_site"]
+    # Need to normalize first to move out of simplex
+
     cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
     client = Client(cluster)
     backend = "dask" if not args.no_dask else "loky"
@@ -147,6 +146,7 @@ if __name__ == "__main__":
         low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
         mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
         prop = read_existing(proportionality_file, get_proportionality, pd.read_csv)
+
         # TODO: add in recursive selection
         # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
         # rfecv.fit(adata, y=labels)
