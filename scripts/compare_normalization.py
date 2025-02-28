@@ -15,7 +15,6 @@ from sklearn.cluster import KMeans
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
 from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
 from too_predict.utils import (
-    cluster_gini,
     training_data_internal,
     training_data_internal_test,
 )
@@ -101,9 +100,10 @@ if __name__ == "__main__":
                             assignments = kmm.fit_predict(normalized.X)
                             normalized.obs["kmm"] = assignments
 
-                            ginis, whole = cluster_gini(normalized, "kmm", v)
-                            metric_df = pd.DataFrame(ginis, index=[0])
-                            metric_df["whole"] = whole
+                            metric_df = pd.DataFrame(
+                                {"label": v, "normalization": n, "imputation": i},
+                                index=[0],
+                            )
                             metric_df["silhouette_score"] = sm.silhouette_score(
                                 normalized.X, normalized.obs[v]
                             )
@@ -118,9 +118,6 @@ if __name__ == "__main__":
                             metric_df["calinski_harabasz_score"] = (
                                 sm.calinski_harabasz_score(counts, normalized.obs[v])
                             )
-                            metric_df["label"] = v
-                            metric_df["normalization"] = n
-                            metric_df["imputation"] = i
                             all_metrics.append(metric_df)
                             fig = sc.pl.pca(
                                 normalized, color=[v, "kmm"], return_fig=True
