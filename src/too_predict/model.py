@@ -136,19 +136,34 @@ class PredBase:
         return self.model.classes_
 
     def cross_validate(
-        self, adata, cv=None, label_col="tumor_type", preprocess=True
+        self,
+        adata,
+        label_col="tumor_type",
+        preprocess=True,
+        group_col="",
+        n_splits=5,
+        shuffle: bool = False,
+        random_state=None,
     ) -> dict:
         """Evaluate model performance with cross-validation"""
-        if not cv:
-            cv = ms.StratifiedKFold(n_splits=5)
         if preprocess:
             N = self._preprocess(adata)
         else:
             N = adata.copy()
+        if not group_col:
+            cv = ms.StratifiedKFold(
+                n_splits=n_splits, shuffle=shuffle, random_state=random_state
+            )
+            splits = cv.split(N.X, N.obs[label_col])
+        else:
+            cv = ms.StratifiedGroupKFold(
+                n_splits=n_splits, random_state=random_state, shuffle=shuffle
+            )
+            splits = cv.split(N.X, N.obs[label_col], group=group_col)
         cm: dict = {}
         roc, prec_recall, report = [], [], []
         accs: dict = {"fold": [], "acc": []}
-        for fold, (train_i, test_i) in enumerate(cv.split(N.X, N.obs[label_col])):
+        for fold, (train_i, test_i) in enumerate(splits):
             x_train = N[train_i]
             self.fit(x_train, preprocess=False)
 
