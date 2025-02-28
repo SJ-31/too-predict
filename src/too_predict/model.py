@@ -72,6 +72,7 @@ class PredBase:
     ) -> None:
         """Fit model to the given adata object
 
+        Should ignore any previous calls to fit
         Parameters
         ----------
         X : data to fit to
@@ -150,25 +151,26 @@ class PredBase:
             N = self._preprocess(adata)
         else:
             N = adata.copy()
+        labels = N.obs[label_col]
         if not group_col:
             cv = ms.StratifiedKFold(
                 n_splits=n_splits, shuffle=shuffle, random_state=random_state
             )
-            splits = cv.split(N.X, N.obs[label_col])
+            splits = cv.split(N.X, labels)
         else:
             cv = ms.StratifiedGroupKFold(
                 n_splits=n_splits, random_state=random_state, shuffle=shuffle
             )
-            splits = cv.split(N.X, N.obs[label_col], group=group_col)
+            splits = cv.split(N.X, labels, groups=N.obs[group_col])
         cm: dict = {}
         roc, prec_recall, report = [], [], []
         accs: dict = {"fold": [], "acc": []}
         for fold, (train_i, test_i) in enumerate(splits):
             x_train = N[train_i]
-            self.fit(x_train, preprocess=False)
+            self.fit(x_train, label_col=label_col, preprocess=False)
 
             x_test = N[test_i]
-            y_true = N.obs[label_col].iloc[test_i]  # True values
+            y_true = labels.iloc[test_i]  # True values
 
             proba = self.predict_proba(x_test, preprocess=False)
             res: dict = get_all_metrics(y_true, proba, self.classes_)

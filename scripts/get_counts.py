@@ -570,6 +570,7 @@ def get_combined(f):
     ]
 
     combined.obs["Sample_Type"] = combined.obs["Sample_Type"].apply(clean_sample_type)
+
     for col in ["primary_site", "Sample_Type"]:
         combined.obs[col] = (
             combined.obs[col]
@@ -578,6 +579,7 @@ def get_combined(f):
             .str.replace(",", "")
         )
     combined.obs_names_make_unique()
+    combined.var_names_make_unique()
     add_gene_metadata(combined)
     combined.obs.to_csv(here("all_obs.csv"))
     combined.X[np.isnan(combined.X)] = 0
