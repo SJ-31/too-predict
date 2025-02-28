@@ -97,8 +97,8 @@ def r_cleanup(fn: Callable):
 
 
 def filter_by_obs(
-    adata: ad.AnnData, key: str, min: int = 0, max: int = np.inf
-) -> tuple[ad.AnnData, list[str]]:
+    adata: ad.AnnData, keys: list[str], min: int = 0, max: int = np.inf
+) -> tuple[ad.AnnData, dict[str, set]]:
     """Filter adata by a category/factor column `key` in adata.obs
 
     Removes levels of the `key` that do not meet the min and max requirements
@@ -113,11 +113,15 @@ def filter_by_obs(
     A tuple of [filtered adata, list of discarded levels]
 
     """
-    counts = adata.obs[key].value_counts()
-    mask = (counts >= min) & (counts < max)
-    discarded = counts[~mask].index.to_list()
-    counts = counts[mask]
-    return adata[adata.obs[key].isin(counts.index), :], discarded
+    counts = [adata.obs[key].value_counts() for key in keys]
+    count_mask = [((c >= min) & (c < max)) for c in counts]
+    to_discard = {
+        k: c.index[~c].to_series().to_list() for k, c in zip(keys, count_mask)
+    }
+    masks = [~adata.obs[k].isin(d) for k, d in to_discard.items()]
+
+    mask = reduce(lambda x, y: x & y, masks).values
+    return adata[mask, :], to_discard
 
 
 @r_cleanup
