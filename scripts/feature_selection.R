@@ -1,15 +1,15 @@
 suppressMessages({
+  library(here)
   library(BiocParallel)
   library(ALDEx2)
   library(tidyverse)
   library(zellkonverter)
   library(scRNAseq)
+  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
+  library(reticulate)
   library(edgeR)
-  library(here)
 })
 
-Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
-library(reticulate)
 use_python(here(".venv", "bin", "python3"))
 py_config()
 
@@ -22,20 +22,22 @@ if (sys.nframe() == 0) {
   args <- parse_args(parser)
 }
 
-register(MulticoreParam(workers = args$cores))
 source(here("src", "R", "utils.R"))
 
 pyutils <- new.env()
 source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+outdir <- here("data", "output", "feature_selection")
 if (args$test) {
   print("Using test subset")
+  outdir <- here(outdir, "test")
+  dir.create(outdir, recursive = TRUE)
   data <- AnnData2SCE((pyutils$training_data_internal_test()))
 } else {
+  register(MulticoreParam(workers = args$cores))
   data <- AnnData2SCE(pyutils$training_data_internal())
 }
 rm(pyutils)
 
-outdir <- here("data", "output", "feature_selection")
 date <- "Thursday_Feb-27-2025" # TODO: need to get the date before running
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
@@ -43,11 +45,10 @@ date <- "Thursday_Feb-27-2025" # TODO: need to get the date before running
 ## --- CODE BLOCK ---
 p_threshold <- 0.05
 group <- "tumor_type"
-technical_factors <- c("Sample_Type", "Project_ID")
+## technical_factors <- c("Sample_Type", "Project_ID") TODO: need to address confounding
+technical_factors <- NULL
 
-counts <- assays(data)$X |>
-  as.matrix() |>
-  `rownames<-`(rowData(data)[, 1])
+counts <- assays(data)$X |> as.matrix()
 mode(counts) <- "integer"
 assays(data, withDimnames = FALSE)$X <- counts
 
@@ -98,7 +99,8 @@ get_aldex <- function(f) {
 }
 
 aldex_average_file <- here(outdir, "ALDEx2_averaged_effect.tsv")
-aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
+## aldex_average <- read_existing(aldex_average_file, get_aldex, read_tsv)
+## <2025-02-28 Fri> OOM errors, even on the tiny test dataset...
 
 ## * With edgeR
 
@@ -108,7 +110,8 @@ get_edgeR <- function(f) {
   normLibSizes(dge)
   factor_str <- paste0(c(group, technical_factors), collapse = " + ")
   mm <- model.matrix(as.formula(paste("~0+", factor_str)), data = colData(data))
-  dge <- estimateDisp(dge, mm, robust = TRUE)
+  curious <- dge[, !(colnames(dge) %in% rownames(mm))]
+  dge <- estimateDisp(dge, design = mm, robust = TRUE)
   fit <- glmQLFit(dge, mm, robust = TRUE)
   # Fit glm to account for batch effect specified above
 
@@ -136,14 +139,3 @@ get_edgeR <- function(f) {
 
 edgeR_top_file <- here(outdir, "edgeR_top_types.tsv")
 edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
-
-## * With Seurat
-# <2025-02-21 Fri> isn't too useful since it doesn't give you the values used to
-# determine top features
-## obj <- SeuratObject::CreateSeuratObject(assays(data)$X, meta.data = colData(data))
-## obj <- Seurat::AddMetaData(obj[["RNA"]], rowData(data))
-## obj <- Seurat::NormalizeData(obj)
-## obj <- Seurat::FindVariableFeatures(obj)
-## top <- Seurat::VariableFeatures(obj)
-## Seurat::VariableFeaturePlot(obj)
-## seurat_top_file <- here(outdir, )

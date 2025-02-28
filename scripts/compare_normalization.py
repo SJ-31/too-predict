@@ -78,6 +78,8 @@ if __name__ == "__main__":
     if args.test:
         print("Using test subset")
         adata = training_data_internal_test()
+        outdir = outdir.joinpath("test")
+        outdir.mkdir(exist_ok=True, parents=True)
     else:
         adata = training_data_internal()
     cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
