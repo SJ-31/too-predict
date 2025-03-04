@@ -16,6 +16,7 @@ dependencies = [
   "pyhere>=1.0.3",
   "pytest>=8.3.4",
   "rpy2>=3.5.17",
+  "scalene>=1.5.51",
   "scanpy>=1.10.4",
   "scikit-bio>=0.6.3",
   "scikit-learn>=1.6.1",

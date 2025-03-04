@@ -13,6 +13,7 @@ import sklearn.metrics as sm
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
+from scalene.scalene_profiler import enable_profiling
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
 from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
 from too_predict.utils import (
@@ -83,6 +84,9 @@ def parse_args():
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-c", "--cores", default=8, type=int)
     parser.add_argument("-f", "--feature_file", required=False)
+    parser.add_argument(
+        "-p", "--profile", required=False, action="store_true", default=False
+    )
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-n", "--no_dask", default=False, action="store_true")
     return parser.parse_args()
@@ -209,8 +213,16 @@ if __name__ == "__main__":
     )
     with joblib.parallel_backend(backend, **par_args):
         for fname, lst in FEATURE_LISTS.items():
-            if lst is None:
-                main(adata, fname)
+
+            def run():
+                if lst is None:
+                    main(adata, fname)
+                else:
+                    mask = adata.var["GENEID"].isin(lst)
+                    main(adata[:, mask], fname)
+
+            if args.profile:
+                with enable_profiling():
+                    run()
             else:
-                mask = adata.var["GENEID"].isin(lst)
-                main(adata[:, mask], fname)
+                run()
