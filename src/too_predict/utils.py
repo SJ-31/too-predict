@@ -21,7 +21,7 @@ from rpy2.rinterface_lib.sexp import (
     NALogicalType,
     NARealType,
 )
-from rpy2.robjects import RObject, pandas2ri
+from rpy2.robjects import RObject, numpy2ri, pandas2ri
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
@@ -63,6 +63,16 @@ def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
         ro.r("rm(adata_tmp)")
     if not r_symbol:
         return ro.r(id)
+
+
+def np_to_r(arr: np.ndarray, r_symbol: str = ""):
+    np_cv_rules = ro.default_converter + numpy2ri.converter
+    with np_cv_rules.context():
+        converted = ro.conversion.get_conversion().py2rpy(arr)
+        if r_symbol:
+            ro.globalenv[r_symbol] = converted
+        else:
+            return converted
 
 
 def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
@@ -139,15 +149,39 @@ def dgelist2anndata(rds: str | RObject) -> ad.AnnData:
     return adata
 
 
-def source(r_script: str) -> STAP:
+def adata_x_to_r(adata: ad.AnnData, r_symbol: str = "", layer=None):
+    if layer is not None:
+        counts = adata.layers[layer]
+    else:
+        counts = adata.X
+    if not isinstance(counts, np.ndarray):
+        counts = counts.toarray()
+    ro.globalenv["tmp_colnames"] = ro.StrVector(adata.obs.index)
+    ro.globalenv["tmp_rownames"] = ro.StrVector(adata.var.index)
+    np_to_r(np.transpose(counts), r_symbol="tmp_mat")
+    ro.r("rownames(tmp_mat) <- tmp_rownames")
+    ro.r("colnames(tmp_mat) <- tmp_colnames")
+    ro.r("rm(tmp_colnames)")
+    ro.r("rm(tmp_rownames)")
+    if r_symbol:
+        ro.globalenv[r_symbol] = ro.r("tmp_mat")
+        ro.r("rm(tmp_mat)")
+    else:
+        return ro.globalenv["tmp_mat"]
+
+
+def source(r_script: str, in_r=False) -> STAP | None:
     """Import `r script` in src/R as a STAP"""
     with res.path(too_predict) as root:
         r_src = root.parent.joinpath("R")
         script = r_src.joinpath(r_script)
-        if script.exists():
+        if not script.exists():
+            raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
+        if in_r:
+            ro.r(f"source('{script.absolute()}')")
+        else:
             text = script.read_text()
             return STAP(text, Path(r_script).stem)
-        raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
 
 
 def library(package: str) -> InstalledSTPackage | InstalledPackage:
@@ -510,3 +544,22 @@ def load_pickle(filename):
     with open(filename, "rb") as pck:
         obj = pickle.load(pck)
     return obj
+
+
+def take_from_ad(
+    x: ad.AnnData,
+    y: ad.AnnData,
+    keymap: list[tuple],
+    read_prefix: str = "",
+    write_prefix: str = "",
+) -> list[tuple]:
+    """File `x` with objects from `y` according to keymap"""
+    missing: list = []
+    for k, v in keymap:
+        group = getattr(y, k)
+        if (rname := f"{read_prefix}{v}") in group:
+            value = group.get(rname)
+            getattr(x, k)[f"{write_prefix}{v}"] = value
+        else:
+            missing.append((k, v))
+    return missing
