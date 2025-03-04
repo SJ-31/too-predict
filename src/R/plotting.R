@@ -87,17 +87,28 @@ get_color_lists <- function(vector, colormap, rep = TRUE) {
   setNames(colormap, uniques)
 }
 
-sce_heatmap <- function(sce, sample_annotations, color_default = NULL,
-                        count_assay = "X",
-                        order_on = "",
-                        pheatmap_kwargs = list()) {
-  counts <- assays(sce)[[count_assay]]
+pheatmap_helper <- function(obs = NULL,
+                            counts = NULL,
+                            sce = NULL,
+                            sample_annotations = list(),
+                            color_default = NULL,
+                            count_assay = "X",
+                            order_on = "",
+                            pheatmap_kwargs = list()) {
+  if (is.null(counts) && is.null(sce)) {
+    errorCondition("One of counts or sce must be provided!")
+  }
+  if (is.null(counts) && !is.null(sce)) {
+    counts <- assays(sce)[[count_assay]]
+  }
   if (is.null(color_default)) {
     default_cmap <- grDevices::colors()[grep("gr(a|e)y", grDevices::colors(), invert = TRUE)]
   } else if (is.character(color_default)) {
     default_cmap <- paletteer_d(color_default)
   }
-  obs <- colData(sce)
+  if (is.null(obs) && !is.null(sce)) {
+    obs <- colData(sce)
+  }
   anno_colors <- sapply(names(sample_annotations), \(x) {
     if (!is.null(sample_annotations[[x]])) {
       if (is.character(sample_annotations[[x]])) {
@@ -111,20 +122,11 @@ sce_heatmap <- function(sce, sample_annotations, color_default = NULL,
     }
   }, simplify = FALSE)
 
-  sample_anno_tmp <- list()
-  for (s in names(sample_annotations)) {
-    if (s == order_on) {
-      vec <- colData(data)[[s]]
-      uniques <- unique(vec)
-      val <- factor(vec, levels = uniques)
-    } else {
-      val <- colData(data)[[s]]
-    }
-    sample_anno_tmp[[s]] <- val
-  }
-
-  sample_anno <- as.data.frame(sample_anno_tmp) |> `rownames<-`(colnames(data))
+  sample_anno <- obs[, colnames(obs) %in% names(sample_annotations)] |> as.data.frame()
   if (nchar(order_on) > 0) {
+    vec <- obs[[order_on]]
+    uniques <- unique(vec)
+    sample_anno[[order_on]] <- factor(vec, levels = uniques)
     counts <- counts[, order(sample_anno[[order_on]])]
     sample_anno <- sample_anno[order(sample_anno[[order_on]]), ]
   }
