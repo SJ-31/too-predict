@@ -11,19 +11,15 @@ from scipy import sparse, stats
 
 from too_predict.utils import r_cleanup
 
-IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr", "log_clr", "tpm", "fpkm"}
+IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr"}
 
 """
 References
 [1] Pachter, L. (2011). Models for transcript quantification from RNA-Seq. ArXiv. https://arxiv.org/abs/1104.3889
 [2] Bennett, A. R., Lundstrøm, J., Chatterjee, S., & Bojar, D. (2025). Compositional data analysis enables statistical rigor in comparative glycomics. Nature Communications, 16(1), 1-15. https://doi.org/10.1038/s41467-025-56249-3
 [3] Godichon-Baggioni, A., Maugis-Rabusseau, C., & Rau, A. (2018). Clustering transformed compositional data using K-means, with applications in gene expression and bicycle sharing system data. Journal of Applied Statistics, 46(1), 47–65. https://doi.org/10.1080/02664763.2018.1454894
+[4] Martino C, Shenhav L, Marotz CA, Armstrong G, McDonald D, Vázquez-Baeza Y, Morton JT, Jiang L, Dominguez-Bello MG, Swafford AD, Halperin E, Knight R. Context-aware dimensionality reduction deconvolutes gut microbial community dynamics. Nat Biotechnol. 2021 Feb;39(2):165-168. doi: 10.1038/s41587-020-0660-7. Epub 2020 Aug 31. PMID: 32868914; PMCID: PMC7878194.
 """
-
-# <2025-02-23 Sun> TODO: refactor this so it can take only counts as input
-# basically all you need to do is remove the reliance of self.ad in any methods
-# Sun Feb 23 14:56:42 2025 did it for alr
-#
 
 
 class Normalizer:
@@ -62,7 +58,7 @@ class Normalizer:
             self.counts_only = True
             self.counts = data
 
-        if impute_fn:
+        if impute_fn and method != "robust_clr":
             self.counts = impute_fn(self.counts)
 
     def alr(
@@ -285,6 +281,7 @@ class Normalizer:
         -----
         <2025-02-20 Thu> This extension of CLR was developed in the context of
         k-means clustering, unsure of its performance for machine learning
+        <2025-03-04 Tue> Buggy, don't use
         """
         normalized = np.empty_like(self.counts)
         if features:
@@ -304,9 +301,9 @@ class Normalizer:
             ratio = cur / gmean[index]
             log_cur = np.log(cur)
             less_than = ratio <= 1
-            normalized[index, less_than] = -(
-                -(np.log(1 - log_cur[less_than] - log_gmean[index]) ** 2)
-            )
+            normalized[index, less_than] = (
+                -np.log(1 - log_cur[less_than] - log_gmean[index])
+            ) ** 2  # BUG: this expression produces nans
             normalized[index, ~less_than] = (
                 log_cur[~less_than] - log_gmean[index]
             ) ** 2
@@ -316,25 +313,43 @@ class Normalizer:
         return normalized
 
     def clr(
-        self, features=None, gamma=None, scales=None, feature_col: str = "gene_id"
+        self,
+        features=None,
+        gamma=None,
+        scales=None,
+        feature_col: str = "gene_id",
+        robust: bool = False,
     ) -> np.ndarray:
-        if gamma and scales:
+        if gamma and scales and not robust:
             return self._clr_scale(gamma=gamma, scales=scales)
-        elif features is None:
+        elif features is None and not robust:
             return comp.clr(self.counts)
+
+        if not self.counts_only and features is not None:
+            subset = self.adata.var[feature_col].isin(features)
+        elif features is not None:
+            subset = self.counts.columns.isin(features)
         else:
-            if not self.counts_only:
-                subset = self.adata.var[feature_col].isin(features)
-            else:
-                subset = self.counts.columns.isin(features)
-            gmean = stats.gmean(
-                self.counts[:, subset], axis=1, nan_policy="omit"
-            ).reshape((-1, 1))
-            clr = np.log(self.counts) - np.log(gmean)
-            return clr
+            subset = np.ones(self.counts.shape[1]).astype(bool)
+
+        if robust:
+            gmean = [
+                stats.gmean(self.counts[i, self.counts[i, :] != 0 & subset])
+                for i in range(self.counts.shape[0])
+            ]
+            gmean = np.array(gmean)
+        else:
+            gmean = stats.gmean(self.counts[:, subset], axis=1, nan_policy="omit")
+        clr = np.log(self.counts) - np.log(gmean.reshape(-1, 1))
+        if robust:
+            clr[clr == -np.inf] = 0
+        return clr
 
     def run(self, **kwargs) -> ad.AnnData | None | np.ndarray:
         match self.method:
+            case "robust_clr":
+                kwargs.update({"robust": True})
+                normalized = self.clr(**kwargs)
             case "clr":
                 normalized = self.clr(**kwargs)
             case "tmm":
