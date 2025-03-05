@@ -43,7 +43,7 @@ def helper(feature_set, adata, i: str, n: str, **kwargs) -> ad.AnnData | None:
     output = here(STORAGE_DIR, feature_set, f"{n}-{i}.h5ad")
     if not output.exists():
         normalized = Transformer(
-            n, inplace=False, make_sparse=False, impute_fn=impute_fn, **kwargs
+            n, impute_fn=impute_fn, inplace=False, make_sparse=False, **kwargs
         ).fit_transform(adata)
         try:
             sc.pp.pca(normalized)

@@ -574,7 +574,7 @@ def get_combined(f):
     for col in ["primary_site", "Sample_Type"]:
         combined.obs[col] = (
             combined.obs[col]
-            .str.replace(" ", "_", regex=True)
+            .str.replace("[ -]", "_", regex=True)
             .str.lower()
             .str.replace(",", "")
         )
