@@ -1,23 +1,19 @@
 #!/usr/bin/env ipython
-import gc
 import pickle
-from typing import Callable, override
+from typing import override
 
 import anndata as ad
 import numpy as np
 import pandas as pd
-import scanpy as sc
 import sklearn.model_selection as ms
 from sklearn.base import clone
-from sklearn.ensemble import RandomForestClassifier, VotingClassifier
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
-from sklearn.utils.validation import check_is_fitted
 
 from too_predict.evaluation import get_all_metrics
-from too_predict.imputer import Imputer
 from too_predict.simulation import Simulator
 from too_predict.transformer import Transformer
-from too_predict.utils import RANDOM_STATE, adata_from_df, adata_to_df
+from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -33,42 +29,20 @@ class PredBase:
 
     def __init__(
         self,
-        normalization: str,
-        imputation: str,
         model,
-        features=None,
-        feature_col="GENENAME",
-        n_kwargs: dict | None = None,
     ) -> None:
         self.model = model
-        if normalization:
-            self.n_method = normalization.lower()
-        else:
-            self.n_method = None
-        self.normalize_kwargs: dict = n_kwargs if n_kwargs else {}
         self._estimator_type = "classifier"
         self._is_fitted = False
-        self.discarded_features = (
-            None  # Any features discarded during preprocessing e.g.
-        )
-        # due to not being in enough samples
-        self.features = features  # Requested features to subset data by
         self.missing_features = (
             None  # Requested features to subset by that weren't found
         )
-        self.feature_col = feature_col
-        self.impute: Callable = Imputer(imputation).run
-        self.i_method: str | None = (
-            imputation.lower() if isinstance(imputation, str) else None
-        )
-        self.normalize_kwargs = {}
         self.var = None
 
     def fit(
         self,
         X: ad.AnnData,
         label_col="tumor_type",
-        preprocess=True,
     ) -> None:
         """Fit model to the given adata object
 
@@ -79,8 +53,6 @@ class PredBase:
         """
         if label_col not in X.obs.columns:
             raise ValueError(f"The column '{label_col}' is not present in X.obs")
-        if preprocess:
-            X = self._preprocess(X)
         self.var = X.var
         self._is_fitted = True
         self.model.fit(X.X, X.obs[label_col])
@@ -92,45 +64,15 @@ class PredBase:
     def __sklearn_is_fitted__(self):
         return self._is_fitted
 
-    def predict_proba(self, X: ad.AnnData, preprocess=True) -> np.ndarray:
-        if preprocess:
-            X = self._preprocess(X)
+    def predict_proba(self, X: ad.AnnData) -> np.ndarray:
         return self.model.predict_proba(X.X)
 
     def load(self, path: str) -> None:
         """Load the fitted estimator from the saved path"""
         self.model = pickle.load(path)
 
-    def predict(self, X: ad.AnnData, preprocess: bool = True) -> np.ndarray:
-        if preprocess:
-            X = self._preprocess(X)
+    def predict(self, X: ad.AnnData) -> np.ndarray:
         return self.model.predict(X.X)
-
-    def _filter_features(self, adata: ad.AnnData) -> ad.AnnData:
-        passed_filter: np.ndarray = sc.pp.filter_genes(
-            adata, min_cells=2, inplace=False
-        )  # Genes must be nonzero in at least two samples
-        self.discarded_features = adata.var.loc[~(passed_filter[0]), :]
-        adata = adata[:, passed_filter[0]].copy()
-        if self.features is not None:
-            adata = adata[:, adata.obs[self.feature_col] == self.features]
-            missing = set(self.features) - set(adata.obs[self.feature_col])
-            self.missing_features = missing
-            if len(missing) > 0:
-                print("--- WARNING: Missing features!")
-                print(missing)
-                print("---")
-        return adata
-
-    def _preprocess(self, adata: ad.AnnData) -> ad.AnnData:
-        adata = self._filter_features(adata)
-        if self.n_method is not None:
-            normalized: ad.AnnData = Transformer(
-                adata, self.n_method, impute_fn=self.impute, inplace=False
-            ).run(**self.normalize_kwargs)
-            gc.collect()
-            return normalized
-        return adata
 
     @property
     def classes_(self):
@@ -140,26 +82,21 @@ class PredBase:
         self,
         adata,
         label_col="tumor_type",
-        preprocess=True,
         group_col="",
         n_splits=5,
-        shuffle: bool = False,
         random_state=RANDOM_STATE,
     ) -> dict:
         """Evaluate model performance with cross-validation"""
-        if preprocess:
-            N = self._preprocess(adata)
-        else:
-            N = adata.copy()
+        N = adata.copy()
         labels = N.obs[label_col]
         if not group_col:
             cv = ms.StratifiedKFold(
-                n_splits=n_splits, shuffle=shuffle, random_state=random_state
+                n_splits=n_splits, shuffle=True, random_state=random_state
             )
             splits = cv.split(N.X, labels)
         else:
             cv = ms.StratifiedGroupKFold(
-                n_splits=n_splits, random_state=random_state, shuffle=shuffle
+                n_splits=n_splits, random_state=random_state, shuffle=True
             )
             splits = cv.split(N.X, labels, groups=N.obs[group_col])
         cm: dict = {}
@@ -167,12 +104,12 @@ class PredBase:
         accs: dict = {"fold": [], "acc": []}
         for fold, (train_i, test_i) in enumerate(splits):
             x_train = N[train_i]
-            self.fit(x_train, label_col=label_col, preprocess=False)
+            self.fit(x_train, label_col=label_col)
 
             x_test = N[test_i]
             y_true = labels.iloc[test_i]  # True values
 
-            proba = self.predict_proba(x_test, preprocess=False)
+            proba = self.predict_proba(x_test)
             res: dict = get_all_metrics(y_true, proba, self.classes_)
             accs["fold"].append(fold)
             accs["acc"].append(res["acc"])
@@ -195,7 +132,6 @@ class PredBase:
         self,
         X: ad.AnnData,
         label_col="tumor_type",
-        preprocess: bool = True,
         rfecv_params: dict = None,
     ) -> RFECV:
         """Perform recursive feature elimination with cross validation
@@ -209,8 +145,6 @@ class PredBase:
         -------
         Fitted RFECV object
         """
-        if preprocess:
-            X = self._preprocess(X)
         params = rfecv_params if rfecv_params else {}
         rfecv = RFECV(self.model, **params)
         rfecv.fit(X.X, X.obs[label_col])
@@ -218,16 +152,8 @@ class PredBase:
 
 
 class RandomForestPred(PredBase):
-    def __init__(
-        self, normalization: str, imputation: str, features=None, feature_col="GENENAME"
-    ) -> None:
-        super().__init__(
-            normalization=normalization,
-            imputation=imputation,
-            model=RandomForestClassifier(random_state=RNG),
-            features=features,
-            feature_col=feature_col,
-        )
+    def __init__(self, **kwargs) -> None:
+        super().__init__(model=RandomForestClassifier(random_state=RNG, **kwargs))
 
         # <2025-02-21 Fri> be sure to try out extra trees
 
@@ -235,29 +161,16 @@ class RandomForestPred(PredBase):
 class AlrBase(PredBase):
     def __init__(
         self,
-        imputation: str,
         model,
         references: dict | list,
-        features=None,
-        feature_col="GENENAME",
-        n_kwargs: dict | None = None,
         weights=None,
     ) -> None:
         super().__init__(
-            normalization=None,
-            imputation=imputation,
-            model=AlrEstimator(model=model, references=references, weights=weights),
-            features=features,
-            feature_col=feature_col,
-            n_kwargs=n_kwargs,
+            model=AlrEstimator(model=model, references=references, weights=weights)
         )
 
     @override
-    def fit(
-        self, X: ad.AnnData, label_col="tumor_type", preprocess=True, var_col="GENENAME"
-    ) -> None:
-        if preprocess:
-            X = self._preprocess(X)
+    def fit(self, X: ad.AnnData, label_col="tumor_type", var_col="GENENAME") -> None:
         if not isinstance(X.X, np.ndarray):
             vals = X.X.toarray()
         else:
@@ -268,20 +181,12 @@ class AlrBase(PredBase):
         self.model.fit(counts, X.obs[label_col])
 
     @override
-    def predict(
-        self, X: ad.AnnData, preprocess: bool = True, var_col="GENENAME"
-    ) -> np.ndarray:
-        if preprocess:
-            X = self._preprocess(X)
+    def predict(self, X: ad.AnnData, var_col="GENENAME") -> np.ndarray:
         df = adata_to_df(X, var_col=var_col)
         return self.model.predict(df)
 
     @override
-    def predict_proba(
-        self, X: ad.AnnData, preprocess: bool = True, var_col="GENENAME"
-    ) -> np.ndarray:
-        if preprocess:
-            X = self._preprocess(X)
+    def predict_proba(self, X: ad.AnnData, var_col="GENENAME") -> np.ndarray:
         df = adata_to_df(X, var_col=var_col)
         return self.model.predict_proba(df)
 
@@ -298,6 +203,8 @@ class AlrEstimator:
 
     Predicted labels are obtained with soft voting (weighted average probabilities)
     TODO: try to parallelize training here
+
+    Don't pre-transform data with this model
     """
 
     def __init__(
@@ -318,7 +225,9 @@ class AlrEstimator:
         self.missing_references = []
 
     def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
-        result: np.ndarray = Transformer(X, "alr", None).run(by=by, **kwargs)
+        result: np.ndarray = Transformer(
+            "alr", impute_fn=None, inplace=False, by=by, **kwargs
+        ).fit_transform(X)
         return result
 
     def fit(
