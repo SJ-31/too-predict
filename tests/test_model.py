@@ -4,7 +4,8 @@ import anndata as ad
 from pyhere import here
 from rpy2.robjects.packages import importr
 from sklearn.ensemble import RandomForestClassifier
-from too_predict.model import AlrBase2, RandomForestPred, SimBase
+from too_predict.model import AlrBase, RandomForestPred
+from too_predict.transformer import Transformer
 from too_predict.utils import dgelist2anndata
 
 base = importr("base")
@@ -30,21 +31,22 @@ adata.var.index = adata.var.index.to_series().str.replace("\\..*", "", regex=Tru
 
 
 def test_base():
-    rf = RandomForestPred("clr", "plus_one")
-    results = rf.cross_validate(adata)
+    transformed = Transformer("robust_clr", None, inplace=False).fit_transform(adata)
+    rf = RandomForestPred()
+    results = rf.cross_validate(transformed)
     print(results)
 
 
-def test_alr():
-    # TODO <2025-02-23 Sun> write this test
-    rf = RandomForestPred("clr", "plus_one")
-    results = rf.cross_validate(adata)
-    print(results)
+# def test_alr():
+#     # TODO <2025-02-23 Sun> write this test
+#     rf = RandomForestPred()
+#     results = rf.cross_validate(adata)
+#     print(results)
 
 
-def test_dirichlet():
-    dir = SimBase(
-        "clr", None, simulation="dirichlet", model=RandomForestClassifier(), n=2
-    )
-    results = dir.cross_validate(adata)
-    print(results)
+# def test_dirichlet():
+#     dir = SimBase(
+#         "clr", None, simulation="dirichlet", model=RandomForestClassifier(), n=2
+#     )
+#     results = dir.cross_validate(adata)
+#     print(results)

@@ -1,35 +1,30 @@
-library(BiocParallel)
-library(ALDEx2)
-library(tidyverse)
-library(zellkonverter)
-library(scRNAseq)
-library(here)
+suppressMessages({
+  library(BiocParallel)
+  library(ALDEx2)
+  library(here)
+  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
+  library(reticulate)
+  library(tidyverse)
+  library(zellkonverter)
+  library(scRNAseq)
+  source(here("src", "R", "utils.R"))
+  source(here("src", "R", "plotting.R"))
+  use_python(here(".venv", "bin", "python3"))
+})
 
-register(MulticoreParam(workers = 2))
-source(here("src", "R", "utils.R"))
+pyutils <- new.env()
+fs_dir <- here("data", "output", "feature_selection")
+fs_lists <- list.files(here(fs_dir, "feature_lists"), full.names = TRUE)
+source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+data <- AnnData2SCE((pyutils$training_data_internal_test()))
+features <- readLines(fs_lists[1])
 
-data <- readH5AD(here("data", "tests", "TCGA_CESC-DLBC-ESCA-GBM.h5ad"))
+sce <- data[rownames(data) %in% features, ]
+sce <- sce[1:100, ]
 
-# TODO: can include the sequencing tech and the tumor type as factors to account
-# for their effects
+pheatmap_helper(sce = sce, sample_annotations = list(
+  tumor_type = "ggthemes::Tableau_20",
+  Sample_Type = NULL
+), order_on = "Sample_Type", pheatmap_kwargs = list(filename = here("foo.png")))
+
 ## --- CODE BLOCK ---
-group <- "Project_ID"
-technical_factors <- c("Sample_Type")
-
-data <- data[1:50, ]
-
-project_id <- colData(data)$Project_ID
-mm <- model.matrix(~Project_ID, data = colData(data))
-
-model.matrix(~project_id) == mm
-
-counts <- assays(data)$X
-rownames(counts) <- rowData(data)$gene_id
-result <- aldex.clr(counts, mm, gamma = 0.5, verbose = TRUE)
-
-
-names <- getFeatureNames(result)
-n_instances <- numMCInstances(result)
-n_samples <- nump
-
-getDirichletSample(result, 1) |> dim()
