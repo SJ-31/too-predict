@@ -14,7 +14,7 @@ from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
 from too_predict.imputer import Imputer
 from too_predict.model import RandomForestPred
-from too_predict.normalizer import Normalizer
+from too_predict.transformer import Transformer
 from too_predict.utils import (
     read_existing,
     training_data_internal,
@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
     # <2025-02-21 Fri> when you run the real thing, choose the best normalization method
     # or do it in a loop and see what happens
-    normalized = Normalizer(adata, "clr", Imputer("plus_one").run, inplace=False).run()
+    normalized = Transformer(adata, "clr", Imputer("plus_one").run, inplace=False).run()
     n_counts = normalized.X.toarray()
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex
@@ -147,7 +147,9 @@ if __name__ == "__main__":
     with joblib.parallel_backend(backend):
         low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
         mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
-        prop = read_existing(proportionality_file, get_proportionality, pd.read_csv)
+        prop = read_existing(
+            proportionality_file, get_proportionality, pd.read_csv
+        )  # <2025-02-28 Fri> This fails, too much data?
 
         # TODO: add in recursive selection
         # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)

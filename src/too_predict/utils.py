@@ -36,6 +36,12 @@ NA_TYPES: set = {
     NAComplexType,
 }
 
+RANDOM_STATE: int = 9874  # Last modified <2025-03-05 Wed>
+# Use for CV splitters
+
+RNG = np.random.RandomState(297)  # Last modified <2025-03-05 Wed>
+# Use for any relevant estimators
+
 
 def register_biocparallel(workers: int, param="MulticoreParam") -> None:
     ro.r("library(BiocParallel)")

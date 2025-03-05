@@ -15,9 +15,9 @@ from sklearn.utils.validation import check_is_fitted
 
 from too_predict.evaluation import get_all_metrics
 from too_predict.imputer import Imputer
-from too_predict.normalizer import Normalizer
 from too_predict.simulation import Simulator
-from too_predict.utils import adata_from_df, adata_to_df
+from too_predict.transformer import Transformer
+from too_predict.utils import RANDOM_STATE, adata_from_df, adata_to_df
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -125,7 +125,7 @@ class PredBase:
     def _preprocess(self, adata: ad.AnnData) -> ad.AnnData:
         adata = self._filter_features(adata)
         if self.n_method is not None:
-            normalized: ad.AnnData = Normalizer(
+            normalized: ad.AnnData = Transformer(
                 adata, self.n_method, impute_fn=self.impute, inplace=False
             ).run(**self.normalize_kwargs)
             gc.collect()
@@ -144,7 +144,7 @@ class PredBase:
         group_col="",
         n_splits=5,
         shuffle: bool = False,
-        random_state=None,
+        random_state=RANDOM_STATE,
     ) -> dict:
         """Evaluate model performance with cross-validation"""
         if preprocess:
@@ -224,7 +224,7 @@ class RandomForestPred(PredBase):
         super().__init__(
             normalization=normalization,
             imputation=imputation,
-            model=RandomForestClassifier(),
+            model=RandomForestClassifier(random_state=RNG),
             features=features,
             feature_col=feature_col,
         )
@@ -318,7 +318,7 @@ class AlrEstimator:
         self.missing_references = []
 
     def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
-        result: np.ndarray = Normalizer(X, "alr", None).run(by=by, **kwargs)
+        result: np.ndarray = Transformer(X, "alr", None).run(by=by, **kwargs)
         return result
 
     def fit(

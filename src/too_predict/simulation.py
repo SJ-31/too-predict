@@ -8,13 +8,13 @@ import pandas as pd
 import rpy2.robjects as ro
 from scipy import sparse, stats
 
-from too_predict.normalizer import Normalizer
+from too_predict.transformer import Transformer
 from too_predict.utils import r_cleanup
 
 IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 
 
-class Simulator(Normalizer):
+class Simulator(Transformer):
     def __init__(
         self,
         data: ad.AnnData | np.ndarray | pd.DataFrame,

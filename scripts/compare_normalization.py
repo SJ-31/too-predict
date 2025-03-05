@@ -15,7 +15,7 @@ from dask_jobqueue import SLURMCluster
 from pyhere import here
 from scalene.scalene_profiler import enable_profiling
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
-from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
+from too_predict.transformer import IMPLEMENTED_TRANSFORMATION, Transformer
 from too_predict.utils import (
     adata_x_to_r,
     df_to_r,
@@ -42,13 +42,9 @@ def helper(feature_set, adata, i: str, n: str, **kwargs) -> ad.AnnData | None:
         impute_fn = Imputer(i).run
     output = here(STORAGE_DIR, feature_set, f"{n}-{i}.h5ad")
     if not output.exists():
-        normalized: ad.AnnData = Normalizer(
-            adata,
-            method=n,
-            impute_fn=impute_fn,
-            make_sparse=False,
-            inplace=False,
-        ).run(**kwargs)
+        normalized = Transformer(
+            n, inplace=False, make_sparse=False, impute_fn=impute_fn, **kwargs
+        ).fit_transform(adata)
         try:
             sc.pp.pca(normalized)
             if "counts" in normalized.layers:
@@ -93,7 +89,7 @@ def parse_args():
 
 
 VAR_EXPLAINED: list = []
-NORMALIZATION_METHODS = IMPLEMENTED_NORMALIZATION
+NORMALIZATION_METHODS = IMPLEMENTED_TRANSFORMATION
 IMPUTATION_METHODS = ["plus_one"]
 METRIC_OUTPUT = here(OUTDIR, f"{DATE}-label_metrics.csv")
 

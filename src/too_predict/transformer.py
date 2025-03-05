@@ -11,7 +11,7 @@ from scipy import sparse, stats
 
 from too_predict.utils import r_cleanup
 
-IMPLEMENTED_NORMALIZATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr"}
+IMPLEMENTED_TRANSFORMATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr"}
 
 """
 References
@@ -22,31 +22,15 @@ References
 """
 
 
-class Normalizer:
-    """Class for normalizing counts in the given adata object. Inplace by default
+class Transformer:
+    """Class for transforming counts in the given adata object. Inplace by default
     Count data are temporarily converted to a numpy array for normalization if necessary
     """
 
-    def __init__(
-        self,
-        data: ad.AnnData | np.ndarray | pd.DataFrame,
-        method: str,
-        impute_fn: Callable | None = None,
-        inplace=True,
-        make_sparse=True,
-        supported_methods=IMPLEMENTED_NORMALIZATION,
-    ) -> None:
-        self.counts: np.ndarray | pd.DataFrame
-        self.adata: ad.AnnData | None
-        self.method = method
-        self.make_sparse = make_sparse
-        if method.lower() not in supported_methods:
-            raise ValueError(f"Method {method} not implemented!")
-
+    def fit(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
         if isinstance(data, ad.AnnData):
             self.counts_only = False
-            self.adata = data if inplace else data.copy()
-            self.inplace = inplace
+            self.adata = data if self.inplace else data.copy()
             self.adata.layers["counts"] = data.X
             if not (isinstance(data.X, np.ndarray)):
                 self.counts = data.X.toarray().copy()
@@ -54,12 +38,27 @@ class Normalizer:
                 self.counts = data.X.copy()  # A sample x feature ndarray
         else:
             self.adata = None
-            self.inplace = False
             self.counts_only = True
             self.counts = data
 
-        if impute_fn and method != "robust_clr":
-            self.counts = impute_fn(self.counts)
+    def __init__(
+        self,
+        method: str,
+        inplace=True,
+        make_sparse=True,
+        impute_fn=None,
+        supported_methods=IMPLEMENTED_TRANSFORMATION,
+        **kwargs,
+    ) -> None:
+        self.counts: np.ndarray | pd.DataFrame
+        self.adata: ad.AnnData | None
+        self.inplace = inplace
+        self.method = method
+        self.make_sparse = make_sparse
+        if method.lower() not in supported_methods:
+            raise ValueError(f"Method {method} not implemented!")
+        self.kwargs = kwargs
+        self.impute: Callable[[np.ndarray], np.ndarray] = impute_fn
 
     def alr(
         self,
@@ -345,23 +344,25 @@ class Normalizer:
             clr[clr == -np.inf] = 0
         return clr
 
-    def run(self, **kwargs) -> ad.AnnData | None | np.ndarray:
+    def transform(self) -> ad.AnnData | None | np.ndarray:
+        if self.impute and self.method != "robust_clr":
+            self.counts = self.impute(self.counts)
         match self.method:
             case "robust_clr":
-                kwargs.update({"robust": True})
-                normalized = self.clr(**kwargs)
+                self.kwargs.update({"robust": True})
+                normalized = self.clr(**self.kwargs)
             case "clr":
-                normalized = self.clr(**kwargs)
+                normalized = self.clr(**self.kwargs)
             case "tmm":
                 normalized = self.tmm()
             case "alr":
-                normalized = self.alr(**kwargs)
+                normalized = self.alr(**self.kwargs)
             case "tpm":
-                normalized = self.tpm(**kwargs)
+                normalized = self.tpm(**self.kwargs)
             case "fpkm":
-                normalized = self.fpkm(**kwargs)
+                normalized = self.fpkm(**self.kwargs)
             case "log_clr":
-                normalized = self.log_clr(**kwargs)
+                normalized = self.log_clr(**self.kwargs)
             case _:
                 normalized = np.array()
         if not self.counts_only:
@@ -372,3 +373,7 @@ class Normalizer:
                 return self.adata
         else:
             return normalized
+
+    def fit_transform(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
+        self.fit(data)
+        return self.transform(data)
