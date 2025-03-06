@@ -9,9 +9,11 @@ import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
+from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
 from too_predict.utils import r_cleanup
 
 IMPLEMENTED_TRANSFORMATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr"}
+IMPLEMENTED_TRANSFORMATION = IMPLEMENTED_TRANSFORMATION | IMPLEMENTED_SIMULATION
 
 """
 References
@@ -347,28 +349,35 @@ class Transformer:
     def transform(self) -> ad.AnnData | None | np.ndarray:
         if self.impute and self.method != "robust_clr":
             self.counts = self.impute(self.counts)
-        match self.method:
-            case "robust_clr":
-                self.kwargs.update({"robust": True})
-                normalized = self.clr(**self.kwargs)
-            case "clr":
-                normalized = self.clr(**self.kwargs)
-            case "tmm":
-                normalized = self.tmm()
-            case "alr":
-                normalized = self.alr(**self.kwargs)
-            case "tpm":
-                normalized = self.tpm(**self.kwargs)
-            case "fpkm":
-                normalized = self.fpkm(**self.kwargs)
-            case "log_clr":
-                normalized = self.log_clr(**self.kwargs)
-            case _:
-                normalized = np.array()
+        if self.method in IMPLEMENTED_SIMULATION:
+            sim = Simulator(self.method, self.counts, **self.kwargs)
+            normalized = sim()
+            if not self.counts_only:
+                self.adata.uns["mc_instances"] = normalized
+        else:
+            match self.method:
+                case "robust_clr":
+                    self.kwargs.update({"robust": True})
+                    normalized = self.clr(**self.kwargs)
+                case "clr":
+                    normalized = self.clr(**self.kwargs)
+                case "tmm":
+                    normalized = self.tmm()
+                case "alr":
+                    normalized = self.alr(**self.kwargs)
+                case "tpm":
+                    normalized = self.tpm(**self.kwargs)
+                case "fpkm":
+                    normalized = self.fpkm(**self.kwargs)
+                case "log_clr":
+                    normalized = self.log_clr(**self.kwargs)
+                case _:
+                    normalized = np.array()
         if not self.counts_only:
-            self.adata.X = (
-                sparse.csc_matrix(normalized) if self.make_sparse else normalized
-            )
+            if self.method not in IMPLEMENTED_SIMULATION:
+                self.adata.X = (
+                    sparse.csc_matrix(normalized) if self.make_sparse else normalized
+                )
             if not self.inplace:
                 return self.adata
         else:

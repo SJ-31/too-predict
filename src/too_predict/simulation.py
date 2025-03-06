@@ -2,28 +2,23 @@
 
 from typing import Callable
 
-import anndata as ad
 import numpy as np
-import pandas as pd
 import rpy2.robjects as ro
-from scipy import sparse, stats
+from scipy import stats
 
-from too_predict.transformer import Transformer
 from too_predict.utils import r_cleanup
 
 IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 
 
-class Simulator(Transformer):
+class Simulator:
     def __init__(
         self,
-        data: ad.AnnData | np.ndarray | pd.DataFrame,
         method: str,
+        data: np.ndarray,
         n: int = 5,
         prefix: str = "mc_",
-        impute_fn: Callable | None = None,
-        inplace=True,
-        make_sparse=True,
+        **kwargs,
     ) -> None:
         """Class for simulating count data
 
@@ -40,12 +35,27 @@ class Simulator(Transformer):
 
         Otherwise, the given adata is modified inplace
         """
-        super().__init__(
-            data, method, impute_fn, inplace, make_sparse, IMPLEMENTED_SIMULATION
-        )
+        self.method = method
+        self.counts = data
         self.prefix = prefix
         self.n = n
-        self.instances = np.zeros([n, *self.counts.shape])
+        self.simulated = False
+        self._instances = np.zeros([n, *self.counts.shape])
+        self.kwargs = kwargs
+
+    @property
+    def instances(self) -> np.ndarray:
+        if not self.simulated:
+            raise ValueError("Class hasn't been called yet!")
+        return self._instances
+
+    @instances.setter
+    def instances(self, value):
+        self._instances = value
+
+    @instances.deleter
+    def instances(self):
+        del self._instances
 
     @r_cleanup
     def dirichlet_scale(self, gamma, condition_col) -> None:
@@ -84,14 +94,20 @@ class Simulator(Transformer):
         with (ro.default_converter + ro.numpy2ri.converter).context():
             for i in range(self.n):
                 inst = np.transpose(ro.r(f"getDirichletSample(clr, {i + 1})"))
-                self.instances[i] = inst
+                self._instances[i] = inst
 
-    def _format(self, mat: np.ndarray):
-        if self.make_sparse:
-            return sparse.csc_matrix(mat)
-        return mat
+    def __call__(self):
+        match self.method:
+            case "dirichlet":
+                self.dirichlet(**self.kwargs)
+            case "dirichlet_scale":
+                self.dirichlet_scale(**self.kwargs)
+            case _:
+                raise ValueError("Method not implemented!")
+        self.simulated = True
+        return self.instances
 
-    def dirichlet(self, prior: float = 0.5):
+    def dirichlet(self, prior: float = 0.5) -> None:
         """
         Obtain random dirichlet instances from read counts (based on the ALDEx2 R package)
         For each sample, use the vector of read counts as the concentration parameter
@@ -113,18 +129,4 @@ class Simulator(Transformer):
             lambda x: stats.dirichlet.rvs(x, self.n), 1, arr
         )
         for i in range(instances.shape[1]):
-            self.instances[i] = instances[:, i, :]
-
-    def run(self, **kwargs) -> ad.AnnData | None | np.ndarray:
-        match self.method:
-            case "dirichlet":
-                self.dirichlet(**kwargs)
-            case "dirichlet_scale":
-                self.dirichlet_scale(**kwargs)
-        if self.counts_only:
-            return self.instances
-        else:
-            for i in range(self.n):
-                self.adata.layers[f"{self.prefix}{i}"] = self._format(self.instances[i])
-            if not self.inplace:
-                return self.adata
+            self._instances[i] = instances[:, i, :]
