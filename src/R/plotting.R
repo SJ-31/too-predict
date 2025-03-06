@@ -122,13 +122,17 @@ pheatmap_helper <- function(obs = NULL,
     }
   }, simplify = FALSE)
 
-  sample_anno <- obs[, colnames(obs) %in% names(sample_annotations)] |> as.data.frame()
-  if (nchar(order_on) > 0) {
-    vec <- obs[[order_on]]
-    uniques <- unique(vec)
-    sample_anno[[order_on]] <- factor(vec, levels = uniques)
-    counts <- counts[, order(sample_anno[[order_on]])]
-    sample_anno <- sample_anno[order(sample_anno[[order_on]]), ]
+  if (length(sample_annotations) > 0) {
+    sample_anno <- obs[, colnames(obs) %in% names(sample_annotations)] |> as.data.frame()
+    if (nchar(order_on) > 0) {
+      vec <- obs[[order_on]]
+      uniques <- unique(vec)
+      sample_anno[[order_on]] <- factor(vec, levels = uniques)
+      counts <- counts[, order(sample_anno[[order_on]])]
+      sample_anno <- sample_anno[order(sample_anno[[order_on]]), ]
+    }
+  } else {
+    sample_anno <- NA
   }
 
   do.call(\(...) {

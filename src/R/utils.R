@@ -29,12 +29,11 @@ aldex_glm_wrapper <- function(data, group, technical_factors = c(),
   } else {
     vars <- rowData(data)[, gene_col]
   }
-  factor_str <- paste0(c(group, technical_factors), collapse = " + ")
   clr_args$useMC <- use_parallel
   counts <- assays(data)[[count_slot]]
   var_col <- ifelse(!is.null(gene_col), gene_col, "var")
   rownames(counts) <- vars
-  mm <- model.matrix(as.formula(paste("~0+", factor_str)), data = colData(data))
+  mm <- make_mm(group, technical_factors, colData(data))
   clr <- do.call(\(...) aldex.clr(counts, mm, ...), clr_args)
   test <- do.call(\(...) aldex.glm(clr, mm, ...), glm_args)
   effect <- aldex.glm.effect(clr, useMC = use_parallel)
@@ -48,4 +47,10 @@ aldex_glm_wrapper <- function(data, group, technical_factors = c(),
   rownames(test) <- NULL
   rownames(combined_effect) <- NULL
   return(list(effect = as.data.frame(combined_effect), test = as.data.frame(test)))
+}
+
+make_mm <- function(group, other_factors = c(), data) {
+  factor_str <- paste0(c(group, other_factors), collapse = " + ")
+  mm <- model.matrix(as.formula(paste("~0+", factor_str)), data)
+  mm
 }

@@ -583,4 +583,4 @@ def ref_feature_lists_internal() -> tuple[dict, dict]:
                 items = f.read().strip().splitlines()
             name = file.stem
             add_to[name] = items
-    return features, refs
+    return refs, features
