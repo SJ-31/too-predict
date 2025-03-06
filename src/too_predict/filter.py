@@ -5,13 +5,16 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import sklearn.neighbors as sn
+from scipy import sparse
 
 
 class Filter:
-    def __init__(
-        self, features=None, min_cells=2, feature_col="GENENAME", inplace=False
-    ) -> None:
-        self.min_cells = min_cells
+    """Class for filtering features (genes) in adata objects to a requested subset
+    Also re-orders the features in the adata to that of the feature list, filling
+    in missing features with 0s.
+    """
+
+    def __init__(self, features, feature_col="GENENAME", inplace=False) -> None:
         self.features = features  # Requested features to subset data by
         self.feature_col = feature_col
         self.discarded_features = None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
@@ -26,22 +29,32 @@ class Filter:
         return self.transform()
 
     def transform(self) -> ad.AnnData:
-        passed_filter: np.ndarray = sc.pp.filter_genes(
-            self.adata, min_cells=self.min_cells, inplace=False
-        )  # Genes must be nonzero in at least two samples
-        self.discarded_features = self.adata.var.loc[~(passed_filter[0]), :]
-        self.adata = self.adata[:, passed_filter[0]].copy()
-        if self.features is not None:
-            self.adata = self.adata[
-                :, self.adata.obs[self.feature_col] == self.features
-            ]
-            missing = set(self.features) - set(self.adata.obs[self.feature_col])
-            self.missing_features = missing
-            if len(missing) > 0:
-                print("--- WARNING: Missing features!")
-                print(missing)
-                print("---")
-        return self.adata
+        to_fill = np.zeros((self.adata.shape[0], len(self.features)))
+        new_var = pd.DataFrame(index=self.features).merge(
+            self.adata.var, how="left", left_index=True, right_on=self.feature_col
+        )
+        new_var.index = self.features
+        lookup: pd.Index = pd.Index(self.adata.var[self.feature_col])
+        missing = []
+        is_array = isinstance(self.adata.X, np.ndarray)
+        counts: np.ndarray = self.adata.X.toarray() if not is_array else self.adata.X
+        for i, f in enumerate(self.features):
+            try:
+                to_fill[:, i] = counts[:, lookup.get_loc(f)]
+            except KeyError:
+                missing.append(f)
+                continue
+        transformed = ad.AnnData(
+            X=sparse.csc_matrix(to_fill) if not is_array else to_fill,
+            var=new_var,
+            obs=self.adata.obs,
+            uns=self.adata.uns,
+            obsm=self.adata.obsm,
+        )
+        self.missing_features = missing
+        if len(missing) > 0:
+            print(f"--- WARNING: {len(missing)} missing features!")
+        return transformed
 
 
 def count_tomek_links(
