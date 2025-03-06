@@ -1,6 +1,8 @@
 #!/usr/bin/env ipython
 
 import importlib.resources as res
+import itertools
+import math
 import pickle
 from functools import reduce
 from pathlib import Path
@@ -584,3 +586,29 @@ def ref_feature_lists_internal() -> tuple[dict, dict]:
             name = file.stem
             add_to[name] = items
     return refs, features
+
+
+def comb_pair_at(j, query, n=None) -> tuple[int, int]:
+    """Return the pair at index `query` in a hypothetical sequence of pairs
+
+    The pair sequence is an ordered sequence of [(0, 1), (0, 2), ..., (j - 2, j - 1)]
+
+    TODO: write this in rust, accumulate and the loop might get unwieldy
+    could there also be an analytic way of calculating `f_offset`?
+    """
+    n = math.comb(j, 2) if n is None else n
+    first: int = j - 2  # Placeholder
+    if query >= n:
+        raise ValueError("The query is too large!")
+    f_offset: int = 0
+    first_cutoffs = itertools.accumulate((j - 1 - i for i in range(j - 1)))
+    previous = 0
+    for index, acc in enumerate(first_cutoffs):
+        if query < acc:
+            first = index
+            f_offset = previous
+            break
+        if index > 0:
+            previous = acc
+    second = query - f_offset + first + 1
+    return (first, second)
