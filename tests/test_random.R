@@ -20,11 +20,26 @@ data <- AnnData2SCE((pyutils$training_data_internal_test()))
 features <- readLines(fs_lists[1])
 
 sce <- data[rownames(data) %in% features, ]
-sce <- sce[1:100, ]
 
-pheatmap_helper(sce = sce, sample_annotations = list(
-  tumor_type = "ggthemes::Tableau_20",
-  Sample_Type = NULL
-), order_on = "Sample_Type", pheatmap_kwargs = list(filename = here("foo.png")))
+assays(sce)$X <- as.matrix(assays(sce)$X)
+mode(assays(sce)$X) <- "integer"
+sce <- sce[, 1:200]
 
-## --- CODE BLOCK ---
+aldex_result <- aldex_glm_wrapper(sce, "tumor_type", gene_col = "GENENAME")
+
+counts <- assays(sce)$X
+
+mm <- make_mm("tumor_type", data = colData(sce))
+
+estimate <- aldex.clr(counts, mm, gamma = 1e-3)
+scales <- getScaleSamples(estimate)
+# <2025-03-05 Wed> What do these values mean exactly???
+# Pretty sure these values are (logged) scale estimates i.e. W^{\perp}
+# The authors of the VB paper looked at scale between the housekeeping genes
+# but how does that work given that scale estimates are at the sample level
+
+gmeans <- exp(colMeans(log(counts + 1), na.rm = TRUE))
+
+
+meta <- as_tibble(colData(sce)) |> mutate(scale = rowMeans(scales))
+meta$scale

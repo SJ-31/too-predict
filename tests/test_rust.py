@@ -15,7 +15,7 @@ import too_predict._rust_helpers as rh
 from numpy import float64
 from sklearn.ensemble import RandomForestClassifier
 from too_predict.model import AlrBase, AlrEstimator, PredBase, SimEstimator
-from too_predict.normalizer import IMPLEMENTED_NORMALIZATION, Normalizer
+from too_predict.normalizer import IMPLEMENTED_TRANSFORMATION, Transformer
 from too_predict.simulation import Simulator
 
 sk.set_config(enable_metadata_routing=True)

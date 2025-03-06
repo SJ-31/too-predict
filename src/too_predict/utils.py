@@ -569,3 +569,18 @@ def take_from_ad(
         else:
             missing.append((k, v))
     return missing
+
+
+def ref_feature_lists_internal() -> tuple[dict, dict]:
+    features, refs = {}, {}
+    fs_dir = here("data", "output", "feature_selection")
+    for fname, add_to in zip(
+        [here(fs_dir, "feature_lists"), here(fs_dir, "reference_lists")],
+        [features, refs],
+    ):
+        for file in fname.iterdir():
+            with open(file, "r") as f:
+                items = f.read().strip().splitlines()
+            name = file.stem
+            add_to[name] = items
+    return features, refs
