@@ -11,9 +11,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
 
 from too_predict.evaluation import get_all_metrics
-from too_predict.simulation import Simulator
 from too_predict.transformer import Transformer
-from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
+from too_predict.utils import RANDOM_STATE, RNG, adata_to_df, str_mode
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -289,16 +288,8 @@ class AlrEstimator:
         return self.models[self.refs[0]].classes_
 
 
-# <2025-02-23 Sun> TODO: still haven't tested this yet
 class SimEstimator:
-    def __init__(
-        self,
-        simulation: str,
-        model,
-        prefix: str = "mc_",
-        n: int = 10,
-        predict_from_sim: bool = False,
-    ) -> None:
+    def __init__(self, method: str, model, **kwargs) -> None:
         """A class to fit models where the data preprocessing involves some
         form of simulation
         e.g. generating Monte Carlo instances
@@ -308,25 +299,31 @@ class SimEstimator:
         predict_from_sim : whether the model should make predictions from data after
             running the simulation process
         """
+        self.method = method
         self.model = model
-        self.s_method = simulation
-        self.predict_from_sim = predict_from_sim
-        self.prefix = prefix
-        self.cross_validating = False
-        self.n = n
+        self.kwargs = kwargs
 
-    def _get_instances(self, X, labels=None):
-        instances = Simulator(
-            X,
-            self.s_method,
-            self.n,
-            prefix=self.prefix,
-            inplace=False,
-            make_sparse=False,  # Required for concatenation
-        ).run()
-        counts = np.concatenate(instances)
+    @staticmethod
+    def _validate_x(X: np.ndarray) -> None:
+        shape = X.shape
+        if len(shape) != 3:
+            raise ValueError(
+                "X must be an array of shape (n_simulations, n_obs, n_features)!"
+            )
+        else:
+            print(f"Fitting to data with {shape[0]} instances...")
+
+    def _simulate(self, X: np.ndarray) -> np.ndarray:
+        array: np.ndarray = Transformer(
+            self.method, inplace=False, make_sparse=False, **self.kwargs
+        ).fit_transform(X)
+        return array
+
+    def _format_instances(self, X: np.ndarray, labels=None):
+        self._validate_x(X)
+        counts = np.concatenate(X)
         if labels is not None:
-            labels = np.concatenate([np.copy(labels) for _ in range(self.n)])
+            labels = np.concatenate([np.copy(labels) for _ in range(X.shape[0])])
         return counts, labels
 
     def fit(
@@ -343,18 +340,23 @@ class SimEstimator:
         @param instance_prefix: prefix denoting layers in the the adata object containing
         the instances
         """
-        X, y = self._get_instances(X, y)
+        X = self._simulate(X)
+        X, y = self._format_instances(X, y)
         self.model.fit(X, y)
 
     def predict_proba(self, X) -> np.ndarray:
-        if self.predict_from_sim:
-            X, _ = self._get_instances(X)
-        return self.model.predict_proba(X)
+        X = self._simulate(X)
+        self._validate_x(X)
+        all_proba = []
+        for i in range(X.shape[0]):
+            cur = self.model.predict_proba(X[i, :, :])
+            all_proba.append(cur)
+        return np.array(all_proba).mean(axis=0)
 
     def predict(self, X) -> np.ndarray:
-        if self.predict_from_sim:
-            X = self._get_instances(X)
-        return self.model.predict(X)
+        proba = self.predict_proba(X)
+        voted = [self.model.classes_[c] for c in np.argmax(proba, axis=1)]
+        return np.array(voted)
 
     @property
     def classes_(self):
