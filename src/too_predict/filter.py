@@ -102,7 +102,7 @@ def count_tomek_links(
             "count": pair_counts,
         }
     ).reset_index(drop=True)
-    count_matrix = pd.DataFrame(0, index=target, columns=target)
+    count_matrix = pd.DataFrame(0, index=target.unique(), columns=target.unique())
 
     for p, c in formatted_pairs.itertuples(index=False):
         x, y = p
