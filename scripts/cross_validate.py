@@ -1,25 +1,27 @@
 #!/usr/bin/env ipython
+from logging import Filter
 from pathlib import Path
 
-import anndata as ad
 import joblib
 import too_predict.model as tm
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
+from scanpy import read_h5ad
+from sklearn.ensemble import RandomForestClassifier
+from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
+from too_predict.transformer import Transformer
 from too_predict.utils import (
+    RANDOM_STATE,
+    RNG,
+    ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
 )
 
 outdir = here("data", "output", "cross_validation")
-seed: int = 4932
-adata: ad.AnnData
 
 
-# #  --- CODE BLOCK ---
-# <2025-02-14 Fri> use the model.cross_validate() method on the adata object.
-# and plot results
 def parse_args():
     import argparse
 
@@ -27,25 +29,60 @@ def parse_args():
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-c", "--cores", default=8)
     parser.add_argument("-t", "--test", default=False, action="store_true")
-    parser.add_argument("-n", "--no_dask", default=False, action="store_true")
+    parser.add_argument("-d", "--dask", default=False, action="store_true")
     parser.add_argument("-l", "--label_class", default="tumor_type")
     return parser.parse_args()
 
 
-label_classes = ["tumor_type", "primary_site"]
-group_classes = ["Project_ID"]
-model_dict: dict = {"clr_random_forest": tm.RandomForestPred("clr", "plus_one")}
+STORAGE_DIR = here("remote", "repos", "too-predict", "normalization_comparison")
+LABEL_CLASSES = ["tumor_type", "primary_site"]
+GROUP_CLASSES = ["Project_ID"]
+REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
+
+# Dictionary of model_name -> [model, transformation, imputation, feature_set]
+MODELS: dict = {
+    "clr_random_forest": {
+        "model": tm.RandomForestPred(),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "mutual_info_feature_list_3000",
+    },
+    "alr_random_forest_low_variance": {
+        "model": tm.AlrBase(
+            RandomForestClassifier(random_state=RNG),
+            references=REF_LISTS["variance_feature_list_lowest_20"],
+        ),
+        "i": "plus_one",
+        "f": "mutual_info_feature_list_3000",
+        "r": "variance_feature_list_lowest_20",
+    },
+}
 
 
-def cross_validate_helper(lc, gc, model, result_dir_str):
-    model = tm.RandomForestPred("clr", "plus_one")
+def cross_validate_helper(
+    lc, gc, model, result_dir_str, trans, impute, feature_set, references=None
+):
+    # gc is the group variable excluded during the cv folds e.g. Sample_Type
     if gc is not None:
         result_dir: Path = here(outdir, f"{result_dir_str}_by_group_{gc}")
     else:
         result_dir: Path = here(outdir, result_dir_str)
     result_dir.mkdir(exist_ok=True, parents=True)
+    dir = STORAGE_DIR.joinpath(feature_set)
+    output = here(dir, f"{trans}-{impute}.h5ad")
+    if not output.exists() or trans is None:
+        adata = training_data_internal()
+        if feat := FEATURE_LISTS[feature_set]:
+            adata = Filter(
+                feat if references is None else feat + REF_LISTS[references]
+            ).fit_transform(adata)
+        Transformer(trans, impute_fn=Imputer(impute), inplace=True).fit_transform(adata)
+        # Does nothing if trans is None
+
+    else:
+        adata = read_h5ad(output)
     results = model.cross_validate(
-        adata, label_col=lc, group_col=gc, shuffle=True, random_state=seed
+        adata, label_col=lc, group_col=gc, shuffle=True, random_state=RANDOM_STATE
     )
     # <2025-02-28 Fri> Grouping is problematic because some groups are confounded
     # with whatever you are labeling on
@@ -69,14 +106,30 @@ if __name__ == "__main__":
     else:
         adata = training_data_internal()
     label_class = args.label_class
-    cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
-    client = Client(cluster)
-    backend = "dask" if not args.no_dask else "loky"
+    if args.dask:
+        cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
+        client = Client(cluster)
+    backend = "dask" if args.dask else "loky"
+    par_args = {"wait_for_workers_timeout": 0} if args.dask else {"n_jobs": args.cores}
 
     with joblib.parallel_backend(backend):
-        for name, model in model_dict.items():
+        for name, data in MODELS.items():
+            model, transformation, imputation, features, references = (
+                data.get("model"),
+                data.get("t"),
+                data.get("i"),
+                data.get("f"),
+                data.get("r"),
+            )
+            outname = f"{name}_{features}"
             cross_validate_helper(
-                lc=label_class, gc=None, model=model, result_dir_str=name
+                lc=label_class,
+                gc=None,
+                model=model,
+                result_dir_str=outname,
+                trans=transformation,
+                impute=imputation,
+                references=references,
             )
             # for g in group_classes:
             #     cross_validate_helper(lc=label_class, gc=g, model=model, result_dir_str=name)
