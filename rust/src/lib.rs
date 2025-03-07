@@ -1,14 +1,21 @@
 use core::f64;
 
 use itertools::Itertools;
-use ndarray::{s, Array1, Array2, ArrayBase, ArrayView1, ArrayView2, Axis, Zip};
+use ndarray::{
+    concatenate, s, stack, Array1, Array2, ArrayBase, ArrayView1, ArrayView2, Axis, Zip,
+};
 use ndarray_stats::CorrelationExt;
-use num_traits::zero;
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
-use pyo3::types::PyModuleMethods;
-use pyo3::wrap_pyfunction;
+use numpy::{IntoPyArray, PyArray, PyArray1, PyArray2, PyReadonlyArray2, ToPyArray};
+use pyo3::prelude::*;
+use pyo3::types::{PyModuleMethods, PyTuple, PyType};
 use pyo3::{pyfunction, pymodule, types::PyModule, Bound, PyResult, Python};
+use pyo3::{wrap_pyfunction, IntoPy, PyAny, ToPyObject};
 use rayon::prelude::*;
+
+// * References
+// [1] Sun, Mengtao, Jieqiong Wang, and Shibiao Wan. “Accurate Identification of Medulloblastoma Subtypes from Diverse Data Sources with Severe Batch Effects by RaMBat.” bioRxiv, February 28, 2025. https://doi.org/10.1101/2025.02.24.640010.
+//
+//
 
 // * Send to python
 
@@ -21,6 +28,7 @@ fn _rust_helpers(m: &Bound<'_, PyModule>) -> PyResult<()> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (arr, do_parallel, /))]
 fn phi_matrix<'py>(
     py: Python<'py>,
     arr: PyReadonlyArray2<'py, f64>,
@@ -35,10 +43,17 @@ fn phi_matrix<'py>(
 fn encode_pairs<'py>(
     py: Python<'py>,
     arr: PyReadonlyArray2<'py, f64>,
-) -> Bound<'py, PyArray2<i64>> {
+) -> PyResult<(Bound<'py, PyArray2<i64>>, Vec<Vec<usize>>)> {
+    let math = PyModule::import_bound(py, "math")?;
     let converted: ArrayView2<f64> = arr.as_array();
-    let result = encode_pairs_rs(converted);
-    result.into_pyarray_bound(py)
+    let n_features = converted.ncols();
+    let comb = math.getattr("comb")?;
+    let n: i64 = comb.call1((n_features, 2))?.extract()?;
+    println!("{:?}", n);
+    let (encoded, names) = encode_pairs_rs(converted);
+    let encoded_py = encoded.to_pyarray_bound(py);
+    let names_py = names;
+    Ok((encoded_py, names_py))
 }
 
 #[pyfunction]
@@ -135,14 +150,6 @@ fn phi_proportionality_rs(arr: ArrayView2<f64>, do_parallel: bool) -> Array2<f64
     result
 }
 
-fn factorial(n: u64) -> u64 {
-    (1..=n).product()
-}
-
-fn choose(n: u64, r: u64) -> u64 {
-    factorial(n) / (factorial(r) * factorial(n - r))
-}
-
 /// Encode gene expression pairs as binary indicators, adapted from RaMBat [1]
 ///
 /// # Arguments
@@ -151,19 +158,27 @@ fn choose(n: u64, r: u64) -> u64 {
 /// # Returns
 /// A binary array of shape [ n_samples, choose(n_features, 2) ]
 ///
-fn encode_pairs_rs(arr: ArrayView2<f64>) -> Array2<i64> {
-    let ncols = arr.nrows();
+fn encode_pairs_rs(arr: ArrayView2<f64>) -> (Array2<i64>, Vec<Vec<usize>>) {
+    let nrows = arr.nrows();
     let n_features = arr.ncols();
-    let mut result: Array2<i64> = Array2::zeros([ncols, choose(n_features as u64, 2) as usize]);
-    for (i, pair) in (0..n_features).combinations(2).enumerate() {
+    let mut result: Array2<i64> = Array2::zeros([nrows, 1]);
+    let combos: Vec<Vec<usize>> = (0..n_features).combinations(2).collect();
+    for pair in (&combos).into_iter() {
         let f1: ArrayView1<f64> = arr.slice(s![.., pair[0]]);
         let f2: ArrayView1<f64> = arr.slice(s![.., pair[1]]);
         let comparison = Zip::from(f1)
             .and(f2)
             .map_collect(|x, y| if x > y { 1 } else { 0 });
-        result.slice_mut(s![.., i]).assign(&comparison);
+        result = concatenate(
+            Axis(1),
+            &[
+                result.view(),
+                comparison.to_shape((nrows, 1)).unwrap().view(),
+            ],
+        )
+        .unwrap();
     }
-    result
+    (result, combos)
 }
 
 // * Tests
@@ -179,7 +194,7 @@ fn test_phi_prop() {
         .and_broadcast(s2)
         .map_collect(|x, y| if x > y { 1 } else { 0 });
     let phi2 = phi_proportionality_rs(h.view(), false);
-    let encode2 = encode_pairs_rs(h.view());
+    let (encode2, val) = encode_pairs_rs(h.view());
     println!("foo");
     println!("{:?}", encode2);
 }
@@ -193,11 +208,41 @@ fn test_prop_coeff() {
     println!("{:?}", rho);
 }
 
-#[ignore]
 #[test]
 fn test_combos() {
-    let myvec = Vec::from_iter(0..10);
-    for (i, b) in myvec.into_iter().combinations(2).enumerate() {
-        println!("{:?}, {:?}", i, b[0]);
+    let myvec = Vec::from_iter(0..15);
+    let vs: Vec<Vec<usize>> = myvec.into_iter().combinations(2).collect();
+    println!("{:?}", comb_pair_at(5, 8));
+}
+
+/// Return the pair at index `query` in a hypothetical sequence of pairs
+/// The pair sequence is an ordered sequence of [(0, 1), (0, 2), ..., (j - 2, j - 1)]
+///
+/// # Arguments
+/// * j : the number of elements in the original
+/// * query : index of pair sequnce of interest
+///
+fn comb_pair_at(j: i64, query: i64) -> (i64, i64) {
+    let first_cutoffs = (0..j - 1).scan(0, |state, x| {
+        *state = *state + (j - 1 - x);
+        Some(*state)
+    });
+    let mut first: i64 = -1;
+    let mut f_offset = 0;
+    let mut previous = 0;
+    for (index, acc) in first_cutoffs.enumerate() {
+        if query < acc {
+            first = index as i64;
+            f_offset = previous;
+            break;
+        }
+        if index > 0 {
+            previous = acc;
+        }
     }
+    if first < 0 {
+        panic!("The query is too large!");
+    }
+    let second = query - f_offset + first + 1;
+    (first, second)
 }
