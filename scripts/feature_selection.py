@@ -136,7 +136,7 @@ if __name__ == "__main__":
 
     # <2025-02-21 Fri> when you run the real thing, choose the best normalization method
     # or do it in a loop and see what happens
-    normalized = Transformer(adata, "clr", Imputer("plus_one").run, inplace=False).run()
+    normalized = Transformer(adata, "clr", Imputer("plus_one"), inplace=False).run()
     n_counts = normalized.X.toarray()
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex

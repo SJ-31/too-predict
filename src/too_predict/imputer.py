@@ -20,10 +20,11 @@ IMPLEMENTED_IMPUTATION = {
 
 
 class Imputer:
-    def __init__(self, method: str) -> None:
+    def __init__(self, method: str, **kwargs) -> None:
         if method and method.lower() not in IMPLEMENTED_IMPUTATION:
             raise ValueError(f"Imputation method {method} not implemented!")
         self.method: str | None = method
+        self.kwargs = kwargs
 
     @staticmethod
     def replace_one(mat: np.ndarray) -> np.ndarray:
@@ -51,7 +52,7 @@ class Imputer:
             replaced[locs, :] = current + median * has_zeros
         return replaced
 
-    def run(self, counts: np.ndarray, **kwargs) -> np.ndarray:
+    def __call__(self, counts: np.ndarray) -> np.ndarray:
         match self.method:
             case "plus_one":
                 return counts + 1
@@ -62,7 +63,7 @@ class Imputer:
             case "missforest":
                 return MissForest().fit_transform(counts)
             case "labelled_median":
-                return self.labelled_median(counts, **kwargs)
+                return self.labelled_median(counts, **self.kwargs)
             case None:
                 return counts
 

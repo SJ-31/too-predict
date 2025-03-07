@@ -91,28 +91,20 @@ def parse_args():
 VAR_EXPLAINED: list = []
 NORMALIZATION_METHODS = IMPLEMENTED_TRANSFORMATION
 IMPUTATION_METHODS = ["plus_one"]
-METRIC_OUTPUT = here(OUTDIR, f"{DATE}-label_metrics.csv")
-
-REF_LISTS: dict = {}
-# Adding selected features for CLR
-FEATURE_LISTS: dict = {}
-
-for fname, add_to in zip(
-    [here(FS_DIR, "feature_lists"), here(FS_DIR, "reference_lists")],
-    [FEATURE_LISTS, REF_LISTS],
-):
-    for file in fname.iterdir():
-        with open(file, "r") as f:
-            items = f.read().strip().splitlines()
-        name = file.stem
-        add_to[name] = items
-
+METRIC_OUTPUT = here(OUTDIR, "label_metrics.csv")
+REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 FEATURE_LISTS["all_features"] = None
+NORMALIZATION_METHODS = NORMALIZATION_METHODS.extend(FEATURE_LISTS.keys())
 
 
-def get_metrics(adata: ad.AnnData, label, normalization, imputation, f):
+def get_metrics(adata: ad.AnnData, label, normalization, imputation, feature_set, f):
     df = pd.DataFrame(
-        {"label": label, "normalization": normalization, "imputation": imputation},
+        {
+            "label": label,
+            "feature_set": feature_set,
+            "normalization": normalization,
+            "imputation": imputation,
+        },
         index=[0],
     )
     df["silhouette_score"] = sm.silhouette_score(adata.X, adata.obs[label])
