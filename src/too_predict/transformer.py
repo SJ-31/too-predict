@@ -12,7 +12,7 @@ from scipy import sparse, stats
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
 from too_predict.utils import r_cleanup
 
-IMPLEMENTED_TRANSFORMATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr"}
+IMPLEMENTED_TRANSFORMATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr", "none"}
 IMPLEMENTED_TRANSFORMATION = IMPLEMENTED_TRANSFORMATION | IMPLEMENTED_SIMULATION
 
 """
@@ -57,7 +57,7 @@ class Transformer:
         self.inplace = inplace
         self.method = method
         self.make_sparse = make_sparse
-        if method.lower() not in supported_methods:
+        if method is not None and method.lower() not in supported_methods:
             raise ValueError(f"Method {method} not implemented!")
         self.kwargs = kwargs
         self.impute: Callable[[np.ndarray], np.ndarray] = impute_fn
@@ -371,8 +371,8 @@ class Transformer:
                     normalized = self.fpkm(**self.kwargs)
                 case "log_clr":
                     normalized = self.log_clr(**self.kwargs)
-                case _:
-                    normalized = np.array()
+                case "none" | _:
+                    normalized = self.counts
         if not self.counts_only:
             if self.method not in IMPLEMENTED_SIMULATION:
                 self.adata.X = (
