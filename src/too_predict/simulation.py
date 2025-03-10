@@ -1,7 +1,5 @@
 #!/usr/bin/env ipython
 
-from typing import Callable
-
 import numpy as np
 import rpy2.robjects as ro
 from scipy import stats
@@ -16,7 +14,7 @@ class Simulator:
         self,
         method: str,
         data: np.ndarray,
-        n: int = 5,
+        n_instances: int = 5,
         prefix: str = "mc_",
         **kwargs,
     ) -> None:
@@ -38,9 +36,9 @@ class Simulator:
         self.method = method
         self.counts = data
         self.prefix = prefix
-        self.n = n
+        self.n = n_instances
         self.simulated = False
-        self._instances = np.zeros([n, *self.counts.shape])
+        self._instances = np.zeros([n_instances, *self.counts.shape])
         self.kwargs = kwargs
 
     @property
