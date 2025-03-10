@@ -139,3 +139,7 @@ get_edgeR <- function(f) {
 
 edgeR_top_file <- here(outdir, "edgeR_top_types.tsv")
 edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
+
+## * CoDACore
+
+## TODO
