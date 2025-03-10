@@ -1,5 +1,4 @@
 #!/usr/bin/env ipython
-from logging import Filter
 from pathlib import Path
 
 import joblib
@@ -9,6 +8,7 @@ from dask_jobqueue import SLURMCluster
 from pyhere import here
 from scanpy import read_h5ad
 from sklearn.ensemble import RandomForestClassifier
+from too_predict.filter import Filter
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import (
@@ -41,11 +41,17 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 
 # Dictionary of model_name -> [model, transformation, imputation, feature_set]
 MODELS: dict = {
-    "clr_random_forest": {
+    "clr_random_forest_minfo": {
         "model": tm.RandomForestPred(),
         "t": "clr",
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
+    },
+    "clr_random_forest_edger": {
+        "model": tm.RandomForestPred(),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
     },
     "alr_random_forest_low_variance": {
         "model": tm.AlrBase(
@@ -82,7 +88,7 @@ def cross_validate_helper(
     else:
         adata = read_h5ad(output)
     results = model.cross_validate(
-        adata, label_col=lc, group_col=gc, shuffle=True, random_state=RANDOM_STATE
+        adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE
     )
     # <2025-02-28 Fri> Grouping is problematic because some groups are confounded
     # with whatever you are labeling on
@@ -121,13 +127,13 @@ if __name__ == "__main__":
                 data.get("f"),
                 data.get("r"),
             )
-            outname = f"{name}_{features}"
             cross_validate_helper(
                 lc=label_class,
                 gc=None,
                 model=model,
-                result_dir_str=outname,
+                result_dir_str=name,
                 trans=transformation,
+                feature_set=features,
                 impute=imputation,
                 references=references,
             )
