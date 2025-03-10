@@ -54,3 +54,16 @@ make_mm <- function(group, other_factors = c(), data) {
   mm <- model.matrix(as.formula(paste("~0+", factor_str)), data)
   mm
 }
+
+basename_no_ext <- function(file) {
+  bname <- basename(file)
+  helper <- function(b) {
+    splits <- b |> str_split_1("\\.")
+    if (length(splits) > 1) {
+      paste0(head(splits, n = -1), collapse = ".")
+    } else {
+      b
+    }
+  }
+  map_chr(bname, helper)
+}
