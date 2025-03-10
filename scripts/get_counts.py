@@ -408,7 +408,6 @@ geo_map = {
 }
 # <2025-02-24 Mon> Might want to recode to combine LGG and HGG (since you only
 # have one case of the latter)
-# TODO: in combined file, replace spaces and commas with _
 
 geo_adatas = []
 index_outdir = here("data", "indices_tmp_Monday_Feb-24-2025")

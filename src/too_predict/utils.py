@@ -585,13 +585,13 @@ def ref_feature_lists_internal() -> tuple[dict, dict]:
                 items = f.read().strip().splitlines()
             name = file.stem
             add_to[name] = items
+    features["all_features"] = None
     return refs, features
 
 
 def comb_pair_at(j, query, n=None) -> tuple[int, int]:
-    """Return the pair at index `query` in a hypothetical sequence of pairs
+    """
 
-    The pair sequence is an ordered sequence of [(0, 1), (0, 2), ..., (j - 2, j - 1)]
 
     TODO: write this in rust, accumulate and the loop might get unwieldy
     could there also be an analytic way of calculating `f_offset`?
