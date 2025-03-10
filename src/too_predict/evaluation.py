@@ -12,8 +12,10 @@ def curve_multiclass(
     second: str,
     true_labels,
     pred_proba: pd.DataFrame | np.ndarray,
-    summary_fn: Callable = None,
-    summary_fn_name: str = "",
+    s_fn: Callable = None,
+    s_fn_name: str = "",
+    s_fn_all_classes: Callable = None,
+    s_fn_all_classes_name: str = "",
     classes=None,
 ):
     """
@@ -35,7 +37,11 @@ def curve_multiclass(
     classes : If pred_proba are the array the predicted probabilities,
         the names of the classes in their order of appearance
 
-    summary_fn : Callable[true, score, labels]
+    s_fn : Callable[true, score, labels], a function supporting multi-class classification
+        that returns an iterable
+
+    s_fn_all_classes : a function supporting multi-class classification returning
+        a single value representing performance for all classes
 
     Returns:
     --------
@@ -47,18 +53,20 @@ def curve_multiclass(
         - 'class' (str): The class for which the metrics metrics are computed.
         - summary_fn_name: Summary metric for the current class, if provided
     """
-    if not isinstance(pred_proba, pd.DataFrame) and classes:
+    if not isinstance(pred_proba, pd.DataFrame) and classes is not None:
         prob_df = pd.DataFrame(pred_proba, columns=classes)
-    elif not isinstance(pred_proba, pd.DataFrame) and not classes:
+    elif not isinstance(pred_proba, pd.DataFrame) and classes is None:
         raise ValueError("If `pred_proba` isn't a df, the classes must be provided!")
     else:
         prob_df = pred_proba
     summary_labels = {}
-    if summary_fn:
-        summary = summary_fn(true_labels, prob_df, prob_df.columns)
+    if s_fn is not None:
+        summary = s_fn(true_labels, prob_df, prob_df.columns)
         summary_labels: dict = {
             c: f"{c}: {v.round(3)}" for c, v in zip(prob_df.columns, summary)
         }
+    if s_fn_all_classes is not None:
+        summary_all = s_fn_all_classes(true_labels, prob_df, prob_df.columns)
     dfs = []
     for c in prob_df.columns:
         f, s, thresholds = curve_fn(true_labels, prob_df[c], c)
@@ -66,14 +74,22 @@ def curve_multiclass(
             thresholds = np.concatenate([[np.inf], thresholds])
         tmp = pd.DataFrame({first: f, second: s, "thresholds": thresholds})
         tmp["class"] = c
-        if summary_fn and summary_fn_name:
-            tmp[summary_fn_name] = summary_labels[c]
+        if s_fn and s_fn_name:
+            tmp[s_fn_name] = summary_labels[c]
         dfs.append(tmp)
     roc_df = pd.concat(dfs)
+    if s_fn_all_classes is not None and s_fn_all_classes_name:
+        roc_df[s_fn_all_classes_name] = summary_all
     return roc_df
 
 
-def roc_multiclass(true_labels, pred_proba: pd.DataFrame | np.ndarray, classes=None):
+def roc_multiclass(
+    true_labels,
+    pred_proba: pd.DataFrame | np.ndarray,
+    classes=None,
+    average="macro",  # If you equally value minority classes, set this to "macro"
+    multi_class="ovo",
+):
     return curve_multiclass(
         lambda true, score, labels: me.roc_curve(true, score, pos_label=labels),
         "fpr",
@@ -81,15 +97,19 @@ def roc_multiclass(true_labels, pred_proba: pd.DataFrame | np.ndarray, classes=N
         true_labels,
         pred_proba,
         classes=classes,
-        summary_fn=lambda true, score, labels: me.roc_auc_score(
+        s_fn=lambda true, score, labels: me.roc_auc_score(
             true, score, average=None, multi_class="ovr", labels=labels
         ),
-        summary_fn_name="class_auc",
+        s_fn_name="class_auc",
+        s_fn_all_classes=lambda true, score, labels: me.roc_auc_score(
+            true, score, average=average, multi_class=multi_class, labels=labels
+        ),
+        s_fn_all_classes_name=f"{average}_{multi_class}_auc",
     )
 
 
 def precision_recall_multiclass(
-    true_labels, pred_proba: pd.DataFrame | np.ndarray, classes=None
+    true_labels, pred_proba: pd.DataFrame | np.ndarray, classes=None, average="macro"
 ):
     return curve_multiclass(
         lambda true, score, labels: me.precision_recall_curve(
@@ -100,10 +120,14 @@ def precision_recall_multiclass(
         true_labels,
         pred_proba,
         classes=classes,
-        summary_fn=lambda true, score, _: me.average_precision_score(
+        s_fn=lambda true, score, _: me.average_precision_score(
             true, score, average=None
         ),
-        summary_fn_name="average_precision",
+        s_fn_name="average_precision",
+        s_fn_all_classes=lambda true, score, _: me.average_precision_score(
+            true, score, average=average
+        ),
+        s_fn_all_classes_name=f"{average}_average_precision",
     )
 
 
