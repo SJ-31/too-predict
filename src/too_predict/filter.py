@@ -70,7 +70,7 @@ def count_tomek_links(
 
     """
     target = adata.obs[target_col]
-    counts = adata.X.toarray()
+    counts = adata.X.toarray() if not isinstance(adata.X, np.ndarray) else adata.X
     neighbors = sn.NearestNeighbors(n_neighbors=2)  # Must get the second closest point
     neighbors.fit(counts)
     _distances, nearest = neighbors.kneighbors(counts)
