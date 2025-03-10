@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import sklearn.metrics as me
 
+from too_predict.utils import find_confounded
+
 
 def curve_multiclass(
     curve_fn: Callable,
@@ -12,10 +14,10 @@ def curve_multiclass(
     second: str,
     true_labels,
     pred_proba: pd.DataFrame | np.ndarray,
-    s_fn: Callable = None,
-    s_fn_name: str = "",
+    s_fns: dict[str, Callable] = None,
     s_fn_all_classes: Callable = None,
     s_fn_all_classes_name: str = "",
+    first_x: bool = True,
     classes=None,
 ):
     """
@@ -37,11 +39,13 @@ def curve_multiclass(
     classes : If pred_proba are the array the predicted probabilities,
         the names of the classes in their order of appearance
 
-    s_fn : Callable[true, score, labels], a function supporting multi-class classification
-        that returns an iterable
+    s_fn : dict[str, Callable[true, score, labels]] a dict of functions
+        supporting multi-class classification that returns an iterable.
 
     s_fn_all_classes : a function supporting multi-class classification returning
         a single value representing performance for all classes
+
+    first_x : true if the array `first` from curve_fn is the x axis
 
     Returns:
     --------
@@ -60,11 +64,12 @@ def curve_multiclass(
     else:
         prob_df = pred_proba
     summary_labels = {}
-    if s_fn is not None:
-        summary = s_fn(true_labels, prob_df, prob_df.columns)
-        summary_labels: dict = {
-            c: f"{c}: {v.round(3)}" for c, v in zip(prob_df.columns, summary)
-        }
+    if s_fns is not None:
+        for name, fn in s_fns.items():
+            summary = fn(true_labels, prob_df, prob_df.columns)
+            summary_labels[name] = {
+                c: f"{c}: {v.round(3)}" for c, v in zip(prob_df.columns, summary)
+            }
     if s_fn_all_classes is not None:
         summary_all = s_fn_all_classes(true_labels, prob_df, prob_df.columns)
     dfs = []
@@ -73,9 +78,10 @@ def curve_multiclass(
         if len(thresholds) < len(f):
             thresholds = np.concatenate([[np.inf], thresholds])
         tmp = pd.DataFrame({first: f, second: s, "thresholds": thresholds})
+        tmp["auc"] = me.auc(f, s) if first_x else me.auc(s, f)
         tmp["class"] = c
-        if s_fn and s_fn_name:
-            tmp[s_fn_name] = summary_labels[c]
+        for s_fn_name, val_dict in summary_labels.items():
+            tmp[s_fn_name] = val_dict[c]
         dfs.append(tmp)
     roc_df = pd.concat(dfs)
     if s_fn_all_classes is not None and s_fn_all_classes_name:
@@ -97,10 +103,6 @@ def roc_multiclass(
         true_labels,
         pred_proba,
         classes=classes,
-        s_fn=lambda true, score, labels: me.roc_auc_score(
-            true, score, average=None, multi_class="ovr", labels=labels
-        ),
-        s_fn_name="class_auc",
         s_fn_all_classes=lambda true, score, labels: me.roc_auc_score(
             true, score, average=average, multi_class=multi_class, labels=labels
         ),
@@ -120,10 +122,12 @@ def precision_recall_multiclass(
         true_labels,
         pred_proba,
         classes=classes,
-        s_fn=lambda true, score, _: me.average_precision_score(
-            true, score, average=None
-        ),
-        s_fn_name="average_precision",
+        first_x=False,
+        s_fns={
+            "average_precision": lambda true, score, _: me.average_precision_score(
+                true, score, average=None
+            )
+        },
         s_fn_all_classes=lambda true, score, _: me.average_precision_score(
             true, score, average=average
         ),
