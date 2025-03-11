@@ -83,7 +83,7 @@ class PredBase:
     def holdout(
         self,
         adata: ad.AnnData,
-        split_fn: Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]],
+        split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
         label_col="tumor_type",
     ) -> dict:
         """Wrapper function for doing the classic holdout method (train-test-split)
@@ -103,23 +103,56 @@ class PredBase:
             when the group category to be evaluated is
             confounded with the target labels
         """
-        adata = adata.copy()
-        n = len(adata)
-        x_train, x_test = split_fn(adata)
-        split_prop = np.array([len(x_train), len(x_test)]) / n
-        results: dict = {"split_prop": split_prop}
-        self.fit(x_train, label_col=label_col)
-        proba = self.predict_proba(x_test)
-        y_true = x_test.obs[label_col]
-        y_uniques = y_true.unique()
-        res: dict = get_all_metrics(y_true, proba, self.classes_)
-        for k, v in res.items():
-            if k == "cm":
-                res[k] = v.loc[v.index.isin(y_uniques), v.columns.isin(y_uniques)]
-            elif isinstance(v, pd.DataFrame) and v.shape[0] > 0:
-                res[k] = v.loc[v["class"].isin(y_uniques), :]
-        results["results"] = res
-        return results
+
+        def helper(split_fn, adata):
+            adata = adata.copy()
+            n = len(adata)
+            x_train, x_test = split_fn(adata)
+            split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
+            split_prop = pd.DataFrame(
+                {
+                    "train_prop": split_prop_tmp[0],
+                    "test_prop": split_prop_tmp[1],
+                    "train_size": len(x_train),
+                    "test_size": len(x_test),
+                },
+                index=[0],
+            )
+            self.fit(x_train, label_col=label_col)
+            proba = self.predict_proba(x_test)
+            y_true = x_test.obs[label_col]
+            y_uniques = y_true.unique()
+            res: dict = get_all_metrics(y_true, proba, self.classes_)
+            for k, v in res.items():
+                if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
+                    if k == "cm":
+                        continue
+                    res[k] = v.loc[v["class"].isin(y_uniques), :]
+            res["split_prop"] = split_prop
+            return res
+
+        dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": []}
+        misc_tmp = {
+            "acc": [],
+            "kappa": [],
+            "jaccard": [],
+            "fowlkes_mallows": [],
+            "mcc": [],
+        }
+        cms = {}
+        for set_label, split_fn in split_fns.items():
+            cur = helper(split_fn, adata)
+            cms[set_label] = cur["cm"]
+            for m in misc_tmp.keys():
+                misc_tmp[m].append(cur[m])
+            for d in dfs.keys():
+                df = cur[d]
+                if df is not None:
+                    df["test_set"] = set_label
+                    dfs[d].append(df)
+        concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items()}
+        concat["cms"] = cms
+        return concat
 
     def cross_validate(
         self,
