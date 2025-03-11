@@ -13,8 +13,9 @@ IMPLEMENTED_IMPUTATION = {
     "plus_one",
     "replace_one",
     "multi_replace",
-    None,
+    "none",
     # "missforest", # <2025-02-25 Tue> Was way too slow
+    None,
     "labelled_median",
 }
 
@@ -64,7 +65,7 @@ class Imputer:
                 return MissForest().fit_transform(counts)
             case "labelled_median":
                 return self.labelled_median(counts, **self.kwargs)
-            case None:
+            case None | "none":
                 return counts
 
 

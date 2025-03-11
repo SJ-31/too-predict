@@ -515,6 +515,7 @@ def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
     public_data = here("remote", "public_data")
     combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
     adata: ad.AnnData = ad.read_h5ad(combined_file)
+    adata = adata[adata.obs["tumor_type"] != "Unknown", :]
     old_shape = adata.shape
     print(f"Initial shape: {old_shape}")
     min_samples = round(len(adata) * 0.1)  # Roughly at least 10% of samples
