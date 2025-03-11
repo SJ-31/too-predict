@@ -10,6 +10,7 @@ from scipy import sparse
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
+from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
 from too_predict.evaluation import get_all_metrics
@@ -204,9 +205,20 @@ class PredBase:
 
 class XgboostPred(PredBase):
     def __init__(self, **kwargs) -> None:
-        # TODO: read
-        # See https://xgboost.readthedocs.io/en/latest/treemethod.html
         super().__init__(model=XGBClassifier(), **kwargs)
+
+    def fit(self, X: ad.AnnData, label_col="tumor_type") -> None:
+        self.encoder = LabelEncoder()
+        X.obs[label_col] = self.encoder.fit_transform(X.obs[label_col])
+        return super().fit(X, label_col)
+
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        vals = super().predict(X)
+        return self.encoder.inverse_transform(vals)
+
+    @property
+    def classes_(self):
+        return self.encoder.inverse_transform(super().classes_)
 
 
 class RandomForestPred(PredBase):

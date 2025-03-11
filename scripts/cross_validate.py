@@ -52,14 +52,12 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
     },
-    # BUG: [2025-03-10 Mon] something wrong with xgboost label handling
-    # "clr_xgboost_edger": {
-    #     "model": tm.XgboostPred(),
-    #     "t": "clr",
-    #     "i": "plus_one",
-    #     "f": "mutual_info_feature_list_3000",
-    # },
-    #
+    "clr_xgboost_edger": {
+        "model": tm.XgboostPred(),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "mutual_info_feature_list_3000",
+    },
     "clr_random_forest_edger": {
         "model": tm.RandomForestPred(),
         "t": "clr",
@@ -87,7 +85,20 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
     },
-    "dirichlet_edger": {},
+    "fpkm_random_forest_edger": {
+        "model": tm.RandomForestPred(),
+        "t": "fpkm",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+    },
+    "dirichlet_random_forest_edger": {
+        "model": tm.SimPred(
+            RandomForestClassifier(random_state=RNG), method="dirichlet"
+        ),
+        "t": "none",
+        "i": "none",
+        "f": "edgeR_median_lfc_feature_list_3000",
+    },
 }
 
 ADATA: ad.AnnData
@@ -97,7 +108,7 @@ def cross_validate_helper(
     lc, gc, model, result_dir_str, trans, impute, feature_set, references=None
 ):
     # gc is the group variable excluded during the cv folds e.g. Sample_Type
-    adata = ADATA
+    adata = ADATA.copy()
     if gc is not None:
         result_dir: Path = here(OUTDIR, f"{result_dir_str}_by_group_{gc}")
     else:
@@ -118,8 +129,14 @@ def cross_validate_helper(
     results = model.cross_validate(
         adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE, n_splits=K
     )
-    organoid_evaluation = model.holdout_w_target(
-        adata, "Sample_Type", "organoid", label_col=lc
+    organoid_evaluation = model.holdout(  # Want to see how well it'll do with Chula
+        # organoids
+        adata,
+        lambda x: (
+            x[~x.obs["Project_ID"].str.contains("CHULA"), :],
+            x[x.obs["Project_ID"].str.contains("CHULA"), :],
+        ),
+        label_col=lc,
     )
     org_results = organoid_evaluation["results"]
     org_splits = organoid_evaluation["split_prop"]
