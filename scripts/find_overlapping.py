@@ -1,8 +1,9 @@
 #!/usr/bin/env ipython
+from pathlib import Path
+
 import anndata as ad
 import joblib
 import matplotlib.pyplot as plt
-import seaborn as sns
 from pyhere import here
 from too_predict.filter import count_tomek_links
 from too_predict.plotting import plot_diagonal_matrix
@@ -16,7 +17,7 @@ from too_predict.utils import (
 OUTDIR = here("data", "output", "find_overlapping")
 OUTDIR.mkdir(exist_ok=True)
 STORAGE_DIR = here("remote", "repos", "too-predict", "normalization_comparison")
-FEATURE_LISTS, REF_LISTS = ref_feature_lists_internal()
+REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 FEATURE_LISTS["all_features"] = None
 NORMALIZATION_METHODS = IMPLEMENTED_TRANSFORMATION
 IMPUTATION_METHODS = ["plus_one"]
@@ -28,7 +29,8 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-t", "--test", default=False, action="store_true")
-    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-d", "--dask", default=False, action="store_true")
+    parser.add_argument("-c", "--cores", default=8, type=int)
     return parser.parse_args()
 
 
@@ -64,10 +66,8 @@ if __name__ == "__main__":
         OUTDIR.mkdir(exist_ok=True, parents=True)
     else:
         adata = training_data_internal()
-    backend = "dask" if not args.no_dask else "loky"
-    par_args = (
-        {"wait_for_workers_timeout": 0} if not args.no_dask else {"n_jobs": args.cores}
-    )
+    backend = "dask" if args.dask else "loky"
+    par_args = {"wait_for_workers_timeout": 0} if args.dask else {"n_jobs": args.cores}
     with joblib.parallel_backend(backend, **par_args):
         for fname, lst in FEATURE_LISTS.items():
             for i in IMPUTATION_METHODS:
