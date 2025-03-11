@@ -100,7 +100,14 @@ class PredBase:
             splits = cv.split(N.X, labels, groups=N.obs[group_col])
         cm: dict = {}
         roc, prec_recall, report = [], [], []
-        accs: dict = {"fold": [], "acc": []}
+        others: dict = {
+            "fold": [],
+            "acc": [],
+            "jaccard": [],
+            "kappa": [],
+            "fowlkes_mallows": [],
+            "mcc": [],
+        }
         for fold, (train_i, test_i) in enumerate(splits):
             x_train = N[train_i]
             self.fit(x_train, label_col=label_col)
@@ -110,8 +117,10 @@ class PredBase:
 
             proba = self.predict_proba(x_test)
             res: dict = get_all_metrics(y_true, proba, self.classes_)
-            accs["fold"].append(fold)
-            accs["acc"].append(res["acc"])
+            others["fold"].append(fold)
+            for o in others.keys():
+                if o != "fold":
+                    others[o].append(res[o])
             cm[fold] = res["cm"]
             for df, lst in zip(
                 [res["report"], res["prec_recall"], res["roc"]],
@@ -121,7 +130,7 @@ class PredBase:
                 lst.append(df)
         return {
             "cm": cm,
-            "acc": pd.DataFrame(accs),
+            "misc": pd.DataFrame(others),
             "report": pd.concat(report),
             "prec_recall": pd.concat(prec_recall),
             "roc": pd.concat(roc),
