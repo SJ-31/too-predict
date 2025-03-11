@@ -5,7 +5,9 @@ library(glue)
 source(here("src", "R", "utils.R"))
 
 CV <- TRUE
-outdir <- here("data", "output", "cross_validation")
+OUTDIR <- here("data", "output", "cross_validation")
+SUBDIRECTORY <- ""
+VAR <- "fold" # Name of the column denoting different evaluation sets
 
 if (sys.nframe() == 0) {
   library("optparse")
@@ -17,23 +19,23 @@ if (sys.nframe() == 0) {
   parser <- add_option(parser, c("-s", "--subdirectory"),
     type = "character",
     help = "subdirectory within the model result directory to pull data from",
-    default = NULL # e.g. [2025-03-11 Tue] use this to get stuff for "organoid_test_split"
+    default = "" # e.g. [2025-03-11 Tue] use this to get stuff for "organoid_test_split"
   )
   parser <- add_option(parser, c("-n", "--no_cv"),
     type = "logical",
     help = "Whether or not the training to parse used cross validation", default = FALSE
   )
   args <- parse_args(parser)
+  OUTDIR <- here(OUTDIR, args$subdirectory)
+  dir.create(OUTDIR)
+  SUBDIRECTORY <- args$subdirectory
   CV <- !args$no_cv
 }
-
-# TODO: [2025-03-11 Tue] gonna need a separate set of analysis fns for analyzing results
-# without cross validation
 
 ## targets <- c("tumor_type", "primary_site")
 targets <- "tumor_type"
 
-DIRS <- list.files(outdir, full.names = TRUE) |>
+DIRS <- list.files(OUTDIR, full.names = TRUE) |>
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
   discard(\(x) str_detect(x, "test"))
 
@@ -41,9 +43,9 @@ DIRS <- list.files(outdir, full.names = TRUE) |>
 
 #' Aggregate the cross validation results across all folds
 #'
-summarize_folds <- function(tb, how = "mean") {
+summarize_sets <- function(tb, how = "mean") {
   tb |>
-    select(-fold) |>
+    select(-!!as.symbol(VAR)) |>
     group_by(model, class, step) |>
     summarize(
       var_auc = var(auc),
@@ -58,15 +60,17 @@ summarize_folds <- function(tb, how = "mean") {
 getter_fn <- function(label, suffix, format_fn) {
   lapply(DIRS, \(x) {
     model_name <- basename_no_ext(x)
-    read_csv(here(x, glue("{label}{suffix}.csv"))) |>
+    read_csv(here(x, SUBDIRECTORY, glue("{label}{suffix}.csv"))) |>
       format_fn() |>
       mutate(model = model_name)
-  }) |> bind_rows()
+  }) |>
+    bind_rows() |>
+    mutate(!!as.symbol(VAR) := as.character(!!as.symbol(VAR)))
 }
 
 get_rocs <- function(label) {
   getter_fn(label, "-roc", \(x) {
-    group_by(x, class, fold) |>
+    group_by(x, class, !!as.symbol(VAR)) |>
       mutate(step = seq_len(n())) |>
       ungroup()
   })
@@ -74,7 +78,7 @@ get_rocs <- function(label) {
 
 get_prec_recall <- function(label) {
   getter_fn(label, "-prec_recall", \(x) {
-    group_by(x, class, fold) |>
+    group_by(x, class, !!as.symbol(VAR)) |>
       mutate(
         step = seq_len(n()),
         class_avg_precision = average_precision,
@@ -98,7 +102,7 @@ pr_tumor_type <- get_prec_recall("tumor_type")
 misc_tumor_type <- get_misc("tumor_type")
 report_tumor_type <- get_report("tumor_type")
 pr_auc_tumor_type <- pr_tumor_type |>
-  group_by(class, model, fold) |>
+  group_by(class, model, !!as.symbol(VAR)) |>
   summarise(prc_auc = unique(auc)) |>
   ungroup()
 
@@ -113,24 +117,31 @@ pr_auc_tumor_type <- pr_tumor_type |>
 # - F1 score
 metrics <- list(
   kappa = misc_tumor_type, mcc = misc_tumor_type,
-  `f1-score` = mutate(report_tumor_type, fold = paste0(class, fold)),
-  prc_auc = mutate(pr_auc_tumor_type, fold = paste0(class, fold))
+  `f1-score` = mutate(report_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))),
+  prc_auc = mutate(pr_auc_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
 )
 
-friedman <- lapply(names(metrics), \(x) {
+friedman_tt <- lapply(names(metrics), \(x) {
   friedman_test_wrapper(metrics[[x]], x) |>
     tidy() |>
     mutate(metric = x)
 }) |>
   bind_rows()
 
-significant <- friedman |>
+write_csv(friedman_tt, here(OUTDIR, "friedman_test_tumor_type.csv"))
+
+significant_tt <- friedman_tt |>
   filter(p.value <= 0.01) |>
   pluck("metric")
 
-lapply(significant, \(x) {
-
-})
+wilcox_tt <- lapply(significant_tt, \(m) {
+  tb <- metrics[[m]]
+  tidy_pairwise(tb$model, tb[[m]], \(x, y) {
+    wilcox.test(x, y)
+  }, \(x) p.adjust(x, method = "bonferroni")) |> mutate(metric = m)
+}) |> bind_rows()
+# TODO: is there a better post-hoc test to use?
+write_csv(wilcox_tt, here(OUTDIR, "wilcox_tumor_type.csv"))
 
 ## --- CODE BLOCK ---
 
@@ -147,22 +158,21 @@ metric_rankings <- list(kappa = TRUE, `f1-score` = TRUE, prc_auc = TRUE, mcc = T
 ## ** Ranking measure
 combined <- local({
   rep <- report_tumor_type |>
-    group_by(model, fold) |>
+    group_by(model, !!as.symbol(VAR)) |>
     summarise(across(where(is.numeric), mean)) |>
-    select(`f1-score`, fold, model) |>
+    select(`f1-score`, !!as.symbol(VAR), model) |>
     ungroup()
   prc <- pr_auc_tumor_type |>
-    rename(prc_auc = auc) |>
-    group_by(model, fold) |>
+    group_by(model, !!as.symbol(VAR)) |>
     summarise(across(where(is.numeric), mean)) |>
-    select(prc_auc, fold, model) |>
+    select(prc_auc, !!as.symbol(VAR), model) |>
     ungroup()
   reduce(list(rep, prc, misc_tumor_type), \(x, y) {
-    inner_join(x, y, by = c("model", "fold"))
+    inner_join(x, y, by = c("model", VAR))
   })
 })
 
-max_score <- length(metric_rankings) * length(unique(combined$fold))
+max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
 models <- unique(combined$model)
 make_score_tb <- function(winner) {
   tmp <- sapply(models, \(x) 0, simplify = FALSE)
@@ -170,9 +180,9 @@ make_score_tb <- function(winner) {
   as_tibble(tmp)
 }
 
-score_tracker <- empty_tibble(c("winner", "metric", "fold")) |> mutate(fold = as.double(fold))
-rank_scores <- lapply(unique(combined$fold), \(f) {
-  current <- filter(combined, fold == f)
+score_tracker <- empty_tibble(c("winner", "metric", VAR))
+rank_scores <- lapply(unique(combined[[VAR]]), \(f) {
+  current <- filter(combined, !!as.symbol(VAR) == f)
   lapply(names(metric_rankings), \(m) {
     if (metric_rankings[[m]]) {
       sorted <- arrange(current, desc(!!as.symbol(m)))
@@ -180,7 +190,7 @@ rank_scores <- lapply(unique(combined$fold), \(f) {
       sorted <- arrange(current)
     }
     winner <- head(sorted, n = 1) |> pluck("model")
-    score_tracker <<- add_row(score_tracker, winner = winner, metric = m, fold = f)
+    score_tracker <<- add_row(score_tracker, winner = winner, metric = m, !!as.symbol(VAR) := f)
     make_score_tb(winner)
   }) |>
     bind_rows() |>
@@ -190,8 +200,8 @@ rank_scores <- lapply(unique(combined$fold), \(f) {
   colSums()
 
 score_tracker_table <- table(score_tracker$winner, score_tracker$metric) |> table2tb("model")
-write_csv(score_tracker_table, here(outdir, "rank_score_tracker.csv"))
-write_csv(rank_scores, here(outdir, "model_ranks.csv"))
+write_csv(score_tracker_table, here(OUTDIR, "rank_score_tracker.csv"))
+write_csv(as_tibble(as.list(rank_scores)), here(OUTDIR, "model_ranks.csv"))
 
 ## * Plots
 
@@ -203,7 +213,7 @@ pr_auc_tumor_type_plot <- ggplot(pr_auc_tumor_type, aes(x = class, y = auc, fill
 
 pr_auc_plot <-
   roc_plot <- local({
-    s <- roc_tumor_type |> summarize_folds()
+    s <- roc_tumor_type |> summarize_sets()
     ggplot(s, aes(x = fpr, y = tpr, color = class)) +
       facet_wrap(~model) +
       geom_step() +
@@ -212,7 +222,7 @@ pr_auc_plot <-
   })
 
 prc_plot <- local({
-  s <- pr_tumor_type |> summarize_folds()
+  s <- pr_tumor_type |> summarize_sets()
   ggplot(s, aes(x = recall, y = precision, color = class)) +
     facet_wrap(~model) +
     geom_step() +
