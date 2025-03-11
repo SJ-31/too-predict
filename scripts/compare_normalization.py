@@ -132,7 +132,7 @@ def main(adata, feature_set_name):
         for n in NORMALIZATION_METHODS:
             if (n is not None and "alr" in n) or i is None or n == "dirichlet_scale":
                 continue
-            elif n == "dirichlet":
+            elif n == "dirichlet" and feature_set_name != "all_features":
                 normalized = helper(
                     feature_set=feature_set_name,
                     adata=adata,

@@ -52,6 +52,13 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
     },
+    "clr_random_forest_edger_low_variance_ref": {
+        "model": tm.RandomForestPred(),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "r": "variance_feature_list_lowest_20",
+    },
     "clr_xgboost_edger": {
         "model": tm.XgboostPred(),
         "t": "clr",
@@ -72,6 +79,15 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "r": "variance_feature_list_lowest_20",
+    },
+    "alr_random_forest_edger_lfc": {
+        "model": tm.AlrBase(
+            RandomForestClassifier(random_state=RNG),
+            references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
+        ),
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "r": "edgeR_median_lfc_feature_list_lowest_20",
     },
     "tmm_random_forest_edger": {
         "model": tm.RandomForestPred(),
@@ -148,7 +164,12 @@ def cross_validate_helper(
                 feat if references is None else feat + REF_LISTS[references],
                 feature_col="GENEID",
             ).fit_transform(adata)
-        Transformer(trans, impute_fn=Imputer(impute), inplace=True).fit_transform(adata)
+        kwargs = {}
+        if trans == "clr" and references is not None:
+            kwargs = {"features": references}
+        Transformer(
+            trans, impute_fn=Imputer(impute), inplace=True, **kwargs
+        ).fit_transform(adata)
         # Does nothing if trans is None
     else:
         adata = read_h5ad(output)

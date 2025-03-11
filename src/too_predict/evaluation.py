@@ -68,7 +68,7 @@ def curve_multiclass(
         for name, fn in s_fns.items():
             summary = fn(true_labels, prob_df, prob_df.columns)
             summary_labels[name] = {
-                c: f"{c}: {v.round(3)}" for c, v in zip(prob_df.columns, summary)
+                c: v.round(3) for c, v in zip(prob_df.columns, summary)
             }
     if s_fn_all_classes is not None:
         summary_all = s_fn_all_classes(true_labels, prob_df, prob_df.columns)
@@ -155,18 +155,26 @@ def classification_report2df(
     return df, report["accuracy"]
 
 
-def get_all_metrics(true, proba, classes) -> dict:
+def get_all_metrics(true, proba, classes, average: str = "macro") -> dict:
     predictions = pd.DataFrame(proba, columns=classes)
     pred_vals = predictions.idxmax(1)
     rep = me.classification_report(true, pred_vals, output_dict=True)
 
     cm = confusion_matrix_df(true, pred_vals, labels=classes)
     rep_df, acc = classification_report2df(rep)
-    roc_df = roc_multiclass(true, predictions)
-    prec_recall_df = precision_recall_multiclass(true, predictions)
+    roc_df = roc_multiclass(true, predictions, average=average)
+    try:
+        prec_recall_df = precision_recall_multiclass(true, predictions, average=average)
+    except IndexError:  # [2025-03-10 Mon] can happen when true values don't contain
+        # all the classes
+        prec_recall_df = None
     return {
         "cm": cm,
         "acc": acc,
+        "kappa": me.cohen_kappa_score(true, pred_vals),
+        "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
+        "fowlkes_mallows": me.fowlkes_mallows_score(true, pred_vals),
+        "mcc": me.matthews_corrcoef(true, pred_vals),
         "report": rep_df,
         "prec_recall": prec_recall_df,
         "roc": roc_df,
