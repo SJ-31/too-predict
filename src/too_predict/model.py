@@ -1,18 +1,20 @@
 #!/usr/bin/env ipython
 import pickle
-from typing import override
+from typing import Callable, override
 
 import anndata as ad
 import numpy as np
 import pandas as pd
 import sklearn.model_selection as ms
+from scipy import sparse
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
+from xgboost import XGBClassifier
 
 from too_predict.evaluation import get_all_metrics
 from too_predict.transformer import Transformer
-from too_predict.utils import RANDOM_STATE, RNG, adata_to_df, str_mode
+from too_predict.utils import RANDOM_STATE, RNG, adata_to_df, find_confounded, str_mode
 
 # def train_test_split_adata():
 # <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
@@ -76,6 +78,47 @@ class PredBase:
     @property
     def classes_(self):
         return self.model.classes_
+
+    def holdout(
+        self,
+        adata: ad.AnnData,
+        split_fn: Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]],
+        label_col="tumor_type",
+    ) -> dict:
+        """Wrapper function for doing the classic holdout method (train-test-split)
+
+        Parameters
+        ---------
+        split_fn: A function that splits adata into a tuple of train, test
+
+        Return
+        ------
+        A dictionary containing model evaluation results for each unique instance of
+            `group_col`
+
+        Notes
+        -----
+        - Only use in place of cross_validate with StratifiedGroupKFold
+            when the group category to be evaluated is
+            confounded with the target labels
+        """
+        adata = adata.copy()
+        n = len(adata)
+        x_train, x_test = split_fn(adata)
+        split_prop = np.array([len(x_train), len(x_test)]) / n
+        results: dict = {"split_prop": split_prop}
+        self.fit(x_train, label_col=label_col)
+        proba = self.predict_proba(x_test)
+        y_true = x_test.obs[label_col]
+        y_uniques = y_true.unique()
+        res: dict = get_all_metrics(y_true, proba, self.classes_)
+        for k, v in res.items():
+            if k == "cm":
+                res[k] = v.loc[v.index.isin(y_uniques), v.columns.isin(y_uniques)]
+            elif isinstance(v, pd.DataFrame) and v.shape[0] > 0:
+                res[k] = v.loc[v["class"].isin(y_uniques), :]
+        results["results"] = res
+        return results
 
     def cross_validate(
         self,
@@ -159,11 +202,16 @@ class PredBase:
         return rfecv
 
 
+class XgboostPred(PredBase):
+    def __init__(self, **kwargs) -> None:
+        # TODO: read
+        # See https://xgboost.readthedocs.io/en/latest/treemethod.html
+        super().__init__(model=XGBClassifier(), **kwargs)
+
+
 class RandomForestPred(PredBase):
     def __init__(self, **kwargs) -> None:
         super().__init__(model=RandomForestClassifier(random_state=RNG, **kwargs))
-
-        # <2025-02-21 Fri> be sure to try out extra trees
 
 
 class AlrBase(PredBase):
@@ -171,32 +219,40 @@ class AlrBase(PredBase):
         self,
         model,
         references: dict | list,
+        var_col: str = "GENEID",
         weights=None,
     ) -> None:
         super().__init__(
             model=AlrEstimator(model=model, references=references, weights=weights)
         )
+        if var_col:
+            self.var_col = var_col
 
     @override
-    def fit(self, X: ad.AnnData, label_col="tumor_type", var_col="GENENAME") -> None:
-        if not isinstance(X.X, np.ndarray):
+    def fit(self, X: ad.AnnData, label_col="tumor_type") -> None:
+        if sparse.isspmatrix(X.X):
             vals = X.X.toarray()
         else:
             vals = X.X
-        counts = pd.DataFrame(vals, columns=X.var[var_col], index=None)
+        counts = pd.DataFrame(vals, columns=X.var[self.var_col], index=None)
         self.var = X.var
         self._is_fitted = True
         self.model.fit(counts, X.obs[label_col])
 
     @override
-    def predict(self, X: ad.AnnData, var_col="GENENAME") -> np.ndarray:
-        df = adata_to_df(X, var_col=var_col)
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        df = adata_to_df(X, var_col=self.var_col)
         return self.model.predict(df)
 
     @override
-    def predict_proba(self, X: ad.AnnData, var_col="GENENAME") -> np.ndarray:
-        df = adata_to_df(X, var_col=var_col)
+    def predict_proba(self, X: ad.AnnData) -> np.ndarray:
+        df = adata_to_df(X, var_col=self.var_col)
         return self.model.predict_proba(df)
+
+
+class SimPred(PredBase):
+    def __init__(self, model, method) -> None:
+        super().__init__(model=SimEstimator(method, model=model))
 
 
 # * Estimators
