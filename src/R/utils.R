@@ -67,3 +67,61 @@ basename_no_ext <- function(file) {
   }
   map_chr(bname, helper)
 }
+
+#' Wrapper for the Friedman test
+#'
+#' @description
+#' In addition to the original test statistic Friedman's chi-square,
+#' also calculates an alternative, less conservative statistic provided by [1]
+#' and its p-value
+friedman_test_wrapper <- function(tb, metric_col, with_class = TRUE) {
+  j <- length(unique(tb$fold))
+  k <- length(unique(tb$model))
+  test <- friedman.test(tb[[metric_col]], groups = tb$model, blocks = tb$fold)
+  # Ranks are arranged with the blocks
+  # `groups` are the treatments we want to compare
+  f_chi <- test$statistic
+  f_alt <- ((j - 1) * f_chi) / j * (k - 1) - f_chi # Alternative test statistic
+  df1 <- k - 1
+  df2 <- (k - 1) * (j - 1)
+  test$statistic_alt <- f_alt
+  # Two-sided p-value
+  test$p_value_alt <- pf(f_alt, df1, df2, lower.tail = FALSE) + pf(-f_alt, df1, df2) |> `names<-`(NULL)
+  test
+}
+
+empty_tibble <- function(headers, init = "") {
+  tmp <- matrix(init, nrow = 1, ncol = length(headers))
+  colnames(tmp) <- headers
+  tib <- as_tibble(tmp)
+  dplyr::slice(tib, 2)
+}
+
+table2tb <- function(table, row_header) {
+  table |>
+    as.data.frame() |>
+    rename(!!as.symbol(row_header) := Var1) |>
+    pivot_wider(names_from = Var2, values_from = Freq)
+}
+
+#' Helper function for performing a series of pairwise tests and collecting
+#' the results in a tidy format
+#'
+#' @param groups vector of groups to test against
+#' @param values vector of values, the same length as groups
+#' @param test_fn a hypothesis testing function f(x, y)
+#' @param adjust_fn function to correct p-values, takes a vector of unadjusted p-values
+#'    as input
+tidy_pairwise <- function(groups, values, test_fn, adjust_fn) {
+  pairs <- unique(groups) |> combn(2)
+  tb <- tibble(group = groups, v = values)
+  apply(pairs, 2, \(p) {
+    x <- filter(tb, group == p[1]) |> pluck("v")
+    y <- filter(tb, group == p[2]) |> pluck("v")
+    test_fn(x, y) |>
+      tidy() |>
+      mutate(x = p[1], y = p[2])
+  }) |>
+    bind_rows() |>
+    mutate(p_adjust = adjust_fn(p.value))
+}
