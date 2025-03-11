@@ -34,14 +34,14 @@ class Transformer:
             self.counts_only = False
             self.adata = data if self.inplace else data.copy()
             self.adata.layers["counts"] = data.X
-            if not (isinstance(data.X, np.ndarray)):
+            if sparse.isspmatrix(data.X):
                 self.counts = data.X.toarray().copy()
             else:
                 self.counts = data.X.copy()  # A sample x feature ndarray
         else:
             self.adata = None
             self.counts_only = True
-            self.counts = data
+            self.counts = data.toarray() if sparse.isspmatrix(data) else data
 
     def __init__(
         self,
