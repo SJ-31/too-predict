@@ -133,6 +133,7 @@ class PredBase:
 
         dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": []}
         misc_tmp = {
+            "test_set": [],
             "acc": [],
             "kappa": [],
             "jaccard": [],
@@ -144,14 +145,20 @@ class PredBase:
             cur = helper(split_fn, adata)
             cms[set_label] = cur["cm"]
             for m in misc_tmp.keys():
+                if m == "test_set":
+                    continue
                 misc_tmp[m].append(cur[m])
+            misc_tmp["test_set"].append(set_label)
             for d in dfs.keys():
                 df = cur[d]
                 if df is not None:
                     df["test_set"] = set_label
                     dfs[d].append(df)
-        concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items()}
+        concat = {
+            d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0
+        }
         concat["cms"] = cms
+        concat["misc"] = pd.DataFrame(misc_tmp)
         return concat
 
     def cross_validate(
@@ -297,7 +304,7 @@ class AlrBase(PredBase):
 
 class SimPred(PredBase):
     def __init__(self, model, method) -> None:
-        super().__init__(model=SimEstimator(method, model=model))
+        super().__init__(model=SimEstimator(method, model=model, n_instances=15))
 
 
 # * Estimators
