@@ -103,11 +103,37 @@ MODELS: dict = {
 
 ADATA: ad.AnnData
 
+# [2025-03-11 Tue]
+# Want to see how well models handle Chula organoids and datasets from other projects
+# Ideally this should be done with StratifiedGroupKFold but
+# grouping is problematic because some groups are confounded
+# with whatever you are labeling on
+# This means that some instances won't be seen at all in the test data
+# gc is the group variable excluded during the cv folds e.g. Sample_Type
+
+ADDITIONAL_SPLITS: dict = {
+    "CHULA": lambda x: (
+        x[~x.obs["Project_ID"].str.contains("CHULA"), :],
+        x[x.obs["Project_ID"].str.contains("CHULA"), :],
+    ),
+    "CGCI": lambda x: (
+        x[~x.obs["Project_ID"].str.contains("CGCI"), :],
+        x[x.obs["Project_ID"].str.contains("CGCI"), :],
+    ),
+    "CPTAC": lambda x: (
+        x[~x.obs["Project_ID"].str.contains("CPTAC"), :],
+        x[x.obs["Project_ID"].str.contains("CPTAC"), :],
+    ),
+    "GEO": lambda x: (
+        x[~x.obs["Project_ID"].str.contains("GSE"), :],
+        x[x.obs["Project_ID"].str.contains("GSE"), :],
+    ),
+}
+
 
 def cross_validate_helper(
     lc, gc, model, result_dir_str, trans, impute, feature_set, references=None
 ):
-    # gc is the group variable excluded during the cv folds e.g. Sample_Type
     adata = ADATA.copy()
     if gc is not None:
         result_dir: Path = here(OUTDIR, f"{result_dir_str}_by_group_{gc}")
@@ -126,45 +152,26 @@ def cross_validate_helper(
         # Does nothing if trans is None
     else:
         adata = read_h5ad(output)
-    results = model.cross_validate(
-        adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE, n_splits=K
-    )
-    organoid_evaluation = model.holdout(  # Want to see how well it'll do with Chula
-        # organoids
-        adata,
-        lambda x: (
-            x[~x.obs["Project_ID"].str.contains("CHULA"), :],
-            x[x.obs["Project_ID"].str.contains("CHULA"), :],
-        ),
-        label_col=lc,
-    )
-    org_results = organoid_evaluation["results"]
-    org_splits = organoid_evaluation["split_prop"]
-    # <2025-02-28 Fri> Grouping is problematic because some groups are confounded
-    # with whatever you are labeling on
-    # This means that some instances won't be seen at all in the test data
-    # So you need to identify confounded groups and resolve them
-    result_dirs = [result_dir, result_dir.joinpath("organoid_test_split")]
+    if not here(result_dir, f"{lc}-misc.csv").exists():
+        results = model.cross_validate(
+            adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE, n_splits=K
+        )
+        write_results(results, result_dir, lc, cm_prefix="fold_")
+    result_dir2 = result_dir.joinpath("additional_splits")
+    result_dir2.mkdir(exist_ok=True, parents=True)
+    results2 = model.holdout(adata, ADDITIONAL_SPLITS, label_col=lc)
+    write_results(results2, result_dir2, lc)
 
-    for res_dict, rdir in zip([results, org_results], result_dirs):
-        rdir.mkdir(exist_ok=True, parents=True)
-        for name, item in res_dict.items():
-            if name != "cm" and isinstance(item, pd.DataFrame):
-                item.to_csv(rdir.joinpath(f"{lc}-{name}.csv"), index=False)
-            elif name == "cm":
-                for fold, cm in item.items():
-                    cm.to_csv(rdir.joinpath(f"{lc}-{name}_cm-fold_{fold}.csv"))
-        if rdir == result_dirs[1]:
-            vals = {
-                k: v for k, v in res_dict.items() if not isinstance(v, pd.DataFrame)
-            }
-            pd.DataFrame(vals, index=[0]).to_csv(
-                rdir.joinpath(f"{lc}.csv"), index=False
-            )
 
-    result_dirs[1].joinpath("organoid_splits.txt").write_text(
-        f"Not organoid, organoid\n{org_splits}"
-    )
+def write_results(results, result_dir, label_col, cm_prefix: str = ""):
+    for name, item in results.items():
+        if name != "cm" and isinstance(item, pd.DataFrame):
+            item.to_csv(result_dir.joinpath(f"{label_col}-{name}.csv"), index=False)
+        elif name == "cm":
+            for lab, cm in item.items():
+                cm.to_csv(
+                    result_dir.joinpath(f"{label_col}-{name}_cm-{cm_prefix}{lab}.csv")
+                )
 
 
 if __name__ == "__main__":
@@ -195,16 +202,15 @@ if __name__ == "__main__":
                 data.get("f"),
                 data.get("r"),
             )
-            if not here(OUTDIR, name).exists() or args.test:
-                cross_validate_helper(
-                    lc=label_class,
-                    gc=None,
-                    model=model,
-                    result_dir_str=name,
-                    trans=transformation,
-                    feature_set=features,
-                    impute=imputation,
-                    references=references,
-                )
+            cross_validate_helper(
+                lc=label_class,
+                gc=None,
+                model=model,
+                result_dir_str=name,
+                trans=transformation,
+                feature_set=features,
+                impute=imputation,
+                references=references,
+            )
             # for g in group_classes:
             #     cross_validate_helper(lc=label_class, gc=g, model=model, result_dir_str=name)
