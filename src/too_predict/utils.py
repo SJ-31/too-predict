@@ -538,7 +538,7 @@ def training_data_internal_test(
     sc.pp.filter_genes(adata, min_cells=10)
     sc.pp.filter_cells(adata, min_counts=5000)
     sc.pp.filter_genes(adata, min_counts=200)
-    adata, discarded_types = filter_by_obs(adata, [label], min=10)
+    adata, discarded_types = filter_by_obs(adata, [label], min=20)
     print(f"Discarded {label}: {discarded_types}")
     print(f"Test data shape: {adata.shape}")
     return adata

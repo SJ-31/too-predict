@@ -318,7 +318,7 @@ class Transformer:
         features=None,
         gamma=None,
         scales=None,
-        feature_col: str = "gene_id",
+        feature_col: str = "GENEID",
         robust: bool = False,
     ) -> np.ndarray:
         if gamma and scales and not robust:

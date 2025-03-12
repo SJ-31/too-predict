@@ -5,6 +5,7 @@ library(tidyverse)
 library(ggridges)
 
 source(here("src", "R", "utils.R"))
+source(here("src", "R", "plotting.R"))
 
 fs_dir <- here("data", "output", "feature_selection")
 fs_lists <- here(fs_dir, "feature_lists")
@@ -30,14 +31,17 @@ max_dropout_pct <- 10 # Don't want genes that are missing in > 90% of samples
 # selection metric
 minfo <- minfo |>
   filter(pct_dropout_by_counts <= max_dropout_pct) |>
+  filter(!is.na(GENEID)) |>
   mutate(value = mutual_info)
 vtb <- vtb |>
   filter(pct_dropout_by_counts <= max_dropout_pct) |>
+  filter(!is.na(GENEID)) |>
   mutate(value = variance)
 edger <- edger |> filter(pct_dropout_by_counts <= max_dropout_pct)
 edger$median_lfc <- apply(select(edger, contains("logFC_tumor_type")), 1, median)
 edger <- edger |>
   relocate(median_lfc, .after = SEQNAME) |>
+  filter(!is.na(GENEID)) |>
   mutate(value = abs(median_lfc))
 
 feature_tbs <- list(edgeR_median_lfc = edger, variance = vtb, mutual_info = minfo)
@@ -95,8 +99,20 @@ type_x_feature <- t(top_by_types[, -1]) |>
   as.data.frame() |>
   `colnames<-`(top_by_types$GENEID)
 
-jaccard <- vegan::vegdist(type_x_feature, method = "jaccard") |> dist2tb()
+jaccard <- vegan::vegdist(type_x_feature, method = "jaccard") |>
+  as.matrix() |>
+  as.data.frame() |>
+  rownames_to_column(var = "x") |>
+  as_tibble() |>
+  pivot_longer(-x, names_to = "y", values_to = "value") |>
+  mutate(value = round(value, 2))
 
+## distinct_orderings(jaccard, c("x", "y")) |>
+##   ggplot(aes(x = as.factor(x), y = as.factor(y), fill = value)) +
+##   geom_tile()
+
+## ggplot(jaccard, aes(x = name, y = y, fill = value)) +
+##   geom_tile() #
 
 ## * Get features for ALR
 n_alr <- 20 # Number of alr features
@@ -113,3 +129,23 @@ bottom_n_features <- lapply(names(feature_tbs), \(x) {
 
 feature_venn_b <- ggVennDiagram(bottom_n_features)
 ggsave(here(fs_dir, "lowest_features_overlap.png"), feature_venn_b)
+
+## * Normalization metrics plotting
+n_metrics <- read_csv(here(n_dir, "label_metrics.csv")) |>
+  mutate(across(where(is.double), scale)) |>
+  pivot_longer(cols = where(is.double), names_to = "metric", values_to = "value")
+
+n_metrics <- n_metrics |> filter(!grepl("feature", normalization))
+
+n_metric_plot <- ggplot(n_metrics, aes(x = feature_set, y = value, fill = normalization)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~metric)
+n_metric_plot
+ggsave(here(n_dir, "metrics.png"), n_metric_plot)
+
+
+## * Organoid features
+
+orf <- read_csv(here("data", "output", "organoid_feature_selection", "chula_tcga_dge.csv"))
+# Find common
+log_fcs <- orf |> select(GENEID, contains("logFC"))

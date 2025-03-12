@@ -507,6 +507,9 @@ class XGBEstimator:
     def get_metadata_routing(self):
         return self.model.get_metadata_routing()
 
+    def score(self, X, y, sample_weight=None):
+        return self.model.score(X, y, sample_weight)
+
     @property
     def classes_(self):
         return self.encoder.inverse_transform(self.model.classes_)
