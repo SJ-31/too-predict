@@ -6,6 +6,9 @@ read_existing <- function(filename, expr, read_fn = identity()) {
   }
 }
 
+get_obs <- function() {
+  read_csv(here("data", "training_data_obs.csv"))
+}
 
 aldex_glm_wrapper <- function(data, group, technical_factors = c(),
                               clr_args = list(
@@ -124,4 +127,17 @@ tidy_pairwise <- function(groups, values, test_fn, adjust_fn) {
   }) |>
     bind_rows() |>
     mutate(p_adjust = adjust_fn(p.value))
+}
+
+#' Filter out distinct combinations of values in `cols` from
+#' long-form tibble `tb`
+#'
+distinct_orderings <- function(tb, cols) {
+  lists <- apply(tb, 1, \(x) {
+    sort(sapply(cols, \(c) x[c]))
+  }) |> t()
+  tb[["tmp"]] <- lists
+  tb |>
+    distinct(tmp, .keep_all = TRUE) |>
+    select(-tmp)
 }

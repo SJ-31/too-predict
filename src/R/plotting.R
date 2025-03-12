@@ -142,3 +142,52 @@ pheatmap_helper <- function(obs = NULL,
     )
   }, pheatmap_kwargs)
 }
+
+plot_confusion_matrix <- function(cm, x = "x", y = "y", v = "value",
+                                  diagonal = TRUE, null_zeros = TRUE,
+                                  x_label = NULL, y_label = NULL,
+                                  show_counts = TRUE,
+                                  only_misses = TRUE,
+                                  fill_label = NULL,
+                                  na_color = "grey",
+                                  palette = "ggthemes::Green") {
+  if (diagonal) {
+    cm <- distinct_orderings(cm, c(x, y))
+  }
+  if (only_misses) {
+    uniques <- unique(cm[[x]])
+    no_misses <- uniques |> discard(\(u) {
+      filtered <- filter(cm, !!as.symbol(x) == u | !!as.symbol(y) == u) |>
+        filter(!!as.symbol(v) > 0)
+      nrow(filtered) > 1
+    })
+    cm <- filter(cm, !(!!as.symbol(x) %in% no_misses | !!as.symbol(y) %in% no_misses))
+  }
+  if (null_zeros) {
+    replaced <- case_match(cm[[v]], 0 ~ NA, .default = cm[[v]])
+    cm[[v]] <- replaced
+  }
+  plot <- ggplot(cm, aes(
+    x = as.factor(!!as.symbol(x)), y = as.factor(!!as.symbol(y)),
+    fill = !!as.symbol("value")
+  )) +
+    geom_tile() +
+    theme_minimal() +
+    theme(panel.grid = element_blank())
+  if (show_counts) {
+    plot <- plot + geom_text(aes(label = !!as.symbol(v)))
+  }
+  if (!is.null(x_label)) {
+    plot <- plot + xlab(x_label)
+  }
+  if (!is.null(y_label)) {
+    plot <- plot + ylab(y_label)
+  }
+  if (!is.null(fill_label)) {
+    plot <- plot + guides(fill = guide_legend(fill_label))
+  }
+  if (diagonal) {
+    plot <- plot + scale_x_discrete(position = "top")
+  }
+  plot + scale_fill_paletteer_c(palette = palette, na.value = na_color)
+}
