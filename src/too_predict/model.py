@@ -157,7 +157,7 @@ class PredBase:
         concat = {
             d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0
         }
-        concat["cms"] = cms
+        concat["cm"] = cms
         concat["misc"] = pd.DataFrame(misc_tmp)
         return concat
 
@@ -243,22 +243,22 @@ class PredBase:
         return rfecv
 
 
-class XgboostPred(PredBase):
-    def __init__(self, **kwargs) -> None:
-        super().__init__(model=XGBClassifier(), **kwargs)
+# class XgboostPred(PredBase):
+#     def __init__(self, **kwargs) -> None:
+#         super().__init__(model=XGBClassifier(), **kwargs)
 
-    def fit(self, X: ad.AnnData, label_col="tumor_type") -> None:
-        self.encoder = LabelEncoder()
-        X.obs[label_col] = self.encoder.fit_transform(X.obs[label_col])
-        return super().fit(X, label_col)
+#     def fit(self, X: ad.AnnData, label_col="tumor_type") -> None:
+#         self.encoder = LabelEncoder()
+#         X.obs[label_col] = self.encoder.fit_transform(X.obs[label_col])
+#         return super().fit(X, label_col)
 
-    def predict(self, X: ad.AnnData) -> np.ndarray:
-        vals = super().predict(X)
-        return self.encoder.inverse_transform(vals)
+#     def predict(self, X: ad.AnnData) -> np.ndarray:
+#         vals = super().predict(X)
+#         return self.encoder.inverse_transform(vals)
 
-    @property
-    def classes_(self):
-        return self.encoder.inverse_transform(super().classes_)
+#     @property
+#     def classes_(self):
+#         return self.encoder.inverse_transform(super().classes_)
 
 
 class RandomForestPred(PredBase):
@@ -478,3 +478,35 @@ class SimEstimator:
     @property
     def classes_(self):
         return self.model.classes_
+
+
+class XGBEstimator:
+    """Convenience wraper for XGBClassifier that supports string labels"""
+
+    def __init__(self, **kwargs) -> None:
+        self.model: XGBClassifier = XGBClassifier(**kwargs)
+
+    def fit(self, X, y) -> None:
+        self.encoder = LabelEncoder()
+        recoded = self.encoder.fit_transform(y)
+        self.model.fit(X, recoded)
+
+    def predict(self, X) -> np.ndarray:
+        vals = self.model.predict(X)
+        return self.encoder.inverse_transform(vals)
+
+    def predict_proba(self, X) -> np.ndarray:
+        return self.model.predict_proba(X)
+
+    def get_params(self, deep=True) -> dict:
+        return self.model.get_params(deep)
+
+    def set_params(self, **params) -> dict:
+        return self.model.set_params(**params)
+
+    def get_metadata_routing(self):
+        return self.model.get_metadata_routing()
+
+    @property
+    def classes_(self):
+        return self.encoder.inverse_transform(self.model.classes_)
