@@ -1,5 +1,6 @@
 library(here)
 library(tidyverse)
+library(paletteer)
 library(broom)
 library(glue)
 source(here("src", "R", "utils.R"))
@@ -12,22 +13,18 @@ VAR <- "fold" # Name of the column denoting different evaluation sets
 if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
-  parser <- add_option(parser, c("-v", "--verbose"),
-    action = "store_true",
-    default = TRUE, help = "Print extra output [default]"
-  )
   parser <- add_option(parser, c("-s", "--subdirectory"),
     type = "character",
     help = "subdirectory within the model result directory to pull data from",
     default = "" # e.g. [2025-03-11 Tue] use this to get stuff for "organoid_test_split"
   )
-  parser <- add_option(parser, c("-n", "--no_cv"),
-    type = "logical",
-    help = "Whether or not the training to parse used cross validation", default = FALSE
+  parser <- add_option(parser, c("-v", "--var"),
+    type = "character", help = "Name of column denoting different evaluation sets", default = NULL
   )
   args <- parse_args(parser)
   OUTDIR <- here(OUTDIR, args$subdirectory)
   dir.create(OUTDIR)
+  VAR <- args$var
   SUBDIRECTORY <- args$subdirectory
   CV <- !args$no_cv
 }
@@ -229,3 +226,30 @@ prc_plot <- local({
     ylab("Precision") +
     xlab("Recall")
 })
+
+## * Confusion matrices
+
+cm_outdir <- here(OUTDIR, "confusion_matrices")
+dir.create(cm_outdir)
+summarize_cm <- function(directory, label) {
+  m_files <- list.files(directory, pattern = glue("{label}.*cm.*csv"), full.names = TRUE)
+  matrices <- lapply(m_files, \(m) {
+    read_csv(m) |>
+      rename(x = "...1") |>
+      pivot_longer(-x, names_to = "y")
+  })
+  average_m <- bind_rows(matrices) |>
+    group_by(x, y) |>
+    summarise(value = mean(value)) |>
+    ungroup()
+  plot <- plot_confusion_matrix(average_m,
+    x_label = "X", y_label = "Y",
+    fill_label = "Average count"
+  )
+  model <- basename_no_ext(directory)
+  outfile <- glue("{here(cm_outdir, model)}_avg_cm.png")
+  ggsave(outfile, plot, height = 12, width = 12)
+  average_m |> mutate(model = model)
+}
+
+all_cm <- lapply(DIRS, \(x) summarize_cm(x, "tumor_type"))

@@ -96,6 +96,8 @@ def parse_args():
     )
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-n", "--no_dask", default=False, action="store_true")
+    parser.add_argument("-g", "--get_results", default=False, action="store_true")
+    parser.add_argument("-l", "--compare_plots", default=False, action="store_true")
     return parser.parse_args()
 
 
@@ -227,8 +229,37 @@ def main(adata, feature_set_name):
         all_df.to_csv(METRIC_OUTPUT, index=False)
 
 
+def get_comparison_plots(adata, filename):
+    chula_compare = adata[
+        adata.obs["Project_ID"].str.contains("CHULA")
+        | adata.obs["Project_ID"].isin(
+            ["TCGA-LIHC", "TCGA-COAD", "TCGA-CHOL", "TCGA-READ"]
+        ),
+        :,
+    ]
+    colors = ["Project_ID", "Sample_Type"]
+    fig = sc.pl.pca(chula_compare, color=colors, return_fig=True)
+    fig.set_size_inches(15, 10)
+    fig.savefig(filename, dpi=500, bbox_inches="tight")
+
+
 if __name__ == "__main__":
     args = parse_args()
+    if args.get_results:
+        all = []
+        for f in FEATURE_LISTS.keys():
+            current: Path = OUTDIR.joinpath(f)
+            for result in current.glob(".*csv"):
+                all.append(pd.read_csv(result))
+        pd.concat(all).to_csv(METRIC_OUTPUT, index=False)
+        exit(0)
+    if args.compare_plots:
+        fs = "edgeR_median_lfc_feature_list_3000"
+        OUTDIR = OUTDIR.joinpath("select_plots").joinpath(fs)
+        OUTDIR.mkdir(exist_ok=True, parents=True)
+        for file in STORAGE_DIR.joinpath(fs).glob("*h5ad"):
+            get_comparison_plots(ad.read_h5ad(file), OUTDIR.joinpath(file.stem))
+        exit(0)
     if args.test:
         print("Using test subset")
         adata = training_data_internal_test()

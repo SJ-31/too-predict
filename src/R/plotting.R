@@ -173,7 +173,10 @@ plot_confusion_matrix <- function(cm, x = "x", y = "y", v = "value",
   )) +
     geom_tile() +
     theme_minimal() +
-    theme(panel.grid = element_blank())
+    theme(
+      panel.grid = element_blank(),
+      axis.text.x = element_text(angle = 90, vjust = 0.5)
+    )
   if (show_counts) {
     plot <- plot + geom_text(aes(label = !!as.symbol(v)))
   }
