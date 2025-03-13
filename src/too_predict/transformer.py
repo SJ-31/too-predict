@@ -47,7 +47,7 @@ class Transformer:
         self,
         method: str,
         impute_fn=None,
-        inplace=True,
+        inplace=False,
         make_sparse=True,
         supported_methods=IMPLEMENTED_TRANSFORMATION,
         **kwargs,
@@ -384,7 +384,7 @@ class Transformer:
             return normalized
 
     def fit_transform(
-        self, data: ad.AnnData | np.ndarray | pd.DataFrame
+        self, data: ad.AnnData | np.ndarray | pd.DataFrame, _=None
     ) -> ad.AnnData | None | np.ndarray:
         self.fit(data)
         return self.transform()

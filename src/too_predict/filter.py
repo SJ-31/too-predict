@@ -24,7 +24,7 @@ class Filter:
     def fit(self, adata: ad.AnnData) -> None:
         self.adata = adata.copy() if not self.inplace else adata
 
-    def fit_transform(self, adata: ad.AnnData) -> ad.AnnData:
+    def fit_transform(self, adata: ad.AnnData, _=None) -> ad.AnnData:
         self.fit(adata)
         return self.transform()
 
