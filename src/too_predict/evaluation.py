@@ -1,11 +1,13 @@
 #!/usr/bin/env ipython
 from typing import Callable
 
+import anndata as ad
 import numpy as np
 import pandas as pd
 import sklearn.metrics as me
+import sklearn.model_selection as ms
 
-from too_predict.utils import find_confounded
+from too_predict.utils import RANDOM_STATE, find_confounded
 
 
 def curve_multiclass(
@@ -191,3 +193,143 @@ def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
         df.columns = kwargs["labels"]
         df.index = kwargs["labels"]
     return df
+
+
+def cross_validate(
+    model,
+    adata,
+    label_col="tumor_type",
+    group_col="",
+    n_splits=5,
+    random_state=RANDOM_STATE,
+) -> dict:
+    """Evaluate model performance with cross-validation"""
+    N = adata.copy()
+    labels = N.obs[label_col]
+    if not group_col:
+        cv = ms.StratifiedKFold(
+            n_splits=n_splits, shuffle=True, random_state=random_state
+        )
+        splits = cv.split(N.X, labels)
+    else:
+        cv = ms.StratifiedGroupKFold(
+            n_splits=n_splits, random_state=random_state, shuffle=True
+        )
+        splits = cv.split(N.X, labels, groups=N.obs[group_col])
+    cm: dict = {}
+    roc, prec_recall, report = [], [], []
+    others: dict = {
+        "fold": [],
+        "acc": [],
+        "jaccard": [],
+        "kappa": [],
+        "fowlkes_mallows": [],
+        "mcc": [],
+    }
+    for fold, (train_i, test_i) in enumerate(splits):
+        x_train = N[train_i]
+        model.fit(x_train, y=label_col)
+
+        x_test = N[test_i]
+        y_true = labels.iloc[test_i]  # True values
+
+        proba = model.predict_proba(x_test)
+        res: dict = get_all_metrics(y_true, proba, model.classes_)
+        others["fold"].append(fold)
+        for o in others.keys():
+            if o != "fold":
+                others[o].append(res[o])
+        cm[fold] = res["cm"]
+        for df, lst in zip(
+            [res["report"], res["prec_recall"], res["roc"]],
+            [report, prec_recall, roc],
+        ):
+            df["fold"] = fold
+            lst.append(df)
+    return {
+        "cm": cm,
+        "misc": pd.DataFrame(others),
+        "report": pd.concat(report),
+        "prec_recall": pd.concat(prec_recall),
+        "roc": pd.concat(roc),
+    }
+
+
+def holdout(
+    model,
+    adata: ad.AnnData,
+    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
+    label_col="tumor_type",
+) -> dict:
+    """Wrapper function for doing the classic holdout method (train-test-split)
+
+    Parameters
+    ---------
+    split_fn: A function that splits adata into a tuple of train, test
+
+    Return
+    ------
+    A dictionary containing model evaluation results for each unique instance of
+        `group_col`
+
+    Notes
+    -----
+    - Only use in place of cross_validate with StratifiedGroupKFold
+        when the group category to be evaluated is
+        confounded with the target labels
+    """
+
+    def helper(split_fn, adata):
+        adata = adata.copy()
+        n = len(adata)
+        x_train, x_test = split_fn(adata)
+        split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
+        split_prop = pd.DataFrame(
+            {
+                "train_prop": split_prop_tmp[0],
+                "test_prop": split_prop_tmp[1],
+                "train_size": len(x_train),
+                "test_size": len(x_test),
+            },
+            index=[0],
+        )
+        model.fit(x_train, y=label_col)
+        proba = model.predict_proba(x_test)
+        y_true = x_test.obs[label_col]
+        y_uniques = y_true.unique()
+        res: dict = get_all_metrics(y_true, proba, model.classes_)
+        for k, v in res.items():
+            if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
+                if k == "cm":
+                    continue
+                res[k] = v.loc[v["class"].isin(y_uniques), :]
+        res["split_prop"] = split_prop
+        return res
+
+    dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": []}
+    misc_tmp = {
+        "test_set": [],
+        "acc": [],
+        "kappa": [],
+        "jaccard": [],
+        "fowlkes_mallows": [],
+        "mcc": [],
+    }
+    cms = {}
+    for set_label, split_fn in split_fns.items():
+        cur = helper(split_fn, adata)
+        cms[set_label] = cur["cm"]
+        for m in misc_tmp.keys():
+            if m == "test_set":
+                continue
+            misc_tmp[m].append(cur[m])
+        misc_tmp["test_set"].append(set_label)
+        for d in dfs.keys():
+            df = cur[d]
+            if df is not None:
+                df["test_set"] = set_label
+                dfs[d].append(df)
+    concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0}
+    concat["cm"] = cms
+    concat["misc"] = pd.DataFrame(misc_tmp)
+    return concat
