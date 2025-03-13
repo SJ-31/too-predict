@@ -141,3 +141,55 @@ distinct_orderings <- function(tb, cols) {
     distinct(tmp, .keep_all = TRUE) |>
     select(-tmp)
 }
+
+sce2dge <- function(sce, count_assay = "X", as_integer = FALSE) {
+  counts <- assays(sce)[[count_assay]] |> as.matrix()
+  if (as_integer) {
+    mode(counts) <- "integer"
+  }
+  DGEList(counts = counts, samples = colData(sce), genes = rowData(sce))
+}
+
+#' Helper function to determine highest-ranked member of a column
+#' according to multiple metrics
+#'
+#' @param tb wide-form tibble in terms of metrics
+#' @param group_col column of `tb` containing the different groups to compare
+#' @param var_col column of `tb` containing representing that group's performance
+#'    under different scenarios e.g. different folds of cross validation
+#' @param metric_defs A list mapping the name of a metrics in `tb` to logicals
+#'    Are TRUE if higher values are better for the given metric
+rank_by_metrics <- function(group_col, var_col = NULL, tb, metric_defs) {
+  make_score_tb <- function(winner) {
+    tmp <- sapply(unique(tb[[group_col]]), \(x) 0, simplify = FALSE)
+    tmp[[winner]] <- 1
+    as_tibble(tmp)
+  }
+  if (is.null(var_col)) {
+    var_col <- "run"
+    tb[[var_col]] <- "1"
+  }
+  score_tracker <- empty_tibble(c("winner", "metric", var_col))
+  rank_scores <- lapply(unique(tb[[var_col]]), \(f) {
+    current <- filter(tb, !!as.symbol(var_col) == f)
+    lapply(names(metric_defs), \(m) {
+      if (metric_defs[[m]]) {
+        sorted <- arrange(current, desc(!!as.symbol(m)))
+      } else {
+        sorted <- arrange(current)
+      }
+      winner <- head(sorted, n = 1) |> pluck(group_col)
+      score_tracker <<- add_row(score_tracker,
+        winner = winner, metric = m, !!as.symbol(var_col) := f
+      )
+      make_score_tb(winner)
+    }) |>
+      bind_rows() |>
+      colSums()
+  }) |>
+    bind_rows() |>
+    colSums()
+  score_tracker_table <- table(score_tracker$winner, score_tracker$metric) |>
+    table2tb(group_col)
+  list(top = rank_scores, table = score_tracker_table)
+}

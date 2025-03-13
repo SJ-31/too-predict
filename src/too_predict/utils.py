@@ -574,7 +574,7 @@ def take_from_ad(
     return missing
 
 
-def ref_feature_lists_internal() -> tuple[dict, dict]:
+def ref_feature_lists_internal(add_all: bool = True) -> tuple[dict, dict]:
     features, refs = {}, {}
     fs_dir = here("data", "output", "feature_selection")
     for fname, add_to in zip(
@@ -586,7 +586,8 @@ def ref_feature_lists_internal() -> tuple[dict, dict]:
                 items = f.read().strip().splitlines()
             name = file.stem
             add_to[name] = items
-    features["all_features"] = None
+    if add_all:
+        features["all_features"] = None
     return refs, features
 
 
