@@ -143,6 +143,19 @@ n_metric_plot <- ggplot(n_metrics, aes(x = feature_set, y = value, fill = normal
 n_metric_plot
 ggsave(here(n_dir, "metrics.png"), n_metric_plot)
 
+metric_rankings <- list(
+  silhouette_score = TRUE, davies_bouldin_score = FALSE,
+  calinski_harabasz_score = TRUE
+)
+
+to_rank <- n_metrics |>
+  filter(label == "tumor_type") |>
+  mutate(combination = paste0(feature_set, "_", normalization)) |>
+  select(combination, metric, value) |>
+  pivot_wider(names_from = metric, values_from = value)
+
+ranked <- rank_by_metrics("combination", NULL, to_rank, metric_rankings)
+write_csv(ranked$table, here(n_dir, "ranked_combinations.csv"))
 
 ## * Organoid features
 

@@ -34,7 +34,7 @@ targets <- "tumor_type"
 
 DIRS <- list.files(OUTDIR, full.names = TRUE) |>
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
-  discard(\(x) str_detect(x, "test"))
+  discard(\(x) basename_no_ext(x) %in% c("test", "confusion_matrices"))
 
 ## * Data retrieval
 
@@ -171,34 +171,11 @@ combined <- local({
 
 max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
 models <- unique(combined$model)
-make_score_tb <- function(winner) {
-  tmp <- sapply(models, \(x) 0, simplify = FALSE)
-  tmp[[winner]] <- 1
-  as_tibble(tmp)
-}
 
-score_tracker <- empty_tibble(c("winner", "metric", VAR))
-rank_scores <- lapply(unique(combined[[VAR]]), \(f) {
-  current <- filter(combined, !!as.symbol(VAR) == f)
-  lapply(names(metric_rankings), \(m) {
-    if (metric_rankings[[m]]) {
-      sorted <- arrange(current, desc(!!as.symbol(m)))
-    } else {
-      sorted <- arrange(current)
-    }
-    winner <- head(sorted, n = 1) |> pluck("model")
-    score_tracker <<- add_row(score_tracker, winner = winner, metric = m, !!as.symbol(VAR) := f)
-    make_score_tb(winner)
-  }) |>
-    bind_rows() |>
-    colSums()
-}) |>
-  bind_rows() |>
-  colSums()
 
-score_tracker_table <- table(score_tracker$winner, score_tracker$metric) |> table2tb("model")
-write_csv(score_tracker_table, here(OUTDIR, "rank_score_tracker.csv"))
-write_csv(as_tibble(as.list(rank_scores)), here(OUTDIR, "model_ranks.csv"))
+get_top <- rank_by_metrics("model", VAR, combined, metric_rankings)
+write_csv(get_top$table, here(OUTDIR, "rank_score_tracker.csv"))
+write_csv(as_tibble(as.list(get_top$top)), here(OUTDIR, "model_ranks.csv"))
 
 ## * Plots
 
