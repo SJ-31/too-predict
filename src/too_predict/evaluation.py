@@ -164,12 +164,18 @@ def get_all_metrics(true, proba, classes, average: str = "macro") -> dict:
 
     cm = confusion_matrix_df(true, pred_vals, labels=classes)
     rep_df, acc = classification_report2df(rep)
-    roc_df = roc_multiclass(true, predictions, average=average)
     try:
+        roc_df = roc_multiclass(true, predictions, average=average)
         prec_recall_df = precision_recall_multiclass(true, predictions, average=average)
-    except IndexError:  # [2025-03-10 Mon] can happen when true values don't contain
+    except (
+        IndexError,
+        ValueError,
+    ) as e:  # [2025-03-10 Mon] can happen when true values don't contain
         # all the classes
+        print("WARNING: failed to calculate ROC or PRC, ignoring...")
+        print(f"Exception: {e}")
         prec_recall_df = None
+        roc_df = None
     return {
         "cm": cm,
         "acc": acc,
@@ -217,7 +223,7 @@ def cross_validate(
         )
         splits = cv.split(N.X, labels, groups=N.obs[group_col])
     cm: dict = {}
-    roc, prec_recall, report = [], [], []
+    main_metrics = {"report": [], "prec_recall": [], "roc": []}
     others: dict = {
         "fold": [],
         "acc": [],
@@ -240,19 +246,15 @@ def cross_validate(
             if o != "fold":
                 others[o].append(res[o])
         cm[fold] = res["cm"]
-        for df, lst in zip(
-            [res["report"], res["prec_recall"], res["roc"]],
-            [report, prec_recall, roc],
-        ):
-            df["fold"] = fold
-            lst.append(df)
+        for k, v in main_metrics.items():
+            df = res[k]
+            if df is not None:
+                df["fold"] = fold
+                v.append(df)
     return {
         "cm": cm,
         "misc": pd.DataFrame(others),
-        "report": pd.concat(report),
-        "prec_recall": pd.concat(prec_recall),
-        "roc": pd.concat(roc),
-    }
+    } | {k: pd.concat(v) for k, v in main_metrics.items() if v}
 
 
 def holdout(
