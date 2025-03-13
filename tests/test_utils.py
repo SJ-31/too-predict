@@ -1,4 +1,6 @@
 #!/usr/bin/env ipython
+import itertools
+import math
 from abc import abstractmethod
 from pathlib import Path
 from typing import override
@@ -15,28 +17,38 @@ import skbio.stats.composition as comp
 import sklearn.metrics as sm
 import sklearn.neighbors as sn
 import too_predict
+import too_predict._rust_helpers as rh
 from imblearn.under_sampling import TomekLinks
 from pyhere import here
 from rpy2.rinterface import SexpVector
 from rpy2.robjects import default_converter, numpy2ri
 from rpy2.robjects.packages import importr
 from scipy import sparse, spatial, stats
+from scripts.cross_validate import FEATURE_LISTS
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import (
     StratifiedKFold,
+    StratifiedShuffleSplit,
     cross_val_predict,
     cross_validate,
     train_test_split,
 )
+from sklearn.pipeline import Pipeline
 from too_predict.evaluation import (
     classification_report2df,
+    get_all_metrics,
     precision_recall_multiclass,
     roc_multiclass,
 )
-from too_predict.filter import count_tomek_links
+from too_predict.filter import Filter, count_tomek_links
 from too_predict.imputer import Imputer
-from too_predict.model import AlrBase, PredBase
+from too_predict.model import (
+    AlrBase,
+    PredBase,
+    RandomForestPred,
+    SimEstimator,
+)
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     adata_x_to_r,
@@ -44,11 +56,13 @@ from too_predict.utils import (
     df_from_r,
     df_to_r,
     dgelist2anndata,
+    find_confounded,
     get_data,
     library,
     np_to_r,
     phi_proportionality,
     r_cleanup,
+    ref_feature_lists_internal,
     rename_genes,
     source,
     str_mode,
@@ -68,55 +82,34 @@ coad = here(datadir, "tcga_coad-read.rds")
 test_sets = {"LIHC": hcc, "CHOL": chol, "COAD": coad}
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
 adata = training_data_internal_test()
-adata = adata[:, :50]
-# Transformer("robust_clr", Imputer("replace_one").run, inplace=True).fit_transform(adata)
-
-
-# #  --- CODE BLOCK ---
-class Dist:
-    """Class for conveniently indexing a condensed distance matrix"""
-
-    def _validate_label(self, labels: np.ndarray) -> bool:
-        if len(labels) != self.len:
-            raise ValueError("The length of the given labels is incorrect!")
-        if np.unique(labels).shape != labels.shape:
-            raise ValueError("Given labels aren't unique!")
-        return True
-
-    def __init__(self, x: np.ndarray, names=None, classes=None) -> None:
-        if not spatial.distance.is_valid_y(x):
-            raise ValueError("x is not a valid condensed distance matrix")
-        self.len = spatial.distance.num_obs_y(x)
-        self.x = x
-        if names is not None and self._validate_label((n := np.array(names))):
-            self.names = n
-        else:
-            self.names = None
-        if classes is not None and self._validate_label((c := np.array(classes))):
-            self.classes = c
-        else:
-            self.classes = None
-
-    def _find_label(self, labels: tuple[str, str]) -> tuple[int, int]:
-        return tuple(map(lambda x: np.where(self.labels == x)[0][0], labels))
-
-    def __getitem__(self, indices):
-        if not isinstance(indices, tuple) or len(indices) > 2:
-            raise ValueError("Must index as a pair!")
-        if list(map(type, indices) == [str, str]):
-            i, j = self._find_label(indices)
-        else:
-            i, j = indices
-        if i > j:
-            i, j = j, i
-        index = self.len * i + j - ((i + 2) * (i + 1)) // 2
-        return self.x[index]
+adata = adata[:,]
 
 
 labels = adata.obs.index
 target = adata.obs["tumor_type"]
+# #  --- CODE BLOCK ---
+refs, features = ref_feature_lists_internal()
+chosen = features["mutual_info_feature_list_3000"]
 
-dirich = Transformer("dirichlet", None, make_sparse=False, inplace=False, n=10, prior=1)
-data = dirich.fit_transform(adata)
-# cf, mf, matrix = count_tomek_links(adata, "tumor_type")
-#
+counts = adata.X.toarray()
+
+# encoded, pairs = rh.encode_pairs(counts)
+
+# current = "BRCA"
+# pair_lookup = {tuple(p): i for i, p in enumerate(pairs)}
+
+
+def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
+    index = pair_lookup[pair]
+    vals = mat[:, index]
+    contingency = [
+        [
+            len(vals[(label_vec == current_label) & vals > 0]),
+            len(vals[(label_vec == current_label) & vals == 0]),
+        ],
+        [
+            len(vals[(label_vec != current_label) & vals > 0]),
+            len(vals[(label_vec != current_label) & vals == 0]),
+        ],
+    ]
+    return contingency
