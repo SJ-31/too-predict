@@ -8,16 +8,18 @@ from pathlib import Path
 
 import optuna
 import sklearn.linear_model as sl
+import sklearn.metrics as sm
 import yaml
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 
-from too_predict.evaluation import cross_validate
+from too_predict.evaluation import cross_validate, prc_auc_score
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import AlrBase, PredBase, SimPred, XGBEstimator
 from too_predict.simulation import IMPLEMENTED_SIMULATION
 from too_predict.transformer import Transformer
 from too_predict.utils import (
+    RANDOM_STATE,
     get_data,
     ref_feature_lists_internal,
     training_data_internal,
@@ -36,12 +38,35 @@ def get_options(file: str | Path | None = None) -> dict:
 
 
 def get_classifier(classifier_name, trial: optuna.Trial):
-    # TODO: need to fill out these options
     match classifier_name:
-        case "XGBEstimator":
-            # trial.suggest_categorical()
-            classifier = XGBEstimator()
-        case "SGD":
+        case "XGBEstimator" | "HistGradientBoostingClassifier":
+            learning_rate = trial.suggest_categorical(
+                "learning_rate", [0.01, 0.1, 0.2, 0.3]
+            )  # Synonymous with shrinkage rate, eta
+            l2_reg = trial.suggest_float("l2_regularization", 0, 5, step=1)  # lambda
+            max_depth = trial.suggest_int("max_depth", 3, 15, step=5)
+            if classifier_name == "XGBEstimator":
+                l1_reg = trial.suggest_float("l1_regularization", 0, 5, step=1)  # alpha
+                minimum_loss = trial.suggest_int("minimum_loss", 0, 5, step=1)  # gamma
+                classifier = XGBEstimator(
+                    gamma=minimum_loss,
+                    learning_rate=learning_rate,
+                    reg_lambda=l2_reg,
+                    reg_alpha=l1_reg,
+                    random_state=RANDOM_STATE,
+                    max_depth=max_depth,
+                )
+            else:
+                classifier = HistGradientBoostingClassifier(
+                    random_state=RANDOM_STATE,
+                    scoring="loss",
+                    early_stopping=True,
+                    learning_rate=learning_rate,
+                    l2_regularization=l2_reg,
+                    max_depth=max_depth,
+                )
+        case "SVM":
+            # TODO: not sure what svm implementation to use
             classifier = sl.SGDClassifier()
         case _:
             raise ValueError(f"Classifier {classifier_name} is not implemented!")
