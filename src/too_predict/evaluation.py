@@ -169,8 +169,8 @@ def classification_report2df(
     return df, report["accuracy"]
 
 
-def get_all_metrics(true, proba, classes, average: str = "macro") -> dict:
-    predictions = pd.DataFrame(proba, columns=classes)
+def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
+    predictions = pd.DataFrame(score, columns=classes)
     pred_vals = predictions.idxmax(1)
     rep = me.classification_report(true, pred_vals, output_dict=True)
 
@@ -178,16 +178,19 @@ def get_all_metrics(true, proba, classes, average: str = "macro") -> dict:
     rep_df, acc = classification_report2df(rep)
     try:
         roc_df = roc_multiclass(true, predictions, average=average)
+    except (IndexError, ValueError) as e:
+        # [2025-03-10 Mon] can happen when true values don't contain
+        # all classes
+        # Or when using a model with decision_function
+        print("WARNING: failed to calculate ROC, ignoring...")
+        print(f"Exception: {e}")
+        roc_df = None
+    try:
         prec_recall_df = precision_recall_multiclass(true, predictions, average=average)
-    except (
-        IndexError,
-        ValueError,
-    ) as e:  # [2025-03-10 Mon] can happen when true values don't contain
-        # all the classes
-        print("WARNING: failed to calculate ROC or PRC, ignoring...")
+    except (IndexError, ValueError) as e:
+        print("WARNING: failed to calculate PRC, ignoring...")
         print(f"Exception: {e}")
         prec_recall_df = None
-        roc_df = None
     return {
         "cm": cm,
         "acc": acc,
