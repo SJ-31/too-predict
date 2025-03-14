@@ -4,11 +4,12 @@ library(paletteer)
 library(broom)
 library(glue)
 source(here("src", "R", "utils.R"))
+source(here("src", "R", "plotting.R"))
 
-CV <- TRUE
 OUTDIR <- here("data", "output", "cross_validation")
 SUBDIRECTORY <- ""
 VAR <- "fold" # Name of the column denoting different evaluation sets
+LABEL <- "tumor_type"
 
 if (sys.nframe() == 0) {
   library("optparse")
@@ -19,22 +20,23 @@ if (sys.nframe() == 0) {
     default = "" # e.g. [2025-03-11 Tue] use this to get stuff for "organoid_test_split"
   )
   parser <- add_option(parser, c("-v", "--var"),
-    type = "character", help = "Name of column denoting different evaluation sets", default = NULL
+    type = "character", help = "Name of column denoting different evaluation sets",
+    default = NULL
   )
   args <- parse_args(parser)
   OUTDIR <- here(OUTDIR, args$subdirectory)
   dir.create(OUTDIR)
   VAR <- args$var
   SUBDIRECTORY <- args$subdirectory
-  CV <- !args$no_cv
 }
 
 ## targets <- c("tumor_type", "primary_site")
 targets <- "tumor_type"
 
-DIRS <- list.files(OUTDIR, full.names = TRUE) |>
+DIRS <- list.files(here("data", "output", "cross_validation"), full.names = TRUE) |>
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
-  discard(\(x) basename_no_ext(x) %in% c("test", "confusion_matrices"))
+  discard(\(x) basename_no_ext(x) %in% c("test", "confusion_matrices", "additional_splits"))
+
 
 ## * Data retrieval
 
@@ -53,6 +55,7 @@ summarize_sets <- function(tb, how = "mean") {
     ) |>
     ungroup()
 }
+
 
 getter_fn <- function(label, suffix, format_fn) {
   lapply(DIRS, \(x) {
@@ -74,15 +77,23 @@ get_rocs <- function(label) {
 }
 
 get_prec_recall <- function(label) {
-  getter_fn(label, "-prec_recall", \(x) {
-    group_by(x, class, !!as.symbol(VAR)) |>
-      mutate(
-        step = seq_len(n()),
-        class_avg_precision = average_precision,
-        average_precision = as.numeric(str_remove(average_precision, ".*: "))
-      ) |>
-      ungroup()
-  })
+  tryCatch(
+    expr = {
+      getter_fn(label, "-prec_recall", \(x) {
+        group_by(x, class, !!as.symbol(VAR)) |>
+          mutate(
+            step = seq_len(n()),
+            class_avg_precision = average_precision,
+            average_precision = as.numeric(str_remove(average_precision, ".*: "))
+          ) |>
+          ungroup()
+      })
+    },
+    error = function(cnd) {
+      warning("Precision recall not available")
+      NULL
+    }
+  )
 }
 
 get_misc <- function(label) {
@@ -98,10 +109,15 @@ roc_tumor_type <- get_rocs("tumor_type")
 pr_tumor_type <- get_prec_recall("tumor_type")
 misc_tumor_type <- get_misc("tumor_type")
 report_tumor_type <- get_report("tumor_type")
-pr_auc_tumor_type <- pr_tumor_type |>
-  group_by(class, model, !!as.symbol(VAR)) |>
-  summarise(prc_auc = unique(auc)) |>
-  ungroup()
+if (!is.null(pr_tumor_type)) {
+  pr_auc_tumor_type <- pr_tumor_type |>
+    group_by(class, model, !!as.symbol(VAR)) |>
+    summarise(prc_auc = unique(auc)) |>
+    ungroup()
+} else {
+  pr_auc_tumor_type <- NULL
+}
+
 
 ## * Hypothesis testing
 
@@ -114,12 +130,14 @@ pr_auc_tumor_type <- pr_tumor_type |>
 # - F1 score
 metrics <- list(
   kappa = misc_tumor_type, mcc = misc_tumor_type,
-  `f1-score` = mutate(report_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))),
-  prc_auc = mutate(pr_auc_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+  `f1-score` = mutate(report_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
 )
+if (!is.null(pr_auc_tumor_type)) {
+  metrics[["prc_auc"]] <- mutate(pr_auc_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+}
 
 friedman_tt <- lapply(names(metrics), \(x) {
-  friedman_test_wrapper(metrics[[x]], x) |>
+  friedman_test_wrapper(metrics[[x]], x, var = VAR) |>
     tidy() |>
     mutate(metric = x)
 }) |>
@@ -151,6 +169,9 @@ write_csv(wilcox_tt, here(OUTDIR, "wilcox_tumor_type.csv"))
 # given metric
 ## --- CODE BLOCK ---
 metric_rankings <- list(kappa = TRUE, `f1-score` = TRUE, prc_auc = TRUE, mcc = TRUE)
+if (is.null(pr_auc_tumor_type)) {
+  metric_rankings$prc_auc <- NULL
+}
 
 ## ** Ranking measure
 combined <- local({
@@ -159,15 +180,20 @@ combined <- local({
     summarise(across(where(is.numeric), mean)) |>
     select(`f1-score`, !!as.symbol(VAR), model) |>
     ungroup()
-  prc <- pr_auc_tumor_type |>
-    group_by(model, !!as.symbol(VAR)) |>
-    summarise(across(where(is.numeric), mean)) |>
-    select(prc_auc, !!as.symbol(VAR), model) |>
-    ungroup()
-  reduce(list(rep, prc, misc_tumor_type), \(x, y) {
+  to_reduce <- list(rep, misc_tumor_type)
+  if (!is.null(pr_auc_tumor_type)) {
+    prc <- pr_auc_tumor_type |>
+      group_by(model, !!as.symbol(VAR)) |>
+      summarise(across(where(is.numeric), mean)) |>
+      select(prc_auc, !!as.symbol(VAR), model) |>
+      ungroup()
+    to_reduce <- list(rep, prc, misc_tumor_type)
+  }
+  reduce(to_reduce, \(x, y) {
     inner_join(x, y, by = c("model", VAR))
   })
 })
+write_csv(combined, here(OUTDIR, "combined_metrics.csv"))
 
 max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
 models <- unique(combined$model)
@@ -179,30 +205,33 @@ write_csv(as_tibble(as.list(get_top$top)), here(OUTDIR, "model_ranks.csv"))
 
 ## * Plots
 
-pr_auc_tumor_type_plot <- ggplot(pr_auc_tumor_type, aes(x = class, y = auc, fill = class)) +
-  geom_boxplot() +
-  facet_wrap(~model) +
-  ylab("Area under the precision recall curve") +
-  xlab("Tumor type")
+if (!is.null(pr_auc_tumor_type)) {
+  pr_auc_tumor_type_plot <- ggplot(pr_auc_tumor_type, aes(x = class, y = auc, fill = class)) +
+    geom_boxplot() +
+    facet_wrap(~model) +
+    ylab("Area under the precision recall curve") +
+    xlab("Tumor type")
 
-pr_auc_plot <-
-  roc_plot <- local({
-    s <- roc_tumor_type |> summarize_sets()
-    ggplot(s, aes(x = fpr, y = tpr, color = class)) +
+  prc_plot <- local({
+    s <- pr_tumor_type |> summarize_sets()
+    ggplot(s, aes(x = recall, y = precision, color = class)) +
       facet_wrap(~model) +
       geom_step() +
-      ylab("True positive rate (TPR)") +
-      xlab("False positive rate (FPR)")
+      ylab("Precision") +
+      xlab("Recall")
   })
+}
 
-prc_plot <- local({
-  s <- pr_tumor_type |> summarize_sets()
-  ggplot(s, aes(x = recall, y = precision, color = class)) +
+roc_plot <- local({
+  s <- roc_tumor_type |> summarize_sets()
+  ggplot(s, aes(x = fpr, y = tpr, color = class)) +
     facet_wrap(~model) +
     geom_step() +
-    ylab("Precision") +
-    xlab("Recall")
+    ylab("True positive rate (TPR)") +
+    xlab("False positive rate (FPR)")
 })
+
+
 
 ## * Confusion matrices
 
@@ -210,23 +239,25 @@ cm_outdir <- here(OUTDIR, "confusion_matrices")
 dir.create(cm_outdir)
 summarize_cm <- function(directory, label) {
   m_files <- list.files(directory, pattern = glue("{label}.*cm.*csv"), full.names = TRUE)
-  matrices <- lapply(m_files, \(m) {
-    read_csv(m) |>
-      rename(x = "...1") |>
-      pivot_longer(-x, names_to = "y")
-  })
-  average_m <- bind_rows(matrices) |>
-    group_by(x, y) |>
-    summarise(value = mean(value)) |>
-    ungroup()
-  plot <- plot_confusion_matrix(average_m,
-    x_label = "X", y_label = "Y",
-    fill_label = "Average count"
-  )
-  model <- basename_no_ext(directory)
-  outfile <- glue("{here(cm_outdir, model)}_avg_cm.png")
-  ggsave(outfile, plot, height = 12, width = 12)
-  average_m |> mutate(model = model)
+  if (length(m_files) > 0) {
+    matrices <- lapply(m_files, \(m) {
+      read_csv(m) |>
+        rename(x = "...1") |>
+        pivot_longer(-x, names_to = "y")
+    })
+    average_m <- bind_rows(matrices) |>
+      group_by(x, y) |>
+      summarise(value = mean(value)) |>
+      ungroup()
+    plot <- plot_confusion_matrix(average_m,
+      x_label = "X", y_label = "Y",
+      fill_label = "Average count"
+    )
+    model <- basename_no_ext(directory)
+    outfile <- glue("{here(cm_outdir, model)}_avg_cm.png")
+    ggsave(outfile, plot, height = 12, width = 12)
+    average_m |> mutate(model = model)
+  }
 }
 
-all_cm <- lapply(DIRS, \(x) summarize_cm(x, "tumor_type"))
+all_cm <- lapply(DIRS, \(x) summarize_cm(here(x, SUBDIRECTORY), "tumor_type"))
