@@ -16,7 +16,8 @@ def test_base():
     rf = RandomForestPred()
     results = rf.cross_validate(transformed)
     assert "fold" in results["report"].columns
-    assert set(results.keys()) == {"cm", "misc", "roc", "prec_recall"}
+    print(results.keys())
+    assert set(results.keys()) == {"cm", "misc", "roc", "prec_recall", "report"}
     print(results)
 
 

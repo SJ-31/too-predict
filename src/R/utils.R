@@ -77,10 +77,10 @@ basename_no_ext <- function(file) {
 #' In addition to the original test statistic Friedman's chi-square,
 #' also calculates an alternative, less conservative statistic provided by [1]
 #' and its p-value
-friedman_test_wrapper <- function(tb, metric_col, with_class = TRUE) {
-  j <- length(unique(tb$fold))
+friedman_test_wrapper <- function(tb, metric_col, with_class = TRUE, var = "fold") {
+  j <- length(unique(tb[[var]]))
   k <- length(unique(tb$model))
-  test <- friedman.test(tb[[metric_col]], groups = tb$model, blocks = tb$fold)
+  test <- friedman.test(tb[[metric_col]], groups = tb$model, blocks = tb[[var]])
   # Ranks are arranged with the blocks
   # `groups` are the treatments we want to compare
   f_chi <- test$statistic

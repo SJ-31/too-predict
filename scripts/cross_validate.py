@@ -45,6 +45,7 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 USE_CACHED: bool = True
 
 # Dictionary of model_name -> [model, transformation, imputation, feature_set]
+# TODO: should you test on every available combination?
 MODELS: dict = {
     "clr_random_forest_minfo": {
         "model": tm.RandomForestPred(),
@@ -52,7 +53,7 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
     },
-    "clr_random_forest_edger_low_variance_ref": {
+    "clr_rf_edger_low_variance_ref": {
         "model": tm.RandomForestPred(),
         "t": "clr",
         "i": "plus_one",
@@ -60,7 +61,7 @@ MODELS: dict = {
         "r": "variance_feature_list_lowest_20",
     },
     "clr_xgboost_edger": {
-        "model": tm.XgboostPred(),
+        "model": tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
@@ -70,6 +71,15 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
+    },
+    "alr_xgboost_low_variance": {
+        "model": tm.AlrBase(
+            tm.XGBEstimator(),
+            references=REF_LISTS["variance_feature_list_lowest_20"],
+        ),
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "r": "variance_feature_list_lowest_20",
     },
     "alr_random_forest_low_variance": {
         "model": tm.AlrBase(
@@ -126,7 +136,6 @@ ADATA: ad.AnnData
 # with whatever you are labeling on
 # This means that some instances won't be seen at all in the test data
 # gc is the group variable excluded during the cv folds e.g. Sample_Type
-
 ADDITIONAL_SPLITS: dict = {
     "CHULA": lambda x: (
         x[~x.obs["Project_ID"].str.contains("CHULA"), :],
@@ -166,7 +175,7 @@ def cross_validate_helper(
             ).fit_transform(adata)
         kwargs = {}
         if trans == "clr" and references is not None:
-            kwargs = {"features": references}
+            kwargs = {"features": REF_LISTS[references], "feature_col": "GENEID"}
         Transformer(
             trans, impute_fn=Imputer(impute), inplace=True, **kwargs
         ).fit_transform(adata)
@@ -180,8 +189,9 @@ def cross_validate_helper(
         write_results(results, result_dir, lc, cm_prefix="fold_")
     result_dir2 = result_dir.joinpath("additional_splits")
     result_dir2.mkdir(exist_ok=True, parents=True)
-    results2 = model.holdout(adata, ADDITIONAL_SPLITS, label_col=lc)
-    write_results(results2, result_dir2, lc)
+    if not here(result_dir2, f"{lc}-misc.csv").exists():
+        results2 = model.holdout(adata, ADDITIONAL_SPLITS, label_col=lc)
+        write_results(results2, result_dir2, lc)
 
 
 def write_results(results, result_dir, label_col, cm_prefix: str = ""):
@@ -233,5 +243,3 @@ if __name__ == "__main__":
                 impute=imputation,
                 references=references,
             )
-            # for g in group_classes:
-            #     cross_validate_helper(lc=label_class, gc=g, model=model, result_dir_str=name)
