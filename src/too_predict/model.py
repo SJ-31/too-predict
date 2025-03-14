@@ -70,6 +70,9 @@ class PredBase:
     def predict_proba(self, X: ad.AnnData) -> np.ndarray:
         return self.model.predict_proba(X.X)
 
+    def decision_function(self, X: ad.AnnData) -> np.ndarray:
+        return self.model.decision_function(X.X)
+
     def load(self, path: str) -> None:
         """Load the fitted estimator from the saved path"""
         self.model = pickle.load(path)
@@ -291,7 +294,7 @@ class AlrEstimator:
         proba_df = pd.DataFrame(self.predict_proba(X), columns=self.classes_)
         return np.array(proba_df.idxmax(1))
 
-    def predict_proba(self, X) -> np.ndarray:
+    def _predict_score(self, X, score_method: str) -> np.ndarray:
         """Get predictions using all trained estimators for each reference
 
         Parameters
@@ -304,7 +307,12 @@ class AlrEstimator:
         for r, m in self.models.items():
             if r in X.columns:
                 transformed = self._alr(X, r)
-                proba.append(m.predict_proba(transformed))
+                if score_method == "predict_proba":
+                    proba.append(m.predict_proba(transformed))
+                elif score_method == "decision_function":
+                    proba.append(m.decision_function(transformed))
+                else:
+                    raise ValueError(f"Score method {score_method} not recognized!")
                 self.n_pred += 1
             else:
                 # Don't try to normalize by it if it isn't present
@@ -319,6 +327,12 @@ class AlrEstimator:
         if len(self.cur_weights) == proba.shape[0]:
             proba = np.reshape(self.cur_weights, [proba.shape[0], 1, 1]) * proba
         return proba.mean(axis=0)
+
+    def predict_proba(self, X) -> np.ndarray:
+        return self._predict_score(X, "predict_proba")
+
+    def decision_function(self, X) -> np.ndarray:
+        return self._predict_score(X, "decision_function")
 
     @property
     def classes_(self):

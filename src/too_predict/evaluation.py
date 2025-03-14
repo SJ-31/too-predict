@@ -112,6 +112,18 @@ def roc_multiclass(
     )
 
 
+def prc_auc(y_true, y_score, **kwargs):
+    p, r, _ = me.precision_recall_curve(y_true, y_score)
+    return me.auc(r, p)
+
+
+prc_auc_score: Callable = me.make_scorer(
+    prc_auc,
+    response_method=["decision_function", "predict_proba"],
+    greater_is_better=True,
+)
+
+
 def precision_recall_multiclass(
     true_labels, pred_proba: pd.DataFrame | np.ndarray, classes=None, average="macro"
 ):
@@ -239,8 +251,13 @@ def cross_validate(
         x_test = N[test_i]
         y_true = labels.iloc[test_i]  # True values
 
-        proba = model.predict_proba(x_test)
-        res: dict = get_all_metrics(y_true, proba, model.classes_)
+        if "predict_proba" in dir(model):
+            score = model.predict_proba(x_test)
+        elif "decision_function" in dir(model):
+            score = model.decision_function(x_test)
+        else:
+            raise AttributeError("Model has no way of getting scores!")
+        res: dict = get_all_metrics(y_true, score, model.classes_)
         others["fold"].append(fold)
         for o in others.keys():
             if o != "fold":
