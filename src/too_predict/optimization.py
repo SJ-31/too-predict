@@ -3,8 +3,12 @@
 # Study: optimization based on an objective function
 # Trial: a single execution of the objective function
 
+from functools import partial
+from pathlib import Path
+
 import optuna
 import sklearn.linear_model as sl
+import yaml
 from sklearn.ensemble import RandomForestClassifier
 
 from too_predict.evaluation import cross_validate
@@ -14,6 +18,7 @@ from too_predict.model import AlrBase, PredBase, SimPred, XGBEstimator
 from too_predict.simulation import IMPLEMENTED_SIMULATION
 from too_predict.transformer import Transformer
 from too_predict.utils import (
+    get_data,
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
@@ -22,7 +27,16 @@ from too_predict.utils import (
 REFS, FEATURES = ref_feature_lists_internal(add_all=False)
 
 
+def get_options(file: str | Path | None = None) -> dict:
+    if file is None:
+        file = get_data("optimization_options.yaml")
+    with open(file, "r") as f:
+        loaded = yaml.safe_load(f)
+    return loaded
+
+
 def get_classifier(classifier_name, trial: optuna.Trial):
+    # TODO: need to fill out these options
     match classifier_name:
         case "XGBEstimator":
             # trial.suggest_categorical()
@@ -34,36 +48,41 @@ def get_classifier(classifier_name, trial: optuna.Trial):
     return classifier
 
 
-def get_transformation(transform_name, trial) -> dict:
+def get_transformation(transform_name, trial, opts: dict | None = None) -> dict:
     transform_kwargs = {}
+    opts = {} if opts is None else opts
     match transform_name:
         case "clr":
             transform_kwargs["feature_col"] = "GENEID"
-            ref_set = trial.suggest_categorical(
-                "clr_subset", list(REFS.keys()) + [None]
-            )
+            clr_subset = opts.get("clr_subset", list(REFS.keys()) + [None])
+            ref_set = trial.suggest_categorical("clr_subset", clr_subset)
             if ref_set is not None:
                 transform_kwargs["features"] = REFS[ref_set]
         case "alr":
-            ref_set = trial.suggest_categorical("alr_references", list(REFS.keys()))
+            alr_ref = opts.get("alr_references", REFS.keys())
+            ref_set = trial.suggest_categorical("alr_references", alr_ref)
             transform_kwargs["references"] = REFS[ref_set]
         case "dirichlet":
             transform_kwargs["n_instances"] = trial.suggest_int(
-                "n_dirichlet_instances", low=6, high=16, step=2
+                "n_dirichlet_instances", low=5, high=15, step=5
             )
     return transform_kwargs
 
 
-def objective(trial: optuna.Trial, label_col: str = "tumor_type", test=False):
+def objective(
+    trial: optuna.Trial,
+    opts: dict | None = None,
+    label_col: str = "tumor_type",
+    test=False,
+):
     transform: bool = True
-    imputation = trial.suggest_categorical(
-        "imputation", ["plus_one", "replace_one", "none"]
-    )
-    transform_name = trial.suggest_categorical(
-        "transformation", ["clr", "tmm", "tpm", "dirichlet", "alr"]
-    )
-    features = FEATURES[trial.suggest_categorical("feature_set", FEATURES.keys())]
-    classifier_name = trial.suggest_categorical("classifier", ["XGBEstimator", "SGD"])
+    if opts is None:
+        opts = get_options(None)
+
+    imputation = trial.suggest_categorical("imputation", opts["imputation"])
+    transform_name = trial.suggest_categorical("transformation", opts["transformation"])
+    features = FEATURES[trial.suggest_categorical("feature_set", opts["feature_set"])]
+    classifier_name = trial.suggest_categorical("classifier", opts["classifier"])
 
     transform_kwargs: dict = get_transformation(transform_name, trial)
     model = get_classifier(classifier_name, trial)
@@ -105,6 +124,8 @@ def objective(trial: optuna.Trial, label_col: str = "tumor_type", test=False):
 
 def run(n_trials=100, **kwargs) -> optuna.Study:
     study: optuna.Study = optuna.create_study(direction="maximize")
-    study.optimize(lambda trial: objective(trial, **kwargs), n_trials=n_trials)
+    obj = partial(objective, **kwargs)
+    study.optimize(obj, n_trials=n_trials)
     print(study.best_trial)
+    print("Study completed")
     return study
