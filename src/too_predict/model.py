@@ -30,16 +30,14 @@ class PredBase:
     and normalization
     """
 
-    def __init__(
-        self,
-        model,
-    ) -> None:
+    def __init__(self, model, make_dense: bool = False) -> None:
         self.model = model
         self._estimator_type = "classifier"
         self._is_fitted = False
         self.missing_features = (
             None  # Requested features to subset by that weren't found
         )
+        self.make_dense = make_dense
         self.var = None
 
     def fit(
@@ -58,7 +56,13 @@ class PredBase:
             raise ValueError(f"The column '{y}' is not present in X.obs")
         self.var = X.var
         self._is_fitted = True
-        self.model.fit(X.X, X.obs[y])
+        self.model.fit(self._check_dense(X.X), X.obs[y])
+
+    def _check_dense(self, X):
+        if not self.make_dense or not sparse.isspmatrix(X):
+            return X
+        elif self.make_dense and sparse.isspmatrix(X):
+            return X.toarray()
 
     @property
     def feature_importances_(self):
@@ -68,17 +72,17 @@ class PredBase:
         return self._is_fitted
 
     def predict_proba(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.predict_proba(X.X)
+        return self.model.predict_proba(self._check_dense(X.X))
 
     def decision_function(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.decision_function(X.X)
+        return self.model.decision_function(self._check_dense(X.X))
 
     def load(self, path: str) -> None:
         """Load the fitted estimator from the saved path"""
         self.model = pickle.load(path)
 
     def predict(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.predict(X.X)
+        return self.model.predict(self._check_dense(X.X))
 
     @property
     def classes_(self):
@@ -132,24 +136,6 @@ class PredBase:
         return rfecv
 
 
-# class XgboostPred(PredBase):
-#     def __init__(self, **kwargs) -> None:
-#         super().__init__(model=XGBClassifier(), **kwargs)
-
-#     def fit(self, X: ad.AnnData, label_col="tumor_type") -> None:
-#         self.encoder = LabelEncoder()
-#         X.obs[label_col] = self.encoder.fit_transform(X.obs[label_col])
-#         return super().fit(X, label_col)
-
-#     def predict(self, X: ad.AnnData) -> np.ndarray:
-#         vals = super().predict(X)
-#         return self.encoder.inverse_transform(vals)
-
-#     @property
-#     def classes_(self):
-#         return self.encoder.inverse_transform(super().classes_)
-
-
 class RandomForestPred(PredBase):
     def __init__(self, **kwargs) -> None:
         super().__init__(model=RandomForestClassifier(random_state=RNG, **kwargs))
@@ -164,6 +150,7 @@ class AlrBase(PredBase):
         imputation: str = "none",
         weights=None,
         n_refs=-1,
+        make_dense: bool = False,
     ) -> None:
         super().__init__(
             model=AlrEstimator(
@@ -172,7 +159,8 @@ class AlrBase(PredBase):
                 weights=weights,
                 imputation=imputation,
                 n_refs=n_refs,
-            )
+            ),
+            make_dense=make_dense,
         )
         if var_col:
             self.var_col = var_col
@@ -419,10 +407,13 @@ class XGBEstimator:
     Early stopping parameters are set to be consistent with sklearn's defaults
     """
 
-    def __init__(self, **kwargs) -> None:
-        self.model: XGBClassifier = XGBClassifier(
-            early_stopping_rounds=10, eval_metric=sm.log_loss, **kwargs
-        )
+    def __init__(self, early_stop=False, **kwargs) -> None:
+        if early_stop:
+            self.model: XGBClassifier = XGBClassifier(
+                early_stopping_rounds=10, eval_metric=sm.log_loss, **kwargs
+            )
+        else:
+            self.model: XGBClassifier = XGBClassifier(**kwargs)
 
     def fit(self, X, y) -> None:
         self.encoder = LabelEncoder()
@@ -451,3 +442,12 @@ class XGBEstimator:
     @property
     def classes_(self):
         return self.encoder.inverse_transform(self.model.classes_)
+
+
+class SVMEstimator:
+    """Wrapper class for Sklearn estimators
+    Only need this so as to optinally do scaling as part of the model
+    """
+
+    def __init__(self) -> None:
+        pass
