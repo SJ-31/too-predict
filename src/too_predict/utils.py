@@ -4,6 +4,7 @@ import importlib.resources as res
 import itertools
 import math
 import pickle
+from datetime import datetime
 from functools import reduce
 from pathlib import Path
 from typing import Callable
@@ -14,6 +15,7 @@ import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
+import yaml
 from pyhere import here
 from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
@@ -614,3 +616,12 @@ def comb_pair_at(j, query, n=None) -> tuple[int, int]:
             previous = acc
     second = query - f_offset + first + 1
     return (first, second)
+
+
+def record_in_yaml(file: str | Path, record_key: str = "last_ran") -> None:
+    file = Path(file) if isinstance(file, str) else file
+    with open(file, "w+") as f:
+        date = datetime.today().strftime("%Y-%m-%d")
+        loaded = yaml.safe_load(f) if file.stat().st_size > 0 else {}
+        loaded[record_key] = date
+        yaml.safe_dump(loaded, f)
