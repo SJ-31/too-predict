@@ -23,6 +23,9 @@ if (sys.nframe() == 0) {
     type = "character", help = "Name of column denoting different evaluation sets",
     default = NULL
   )
+  parser <- add_option(parser, c("-l", "--label"),
+    type = "character", help = "Label that was predicted in cross validation", default = "tumor_type"
+  )
   args <- parse_args(parser)
   OUTDIR <- here(OUTDIR, args$subdirectory)
   dir.create(OUTDIR)
@@ -30,8 +33,6 @@ if (sys.nframe() == 0) {
   SUBDIRECTORY <- args$subdirectory
 }
 
-## targets <- c("tumor_type", "primary_site")
-targets <- "tumor_type"
 
 DIRS <- list.files(here("data", "output", "cross_validation"), full.names = TRUE) |>
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
@@ -105,17 +106,17 @@ get_report <- function(label) {
 }
 
 
-roc_tumor_type <- get_rocs("tumor_type")
-pr_tumor_type <- get_prec_recall("tumor_type")
-misc_tumor_type <- get_misc("tumor_type")
-report_tumor_type <- get_report("tumor_type")
-if (!is.null(pr_tumor_type)) {
-  pr_auc_tumor_type <- pr_tumor_type |>
+roc <- get_rocs(LABEL)
+pr <- get_prec_recall(LABEL)
+misc <- get_misc(LABEL)
+report <- get_report(LABEL)
+if (!is.null(pr)) {
+  pr_auc <- pr |>
     group_by(class, model, !!as.symbol(VAR)) |>
     summarise(prc_auc = unique(auc)) |>
     ungroup()
 } else {
-  pr_auc_tumor_type <- NULL
+  pr_auc <- NULL
 }
 
 
@@ -129,11 +130,11 @@ if (!is.null(pr_tumor_type)) {
 # - PRC AUC
 # - F1 score
 metrics <- list(
-  kappa = misc_tumor_type, mcc = misc_tumor_type,
-  `f1-score` = mutate(report_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+  kappa = misc, mcc = misc,
+  `f1-score` = mutate(report, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
 )
-if (!is.null(pr_auc_tumor_type)) {
-  metrics[["prc_auc"]] <- mutate(pr_auc_tumor_type, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+if (!is.null(pr_auc)) {
+  metrics[["prc_auc"]] <- mutate(pr_auc, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
 }
 
 friedman_tt <- lapply(names(metrics), \(x) {
@@ -143,7 +144,7 @@ friedman_tt <- lapply(names(metrics), \(x) {
 }) |>
   bind_rows()
 
-write_csv(friedman_tt, here(OUTDIR, "friedman_test_tumor_type.csv"))
+write_csv(friedman_tt, here(OUTDIR, glue("friedman_test_{LABEL}.csv")))
 
 significant_tt <- friedman_tt |>
   filter(p.value <= 0.01) |>
@@ -156,7 +157,7 @@ wilcox_tt <- lapply(significant_tt, \(m) {
   }, \(x) p.adjust(x, method = "bonferroni")) |> mutate(metric = m)
 }) |> bind_rows()
 # TODO: is there a better post-hoc test to use?
-write_csv(wilcox_tt, here(OUTDIR, "wilcox_tumor_type.csv"))
+write_csv(wilcox_tt, here(OUTDIR, glue("wilcox_{LABEL}.csv")))
 
 ## --- CODE BLOCK ---
 
@@ -169,51 +170,51 @@ write_csv(wilcox_tt, here(OUTDIR, "wilcox_tumor_type.csv"))
 # given metric
 ## --- CODE BLOCK ---
 metric_rankings <- list(kappa = TRUE, `f1-score` = TRUE, prc_auc = TRUE, mcc = TRUE)
-if (is.null(pr_auc_tumor_type)) {
+if (is.null(pr_auc)) {
   metric_rankings$prc_auc <- NULL
 }
 
 ## ** Ranking measure
 combined <- local({
-  rep <- report_tumor_type |>
+  rep <- report |>
     group_by(model, !!as.symbol(VAR)) |>
     summarise(across(where(is.numeric), mean)) |>
     select(`f1-score`, !!as.symbol(VAR), model) |>
     ungroup()
-  to_reduce <- list(rep, misc_tumor_type)
-  if (!is.null(pr_auc_tumor_type)) {
-    prc <- pr_auc_tumor_type |>
+  to_reduce <- list(rep, misc)
+  if (!is.null(pr_auc)) {
+    prc <- pr_auc |>
       group_by(model, !!as.symbol(VAR)) |>
       summarise(across(where(is.numeric), mean)) |>
       select(prc_auc, !!as.symbol(VAR), model) |>
       ungroup()
-    to_reduce <- list(rep, prc, misc_tumor_type)
+    to_reduce <- list(rep, prc, misc)
   }
   reduce(to_reduce, \(x, y) {
     inner_join(x, y, by = c("model", VAR))
   })
 })
-write_csv(combined, here(OUTDIR, "combined_metrics.csv"))
+write_csv(combined, here(OUTDIR, glue("combined_metrics_{LABEL}.csv")))
 
 max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
 models <- unique(combined$model)
 
 
 get_top <- rank_by_metrics("model", VAR, combined, metric_rankings)
-write_csv(get_top$table, here(OUTDIR, "rank_score_tracker.csv"))
-write_csv(as_tibble(as.list(get_top$top)), here(OUTDIR, "model_ranks.csv"))
+write_csv(get_top$table, here(OUTDIR, glue("rank_score_tracker_{LABEL}.csv")))
+write_csv(as_tibble(as.list(get_top$top)), here(OUTDIR, glue("model_ranks_{LABEL}.csv")))
 
 ## * Plots
 
-if (!is.null(pr_auc_tumor_type)) {
-  pr_auc_tumor_type_plot <- ggplot(pr_auc_tumor_type, aes(x = class, y = auc, fill = class)) +
+if (!is.null(pr_auc)) {
+  pr_auc_plot <- ggplot(pr_auc, aes(x = class, y = auc, fill = class)) +
     geom_boxplot() +
     facet_wrap(~model) +
     ylab("Area under the precision recall curve") +
     xlab("Tumor type")
 
   prc_plot <- local({
-    s <- pr_tumor_type |> summarize_sets()
+    s <- pr |> summarize_sets()
     ggplot(s, aes(x = recall, y = precision, color = class)) +
       facet_wrap(~model) +
       geom_step() +
@@ -223,7 +224,7 @@ if (!is.null(pr_auc_tumor_type)) {
 }
 
 roc_plot <- local({
-  s <- roc_tumor_type |> summarize_sets()
+  s <- roc |> summarize_sets()
   ggplot(s, aes(x = fpr, y = tpr, color = class)) +
     facet_wrap(~model) +
     geom_step() +
@@ -260,4 +261,4 @@ summarize_cm <- function(directory, label) {
   }
 }
 
-all_cm <- lapply(DIRS, \(x) summarize_cm(here(x, SUBDIRECTORY), "tumor_type"))
+all_cm <- lapply(DIRS, \(x) summarize_cm(here(x, SUBDIRECTORY), LABEL))
