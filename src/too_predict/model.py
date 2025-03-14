@@ -5,6 +5,7 @@ from typing import Callable, override
 import anndata as ad
 import numpy as np
 import pandas as pd
+import sklearn.metrics as sm
 from scipy import sparse
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
@@ -13,6 +14,7 @@ from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
 from too_predict.evaluation import cross_validate, get_all_metrics, holdout
+from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
 
@@ -156,10 +158,18 @@ class AlrBase(PredBase):
         model,
         references: dict | list,
         var_col: str = "GENEID",
+        imputation: str = "none",
         weights=None,
+        n_refs=-1,
     ) -> None:
         super().__init__(
-            model=AlrEstimator(model=model, references=references, weights=weights)
+            model=AlrEstimator(
+                model=model,
+                references=references,
+                weights=weights,
+                imputation=imputation,
+                n_refs=n_refs,
+            )
         )
         if var_col:
             self.var_col = var_col
@@ -187,8 +197,10 @@ class AlrBase(PredBase):
 
 
 class SimPred(PredBase):
-    def __init__(self, model, method) -> None:
-        super().__init__(model=SimEstimator(method, model=model, n_instances=15))
+    def __init__(self, model, method, **kwargs) -> None:
+        if not kwargs:
+            kwargs = {"n_instances": 15}
+        super().__init__(model=SimEstimator(method, model=model, **kwargs))
 
 
 # * Estimators
@@ -212,21 +224,28 @@ class AlrEstimator:
         model,
         references: dict | list,
         weights=None,
+        imputation: str = "none",
+        n_refs: int = -1,
     ) -> None:
-        self.refs = (
+        self.all_refs: np.ndarray = np.array(
             list(references.keys()) if isinstance(references, dict) else references
         )
-        self.weights = references.values() if isinstance(references, dict) else None
-        if weights:
-            self.weights = weights
-        self.models = {r: clone(model) for r in self.refs}
+        self.model = model
+        self.all_weights: np.ndarray = np.array(
+            references.values() if isinstance(references, dict) else None
+        )
+        self.all_weights = weights if weights is not None else np.array([])
+        self.cur_refs: list = []
+        self.cur_weights: list = []
+        self.impute_fn = Imputer(imputation)
+        self.n_refs = -1 if (n_refs >= len(references) or n_refs < 0) else n_refs
         self.n_fit = 0
         self.n_pred = 0
         self.missing_references = []
 
     def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
         result: np.ndarray = Transformer(
-            "alr", impute_fn=None, inplace=False, by=by, **kwargs
+            "alr", impute_fn=self.impute_fn, inplace=False, by=by, **kwargs
         ).fit_transform(X)
         return result
 
@@ -239,7 +258,22 @@ class AlrEstimator:
         self.missing_references = []
         self.n_fit = 0
         self._is_fitted = True
-        for r in self.refs:
+        if self.n_refs != -1:
+            mask = [x in X.columns for x in self.all_refs]
+            ref_options: np.ndarray = self.all_refs[mask]
+            chosen = RNG.choice(
+                range(len(ref_options)), size=self.n_refs, replace=False
+            )
+            self.cur_refs = [ref_options[i] for i in chosen]
+            if self.all_weights.size > 0:
+                weight_options: np.ndarray = self.all_weights[mask]
+                self.cur_weights = [weight_options[i] for i in chosen]
+        else:
+            self.cur_refs = np.copy(self.all_refs)
+            self.cur_weights = np.copy(self.all_weights)
+        self.models = {r: clone(self.model) for r in self.cur_refs}
+
+        for r in self.cur_refs:
             if r in X.columns:
                 transformed = self._alr(X, r, **kwargs)
                 self.models[r].fit(transformed, y)
@@ -248,8 +282,10 @@ class AlrEstimator:
                 self.missing_references.append(r)
                 print(f"WARNING: reference {r} missing")
         print(
-            f"Fit with {self.n_fit} ({self.n_fit // len(self.refs) * 100}) references"
+            f"Fit with {self.n_fit} references ({self.n_fit // len(self.cur_refs) * 100}% success)"
         )
+        if self.n_fit == 0:
+            raise ValueError("No model could be fitted!")
 
     def predict(self, X) -> np.ndarray:
         proba_df = pd.DataFrame(self.predict_proba(X), columns=self.classes_)
@@ -276,17 +312,17 @@ class AlrEstimator:
                 self.missing_references.append(r)
                 proba.append(np.zeros((len(self.classes_), len(X.shape[0]))))
 
-        message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.refs) * 100}) references"
+        message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.cur_refs) * 100}) references"
         print(message)
         proba = np.array(proba)
 
-        if self.weights is not None and len(self.weights) == proba.shape[0]:
-            proba = np.reshape(self.weights, [proba.shape[0], 1, 1]) * proba
+        if len(self.cur_weights) == proba.shape[0]:
+            proba = np.reshape(self.cur_weights, [proba.shape[0], 1, 1]) * proba
         return proba.mean(axis=0)
 
     @property
     def classes_(self):
-        return self.models[self.refs[0]].classes_
+        return self.models[next(iter(self.models))].classes_
 
 
 class SimEstimator:
@@ -365,10 +401,14 @@ class SimEstimator:
 
 
 class XGBEstimator:
-    """Convenience wraper for XGBClassifier that supports string labels"""
+    """Convenience wraper for XGBClassifier that supports string labels
+    Early stopping parameters are set to be consistent with sklearn's defaults
+    """
 
     def __init__(self, **kwargs) -> None:
-        self.model: XGBClassifier = XGBClassifier(**kwargs)
+        self.model: XGBClassifier = XGBClassifier(
+            early_stopping_rounds=10, eval_metric=sm.log_loss, **kwargs
+        )
 
     def fit(self, X, y) -> None:
         self.encoder = LabelEncoder()
