@@ -2,6 +2,7 @@
 import itertools
 import math
 from abc import abstractmethod
+from os import replace
 from pathlib import Path
 from typing import override
 
@@ -27,6 +28,7 @@ from scipy import sparse, spatial, stats
 from scripts.cross_validate import FEATURE_LISTS
 from sklearn.cluster import KMeans
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import SGDClassifier
 from sklearn.model_selection import (
     StratifiedKFold,
     StratifiedShuffleSplit,
@@ -35,6 +37,8 @@ from sklearn.model_selection import (
     train_test_split,
 )
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC
 from too_predict.evaluation import (
     classification_report2df,
     get_all_metrics,
@@ -82,7 +86,7 @@ coad = here(datadir, "tcga_coad-read.rds")
 test_sets = {"LIHC": hcc, "CHOL": chol, "COAD": coad}
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
 adata = training_data_internal_test()
-adata = adata[:,]
+adata = adata[:, :100]
 
 
 labels = adata.obs.index
@@ -113,3 +117,19 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
         ],
     ]
     return contingency
+
+
+counts = StandardScaler().fit_transform(counts)
+model = LinearSVC()
+model.fit(counts, target)
+pred = model.predict(counts)
+scores = model.decision_function(counts)
+score_df = pd.DataFrame(scores, columns=model.classes_)
+
+s = score_df.idxmax(axis=1)
+assert (s == pred).all()
+
+# TODO: try out a SVM
+# will need to update metrics and the alrbase to use `decision_function` instead
+# of `predict_proba`
+# Explore class_weight parameters,
