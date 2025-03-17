@@ -234,6 +234,16 @@ class Constructor:
         return transform_fn, classifier, Pipeline(pipeline_lst)
 
 
+def ignore_duplicated(
+    trial: optuna.Trial, states=(TrialState.COMPLETE, TrialState.PRUNED)
+) -> tuple[bool, float | None]:
+    consider = trial.study.get_trials(deepcopy=False, states=states)
+    for t in reversed(consider):
+        if t.params == trial.params:
+            return True, t.value
+    return False, 0.0
+
+
 def objective(
     trial: optuna.Trial,
     adata: ad.AnnData,
@@ -242,7 +252,12 @@ def objective(
     label_col: str = "tumor_type",
     save_model: bool = True,
     save_cv: bool = True,
+    ignore_duplicated: bool = True,
 ):
+    if ignore_duplicated:
+        is_duplicated, val = ignore_duplicated(trial)
+        if is_duplicated:
+            return val
     cons = Constructor(trial=trial, trial_params=None)
     transform, classifier, pipeline = cons(
         opts=opts if opts is not None else get_options()
@@ -280,6 +295,7 @@ def nested_optuna(
     label_col: str = "tumor_type",
     save_model: bool = True,
     save_cv: bool = True,
+    ignore_duplicated: bool = True,
     storagedir: str = "",
 ):
     outer_results = []
@@ -308,6 +324,7 @@ def nested_optuna(
             label_col=label_col,
             save_model=save_model,
             save_cv=save_cv,
+            ignore_duplicated=ignore_duplicated,
         )
         study.optimize(obj)
 
@@ -329,4 +346,5 @@ def nested_optuna(
             y_hat = model.predict(transform(x_test))
         score = score_fn(y_test, y_hat)
         outer_results.append((fold, best_params, score))
+
     return outer_results
