@@ -52,15 +52,15 @@ def register_biocparallel(workers: int, param="MulticoreParam") -> None:
     ro.r(f"register({param}(workers = {workers}))")
 
 
-def get_data(path: str) -> Path:
+def get_data(path: str, must_exist: bool = True) -> Path:
     """Retrieve the path of a file in this package's `data` directory
     :param: path relative path to the desired file
     """
     with res.path(too_predict) as root:
         file = root.parent.parent.joinpath("data").joinpath(path)
-        if file.exists():
-            return file.absolute()
-        raise FileNotFoundError(f"{path} doesn't exist!")
+        if must_exist and not file.exists():
+            raise FileNotFoundError(f"{path} doesn't exist!")
+        return file.absolute()
 
 
 def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
