@@ -16,7 +16,10 @@ import sklearn.linear_model as sl
 import sklearn.metrics as sm
 import sklearn.svm as sv
 import yaml
+from optuna.pruners import HyperbandPruner
 from optuna.samplers import TPESampler
+from optuna.storages import JournalStorage
+from optuna.trial import TrialState
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
@@ -243,120 +246,129 @@ def ignore_duplicated(
     return False, 0.0
 
 
-def objective(
-    trial: optuna.Trial,
-    adata: ad.AnnData,
-    cv_splits=5,
-    opts: dict | None = None,
-    label_col: str = "tumor_type",
-    save_model: bool = True,
-    save_cv: bool = True,
-    ignore_duplicated: bool = True,
-    artifact_store: oa.FileSystemArtifactStore | None = None,
-):
-    if ignore_duplicated:
-        is_duplicated, val = ignore_duplicated(trial)
-        if is_duplicated:
-            return val
-    cons = Constructor(trial=trial, trial_params=None)
-    transform, classifier, pipeline = cons(
-        opts=opts if opts is not None else get_options()
-    )
-    if save_model:
-        write_pickle(pipeline, "save.pickle")
-        artifact_id = oa.upload_artifact(
-            artifact_store=artifact_store,
-            file_path="save.pickle",
-            study_or_trial=trial,
+class Optimizer:
+    def __init__(
+        self,
+        score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
+        label_col: str = "tumor_type",
+        save_model: bool = True,
+        save_cv: bool = True,
+        ignore_duplicated: bool = True,
+        journal_dir: Path | None = None,
+        artifact_dir: Path | None = None,
+    ) -> None:
+        self.label_col = label_col
+        self.save_model = save_model
+        self.save_cv = save_cv
+        self.journal_dir = journal_dir
+        self.artifact_dir = artifact_dir
+        self.ignore_duplicated = ignore_duplicated
+        self.score_fn = score_fn
+
+    def objective(
+        self,
+        trial: optuna.Trial,
+        adata: ad.AnnData,
+        cv_splits=5,
+        opts: dict | None = None,
+        artifact_store: oa.FileSystemArtifactStore | None = None,
+    ):
+        if ignore_duplicated:
+            is_duplicated, val = ignore_duplicated(trial)
+            if is_duplicated:
+                return val
+        cons = Constructor(trial=trial, trial_params=None)
+        transform, classifier, pipeline = cons(
+            opts=opts if opts is not None else get_options()
         )
-        trial.set_user_attr("artifact_id", artifact_id)
+        if self.save_model:
+            write_pickle(pipeline, "save.pickle")
+            artifact_id = oa.upload_artifact(
+                artifact_store=artifact_store,
+                file_path="save.pickle",
+                study_or_trial=trial,
+            )
+            trial.set_user_attr("artifact_id", artifact_id)
 
-    adata = transform(adata)
-    cv_results: dict = cross_validate(
-        classifier,
-        adata,
-        label_col=label_col,
-        n_splits=cv_splits,
-        trial=trial,
-        report_val=lambda x: x["kappa"],
-    )
-    if save_cv:
-        write_pickle(cv_results, "cv_results.pickle")
-        cv_id = oa.upload_artifact(
-            artifact_store=artifact_store,
-            file_path="cv_results.pickle",
-            study_or_trial=trial,
+        adata = transform(adata)
+        cv_results: dict = cross_validate(
+            classifier,
+            adata,
+            label_col=self.label_col,
+            n_splits=cv_splits,
+            trial=trial,
+            get_report_val=lambda x: x["kappa"],
         )
-        trial.set_user_attr("cv_id", cv_id)
-    kappa = cv_results["misc"]["kappa"]
-    return kappa.mean()
-
-
-def nested_optuna(
-    adata: ad.AnnData,
-    score_fn: Callable[[np.ndarray, np.ndarray], float],
-    n_outer: int,
-    n_inner: int,
-    label_col: str = "tumor_type",
-    save_model: bool = True,
-    save_cv: bool = True,
-    ignore_duplicated: bool = True,
-    journal_dir: Path | None = None,
-    artifact_dir: Path | None = None,
-):
-    outer_results = []
-    cv_outer = StratifiedKFold(
-        n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
-    )
-    if artifact_dir is None and save_model:
-        raise ValueError("Must supply artifact store if `save_model` is True!")
-    for fold, (train_i, test_i) in enumerate(cv_outer):
-        # Search hyperparameter space in inner loop
-        x_train = adata[train_i]
-        x_test, y_test = adata[test_i], adata.obs[label_col].iloc[test_i]
-        sampler = TPESampler(seed=fold)
-        # purner = HyperbandPruner()
-        study_kwargs = {
-            "study_name": "optimize_predictions",
-            "direction": "maximize",
-            "sampler": sampler,
-        }
-        obj_kwargs = {
-            "adata": x_train,
-            "cv_splits": n_inner,
-            "label_col": label_col,
-            "save_model": save_model,
-            "save_cv": save_cv,
-            "ignore_duplicated": ignore_duplicated,
-        }
-        if journal_dir is not None:  # This enables parallelization
-            out = journal_dir.joinpath(f"fold_{fold}")
-            study_kwargs["storage"] = JournalStorage(out)
-        if artifact_dir is not None:
-            obj_kwargs["artifact_store"] = oa.FileSystemArtifactStore(
-                artifact_dir.joinpath(f"fold_{fold}")
+        if self.save_cv:
+            write_pickle(cv_results, "cv_results.pickle")
+            cv_id = oa.upload_artifact(
+                artifact_store=artifact_store,
+                file_path="cv_results.pickle",
+                study_or_trial=trial,
             )
-        study = optuna.create_study(**study_kwargs)
-        obj = partial(objective, **obj_kwargs)
-        study.optimize(obj)
+            trial.set_user_attr("cv_id", cv_id)
+        kappa = cv_results["misc"]["kappa"]
+        return kappa.mean()
 
-        # Test optimal hyperparameters with inner test set
-        best_params = study.best_params
-        if save_model:
-            oa.download_artifact(
-                artifact_store=artifact_dir,
-                artifact_id=study.best_trial.user_attrs["artifact_id"],
-                file_path="best_model.pickle",
+    def nested(
+        self,
+        adata: ad.AnnData,
+        n_outer: int,
+        n_inner: int,
+    ):
+        outer_results = []
+        cv_outer = StratifiedKFold(
+            n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
+        )
+        a_store = None
+        if self.artifact_dir is None and self.save_model:
+            raise ValueError("Must supply artifact store if `save_model` is True!")
+        for fold, (train_i, test_i) in enumerate(cv_outer):
+            # Search hyperparameter space in inner loop
+            x_train = adata[train_i]
+            x_test, y_test = adata[test_i], adata.obs[self.label_col].iloc[test_i]
+            sampler = TPESampler(seed=fold)
+            # pruner = HyperbandPruner()
+            study_kwargs = {
+                "study_name": "optimize_predictions",
+                "direction": "maximize",
+                "sampler": sampler,
+            }
+            obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
+            if self.journal_dir is not None:  # This enables parallelization
+                out = self.journal_dir.joinpath(f"fold_{fold}")
+                study_kwargs["storage"] = JournalStorage(out)
+            if self.artifact_dir is not None:
+                a_store = oa.FileSystemArtifactStore(
+                    self.artifact_dir.joinpath(f"fold_{fold}")
+                )
+                obj_kwargs["artifact_store"] = a_store
+
+            study = optuna.create_study(**study_kwargs)
+            obj = partial(self.objective, **obj_kwargs)
+            study.optimize(obj)
+
+            # Test optimal hyperparameters with inner test set
+            best_params = study.best_params
+            if self.save_model:
+                oa.download_artifact(
+                    artifact_store=a_store,
+                    artifact_id=study.best_trial.user_attrs["artifact_id"],
+                    file_path="best_model.pickle",
+                )
+                pipeline: Pipeline = pickle.load("best_model.pickle")
+                pipeline.fit(x_train, y=x_train.obs[self.label_col])
+                y_hat = pipeline.predict(x_test)
+            else:
+                cons = Constructor(trial=None, trial_params=best_params)
+                transform, model, _ = cons()
+                model.fit(transform(x_train))
+                y_hat = model.predict(transform(x_test))
+            score = (
+                self.score_fn(y_test, y_hat)
+                if self.score_fn is not None
+                else sm.accuracy_score(y_test, y_hat)
             )
-            pipeline: Pipeline = pickle.load("best_model.pickle")
-            pipeline.fit(x_train, y=x_train.obs[label_col])
-            y_hat = pipeline.predict(x_test)
-        else:
-            cons = Constructor(trial=None, trial_params=best_params)
-            transform, model, _ = cons()
-            model.fit(transform(x_train))
-            y_hat = model.predict(transform(x_test))
-        score = score_fn(y_test, y_hat)
-        outer_results.append((fold, best_params, score))
+            outer_results.append((fold, best_params, score))
 
-    return outer_results
+        return outer_results
