@@ -38,7 +38,6 @@ from too_predict.utils import (
 )
 
 REFS, FEATURES = ref_feature_lists_internal(add_all=False)
-ARTIFACT_STORE = oa.FileSystemArtifactStore(get_data(".optuna_artifactstore"))
 
 
 def get_options(file: str | Path | None = None) -> dict:
@@ -253,6 +252,7 @@ def objective(
     save_model: bool = True,
     save_cv: bool = True,
     ignore_duplicated: bool = True,
+    artifact_store: oa.FileSystemArtifactStore | None = None,
 ):
     if ignore_duplicated:
         is_duplicated, val = ignore_duplicated(trial)
@@ -265,7 +265,7 @@ def objective(
     if save_model:
         write_pickle(pipeline, "save.pickle")
         artifact_id = oa.upload_artifact(
-            artifact_store=ARTIFACT_STORE,
+            artifact_store=artifact_store,
             file_path="save.pickle",
             study_or_trial=trial,
         )
@@ -273,12 +273,17 @@ def objective(
 
     adata = transform(adata)
     cv_results: dict = cross_validate(
-        classifier, adata, label_col=label_col, n_splits=cv_splits
+        classifier,
+        adata,
+        label_col=label_col,
+        n_splits=cv_splits,
+        trial=trial,
+        report_val=lambda x: x["kappa"],
     )
     if save_cv:
         write_pickle(cv_results, "cv_results.pickle")
         cv_id = oa.upload_artifact(
-            artifact_store=ARTIFACT_STORE,
+            artifact_store=artifact_store,
             file_path="cv_results.pickle",
             study_or_trial=trial,
         )
@@ -296,43 +301,50 @@ def nested_optuna(
     save_model: bool = True,
     save_cv: bool = True,
     ignore_duplicated: bool = True,
-    storagedir: str = "",
+    journal_dir: Path | None = None,
+    artifact_dir: Path | None = None,
 ):
     outer_results = []
     cv_outer = StratifiedKFold(
         n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
     )
+    if artifact_dir is None and save_model:
+        raise ValueError("Must supply artifact store if `save_model` is True!")
     for fold, (train_i, test_i) in enumerate(cv_outer):
         # Search hyperparameter space in inner loop
         x_train = adata[train_i]
         x_test, y_test = adata[test_i], adata.obs[label_col].iloc[test_i]
         sampler = TPESampler(seed=fold)
+        # purner = HyperbandPruner()
         study_kwargs = {
             "study_name": "optimize_predictions",
             "direction": "maximize",
             "sampler": sampler,
         }
-        if storagedir:
-            out = Path(storagedir).joinpath(f"fold_{fold}")
-            out.mkdir(exist_ok=True, parents=True)
-            study_kwargs["storage"] = out
+        obj_kwargs = {
+            "adata": x_train,
+            "cv_splits": n_inner,
+            "label_col": label_col,
+            "save_model": save_model,
+            "save_cv": save_cv,
+            "ignore_duplicated": ignore_duplicated,
+        }
+        if journal_dir is not None:  # This enables parallelization
+            out = journal_dir.joinpath(f"fold_{fold}")
+            study_kwargs["storage"] = JournalStorage(out)
+        if artifact_dir is not None:
+            obj_kwargs["artifact_store"] = oa.FileSystemArtifactStore(
+                artifact_dir.joinpath(f"fold_{fold}")
+            )
         study = optuna.create_study(**study_kwargs)
-        obj = partial(
-            objective,
-            adata=x_train,
-            cv_splits=n_inner,
-            label_col=label_col,
-            save_model=save_model,
-            save_cv=save_cv,
-            ignore_duplicated=ignore_duplicated,
-        )
+        obj = partial(objective, **obj_kwargs)
         study.optimize(obj)
 
         # Test optimal hyperparameters with inner test set
         best_params = study.best_params
         if save_model:
             oa.download_artifact(
-                artifact_store=ARTIFACT_STORE,
+                artifact_store=artifact_dir,
                 artifact_id=study.best_trial.user_attrs["artifact_id"],
                 file_path="best_model.pickle",
             )
