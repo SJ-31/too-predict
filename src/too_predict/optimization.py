@@ -254,11 +254,13 @@ class Optimizer:
         save_model: bool = True,
         save_cv: bool = True,
         ignore_duplicated: bool = True,
+        group_col: None | str = None,
         journal_dir: Path | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
         self.label_col = label_col
         self.save_model = save_model
+        self.group_col: None | str = group_col
         self.save_cv = save_cv
         self.journal_dir = journal_dir
         self.artifact_dir = artifact_dir
@@ -315,33 +317,45 @@ class Optimizer:
         adata: ad.AnnData,
         n_outer: int,
         n_inner: int,
+        pruner: BasePruner | None = None,
     ):
         outer_results = []
-        cv_outer = StratifiedKFold(
-            n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
-        )
+        if not self.group_col:
+            cv = ms.StratifiedKFold(
+                n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
+            )
+            outer_splits = cv.split(adata, adata.obs[self.label_col])
+        else:
+            cv = ms.StratifiedGroupKFold(
+                n_splits=n_outer, random_state=RANDOM_STATE, shuffle=True
+            )
+            outer_splits = cv.split(
+                adata, adata.obs[self.label_col], groups=adata.obs[self.group_col]
+            )
         a_store = None
         if self.artifact_dir is None and self.save_model:
             raise ValueError("Must supply artifact store if `save_model` is True!")
-        for fold, (train_i, test_i) in enumerate(cv_outer):
+        for fold, (train_i, test_i) in enumerate(outer_splits):
             # Search hyperparameter space in inner loop
             x_train = adata[train_i]
             x_test, y_test = adata[test_i], adata.obs[self.label_col].iloc[test_i]
             sampler = TPESampler(seed=fold)
-            # pruner = HyperbandPruner()
             study_kwargs = {
                 "study_name": "optimize_predictions",
                 "direction": "maximize",
                 "sampler": sampler,
             }
+            if pruner is not None:
+                study_kwargs["pruner"] = pruner
             obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
             if self.journal_dir is not None:  # This enables parallelization
-                out = self.journal_dir.joinpath(f"fold_{fold}")
-                study_kwargs["storage"] = JournalStorage(out)
+                out = self.journal_dir.joinpath(f"fold_{fold}.log")
+                jfile = oj.JournalFileBackend(str(out))
+                study_kwargs["storage"] = oj.JournalStorage(jfile)
             if self.artifact_dir is not None:
-                a_store = oa.FileSystemArtifactStore(
-                    self.artifact_dir.joinpath(f"fold_{fold}")
-                )
+                a_store_dir = self.artifact_dir.joinpath(f"fold_{fold}")
+                a_store_dir.mkdir(exist_ok=True, parents=True)
+                a_store = oa.FileSystemArtifactStore(a_store_dir)
                 obj_kwargs["artifact_store"] = a_store
 
             study = optuna.create_study(**study_kwargs)
