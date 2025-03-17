@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 import pickle
+from functools import partial
 from typing import Callable, override
 
 import anndata as ad
@@ -39,6 +40,12 @@ class PredBase:
         )
         self.make_dense = make_dense
         self.var = None
+        if "predict_proba" in dir(model):
+            self.score_fn = "predict_proba"
+        elif "decision_function" in dir(model):
+            self.score_fn = "decision_function"
+        else:
+            self.score_fn = None
 
     def fit(
         self,
@@ -150,7 +157,6 @@ class AlrBase(PredBase):
         imputation: str = "none",
         weights=None,
         n_refs=-1,
-        make_dense: bool = False,
     ) -> None:
         super().__init__(
             model=AlrEstimator(
@@ -160,7 +166,7 @@ class AlrBase(PredBase):
                 imputation=imputation,
                 n_refs=n_refs,
             ),
-            make_dense=make_dense,
+            make_dense=True,
         )
         if var_col:
             self.var_col = var_col
@@ -185,6 +191,11 @@ class AlrBase(PredBase):
     def predict_proba(self, X: ad.AnnData) -> np.ndarray:
         df = adata_to_df(X, var_col=self.var_col)
         return self.model.predict_proba(df)
+
+    @override
+    def decision_function(self, X: ad.AnnData) -> np.ndarray:
+        df = adata_to_df(X, var_col=self.var_col)
+        return self.model.decision_function(df)
 
 
 class SimPred(PredBase):
@@ -233,6 +244,16 @@ class AlrEstimator:
         self.n_fit = 0
         self.n_pred = 0
         self.missing_references = []
+        if "predict_proba" in dir(self.model):
+            self._score_method = "predict_proba"
+            self.predict_proba = partial(
+                self._predict_score, score_method=self._score_method
+            )
+        elif "decision_function" in dir(self.model):
+            self._score_method = "decision_function"
+            self.decision_function = partial(
+                self._predict_score, score_method=self._score_method
+            )
 
     def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
         result: np.ndarray = Transformer(
@@ -279,8 +300,10 @@ class AlrEstimator:
             raise ValueError("No model could be fitted!")
 
     def predict(self, X) -> np.ndarray:
-        proba_df = pd.DataFrame(self.predict_proba(X), columns=self.classes_)
-        return np.array(proba_df.idxmax(1))
+        score_df = pd.DataFrame(
+            self._predict_score(X, self._score_method), columns=self.classes_
+        )
+        return np.array(score_df.idxmax(1))
 
     def _predict_score(self, X, score_method: str) -> np.ndarray:
         """Get predictions using all trained estimators for each reference
@@ -289,16 +312,16 @@ class AlrEstimator:
         ----------
         X : a dataframe where columns are features
         """
-        proba = []
+        scores = []
         self.n_pred = 0
         self.missing_references = []
         for r, m in self.models.items():
             if r in X.columns:
                 transformed = self._alr(X, r)
                 if score_method == "predict_proba":
-                    proba.append(m.predict_proba(transformed))
+                    scores.append(m.predict_proba(transformed))
                 elif score_method == "decision_function":
-                    proba.append(m.decision_function(transformed))
+                    scores.append(m.decision_function(transformed))
                 else:
                     raise ValueError(f"Score method {score_method} not recognized!")
                 self.n_pred += 1
@@ -306,21 +329,15 @@ class AlrEstimator:
                 # Don't try to normalize by it if it isn't present
                 print(f"WARNING: reference {r} missing")
                 self.missing_references.append(r)
-                proba.append(np.zeros((len(self.classes_), len(X.shape[0]))))
+                scores.append(np.zeros((len(self.classes_), len(X.shape[0]))))
 
         message = f"Predicted with {self.n_pred} ({self.n_pred // len(self.cur_refs) * 100}) references"
         print(message)
-        proba = np.array(proba)
+        scores = np.array(scores)
 
-        if len(self.cur_weights) == proba.shape[0]:
-            proba = np.reshape(self.cur_weights, [proba.shape[0], 1, 1]) * proba
-        return proba.mean(axis=0)
-
-    def predict_proba(self, X) -> np.ndarray:
-        return self._predict_score(X, "predict_proba")
-
-    def decision_function(self, X) -> np.ndarray:
-        return self._predict_score(X, "decision_function")
+        if len(self.cur_weights) == scores.shape[0]:
+            scores = np.reshape(self.cur_weights, [scores.shape[0], 1, 1]) * scores
+        return scores.mean(axis=0)
 
     @property
     def classes_(self):
@@ -341,6 +358,16 @@ class SimEstimator:
         self.method = method
         self.model = model
         self.kwargs = kwargs
+        if "predict_proba" in dir(self.model):
+            self._score_method = "predict_proba"
+            self.predict_proba = partial(
+                self._predict_score, score_method=self._score_method
+            )
+        elif "decision_function" in dir(self.model):
+            self._score_method = "decision_function"
+            self.decision_function = partial(
+                self._predict_score, score_method=self._score_method
+            )
 
     @staticmethod
     def _validate_x(X: np.ndarray) -> None:
@@ -383,18 +410,24 @@ class SimEstimator:
         X, y = self._format_instances(X, y)
         self.model.fit(X, y)
 
-    def predict_proba(self, X) -> np.ndarray:
+    def _predict_score(self, X, score_method: str) -> np.ndarray:
+        if score_method == "predict_proba":
+            score_fn = self.model.predict_proba
+        elif score_method == "decision_function":
+            score_fn = self.model.decision_function
+        else:
+            raise ValueError(f"Score method {score_method} not recognized!")
         X = self._simulate(X)
         self._validate_x(X)
         all_proba = []
         for i in range(X.shape[0]):
-            cur = self.model.predict_proba(X[i, :, :])
+            cur = score_fn(X[i, :, :])
             all_proba.append(cur)
         return np.array(all_proba).mean(axis=0)
 
     def predict(self, X) -> np.ndarray:
-        proba = self.predict_proba(X)
-        voted = [self.model.classes_[c] for c in np.argmax(proba, axis=1)]
+        scores = self._predict_score(X, self._score_method)
+        voted = [self.model.classes_[c] for c in np.argmax(scores, axis=1)]
         return np.array(voted)
 
     @property
