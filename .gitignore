@@ -2,6 +2,7 @@
 __pycache__/
 *.py[oc]
 build/
+*.pickle
 dist/
 rust/target
 src/too_predict/_rust_helpers*
