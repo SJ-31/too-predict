@@ -16,6 +16,7 @@ import sklearn.linear_model as sl
 import sklearn.metrics as sm
 import sklearn.svm as sv
 import yaml
+from optuna.samplers import TPESampler
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
@@ -33,9 +34,11 @@ from too_predict.utils import (
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
+    write_pickle,
 )
 
 REFS, FEATURES = ref_feature_lists_internal(add_all=False)
+ARTIFACT_STORE = oa.FileSystemArtifactStore(get_data(".optuna_artifactstore"))
 
 
 def get_options(file: str | Path | None = None) -> dict:
@@ -238,6 +241,7 @@ def objective(
     opts: dict | None = None,
     label_col: str = "tumor_type",
     save_model: bool = True,
+    save_cv: bool = True,
 ):
     cons = Constructor(trial=trial, trial_params=None)
     transform, classifier, pipeline = cons(
@@ -256,7 +260,14 @@ def objective(
     cv_results: dict = cross_validate(
         classifier, adata, label_col=label_col, n_splits=cv_splits
     )
-    # write_cross_val(cv_results)
+    if save_cv:
+        write_pickle(cv_results, "cv_results.pickle")
+        cv_id = oa.upload_artifact(
+            artifact_store=ARTIFACT_STORE,
+            file_path="cv_results.pickle",
+            study_or_trial=trial,
+        )
+        trial.set_user_attr("cv_id", cv_id)
     kappa = cv_results["misc"]["kappa"]
     return kappa.mean()
 
@@ -268,6 +279,8 @@ def nested_optuna(
     n_inner: int,
     label_col: str = "tumor_type",
     save_model: bool = True,
+    save_cv: bool = True,
+    storagedir: str = "",
 ):
     outer_results = []
     cv_outer = StratifiedKFold(
@@ -277,13 +290,24 @@ def nested_optuna(
         # Search hyperparameter space in inner loop
         x_train = adata[train_i]
         x_test, y_test = adata[test_i], adata.obs[label_col].iloc[test_i]
-        study = optuna.create_study(direction="maximize")
+        sampler = TPESampler(seed=fold)
+        study_kwargs = {
+            "study_name": "optimize_predictions",
+            "direction": "maximize",
+            "sampler": sampler,
+        }
+        if storagedir:
+            out = Path(storagedir).joinpath(f"fold_{fold}")
+            out.mkdir(exist_ok=True, parents=True)
+            study_kwargs["storage"] = out
+        study = optuna.create_study(**study_kwargs)
         obj = partial(
             objective,
             adata=x_train,
             cv_splits=n_inner,
             label_col=label_col,
             save_model=save_model,
+            save_cv=save_cv,
         )
         study.optimize(obj)
 
