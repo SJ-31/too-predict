@@ -70,7 +70,7 @@ def get_proportionality(f):
 # you are going to eventually train on?
 def sfm(f):
     forest = RandomForestPred("clr", "plus_one")
-    forest.fit(adata, label_col="primary_site")
+    forest.fit(adata, y="primary_site")
     model = fs.SelectFromModel(forest, prefit=True)
     selected = model.get_support()
     kept_features = forest.var.loc[selected, :]
@@ -136,7 +136,9 @@ if __name__ == "__main__":
 
     # <2025-02-21 Fri> when you run the real thing, choose the best normalization method
     # or do it in a loop and see what happens
-    normalized = Transformer(adata, "clr", Imputer("plus_one"), inplace=False).run()
+    normalized = Transformer("clr", Imputer("plus_one"), inplace=False).fit_transform(
+        adata
+    )
     n_counts = normalized.X.toarray()
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex

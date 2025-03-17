@@ -62,7 +62,7 @@ feature_dist_plot <- ggplot(features_together, aes(x = value, color = metric)) +
   xlab("Scaled value")
 ggsave(here(fs_dir, "feature_dist.png"), feature_dist_plot, width = 10)
 
-n_features <- 3000
+n_features <- 1000
 
 ## * Get features
 
@@ -76,7 +76,7 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
 }) |> `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
 
-ggsave(here(fs_dir, "selected_ml_features_overlap.png"), feature_venn)
+ggsave(here(fs_dir, glue("selected_ml_features_overlap_{n_features}.png")), feature_venn)
 
 ## ** Overlap between top DE genes between tumor types
 top_n_de <- round(n_features / length(tumor_types))

@@ -2,18 +2,21 @@
 
 from pathlib import Path
 
+import anndata as ad
 import joblib
 import pandas as pd
+import scanpy as sc
 import sklearn.inspection as si
-import sklearn.metrics as sm
-import too_predict.model as tm
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.model_selection import cross_val_score, train_test_split
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import (
+    RANDOM_STATE,
     RNG,
     ref_feature_lists_internal,
     training_data_internal,
@@ -45,31 +48,44 @@ def main():
     else:
         adata = training_data_internal()
 
-    model = tm.XGBEstimator()
+    model = HistGradientBoostingClassifier()
 
     filter = Filter(
         feature_col="GENEID",
         features=FEATURE_LISTS["edgeR_median_lfc_feature_list_3000"],
     )
+    adata = adata[adata.obs["Sample_Type"].isin(["organoid", "primary"])]
     adata = filter.fit_transform(adata)
     if TEST:
         adata = adata[:50, :50]
 
     Transformer("clr", impute_fn=Imputer("plus_one"), inplace=True).fit_transform(adata)
     adata.obs["is_organoid"] = adata.obs["Sample_Type"] == "organoid"
+    primary = adata[~adata.obs["is_organoid"], :]
+    sc.pp.subsample(primary, random_state=RANDOM_STATE, fraction=0.03)
+    organoid = adata[adata.obs["is_organoid"], :]
+
+    adata = ad.concat([primary, organoid], axis="obs", join="inner", merge="same")
+    print(f"Shape after balancing {adata.shape}")
     labels = adata.obs["is_organoid"]
     counts = adata.X.toarray()
-    scorer = sm.make_scorer(sm.cohen_kappa_score)
-    model.fit(counts, labels)
+    # scorer = sm.make_scorer(sm.cohen_kappa_score)
+    x_train, x_test, y_train, y_test = train_test_split(counts, labels)
+    model.fit(x_train, y_train)
 
     results = si.permutation_importance(
         model,
-        counts,
-        labels,
-        scoring=scorer,
+        x_train,
+        y_train,
         n_repeats=3 if not TEST else 1,
         random_state=RNG,
     )
+    # [2025-03-13 Thu] Why are these all 0?
+    # cross validation results indicate that they can learn this
+
+    cv_score = cross_val_score(model, x_train, y_train)
+    print(cv_score)
+    print(results)
     imp = results["importances"]
 
     df = pd.DataFrame(
@@ -78,6 +94,7 @@ def main():
             **{"GENEID": adata.var["GENEID"]},
         )
     )
+
     importance = pd.DataFrame(imp, columns=[f"repeat_{i}" for i in range(imp.shape[1])])
     df = (
         pd.concat([df, importance], axis=1, ignore_index=True)
