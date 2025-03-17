@@ -28,7 +28,7 @@ class Filter:
         self.fit(adata)
         return self.transform()
 
-    def transform(self) -> ad.AnnData:
+    def transform(self, _=None) -> ad.AnnData:
         to_fill = np.zeros((self.adata.shape[0], len(self.features)))
         new_var = pd.DataFrame(index=self.features).merge(
             self.adata.var, how="left", left_index=True, right_on=self.feature_col

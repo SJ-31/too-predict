@@ -346,7 +346,7 @@ class Transformer:
             clr[clr == -np.inf] = 0
         return clr
 
-    def transform(self) -> ad.AnnData | None | np.ndarray:
+    def transform(self, _=None) -> ad.AnnData | None | np.ndarray:
         if self.impute and self.method != "robust_clr":
             self.counts = self.impute(self.counts)
         if self.method in IMPLEMENTED_SIMULATION:
