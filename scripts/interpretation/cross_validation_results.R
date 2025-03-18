@@ -21,7 +21,7 @@ if (sys.nframe() == 0) {
   )
   parser <- add_option(parser, c("-v", "--var"),
     type = "character", help = "Name of column denoting different evaluation sets",
-    default = NULL
+    default = "fold"
   )
   parser <- add_option(parser, c("-l", "--label"),
     type = "character", help = "Label that was predicted in cross validation", default = "tumor_type"
@@ -29,7 +29,7 @@ if (sys.nframe() == 0) {
   args <- parse_args(parser)
   OUTDIR <- here(OUTDIR, args$subdirectory)
   dir.create(OUTDIR)
-  VAR <- args$var
+  VAR <- as.character(args$var)
   SUBDIRECTORY <- args$subdirectory
 }
 
@@ -61,9 +61,14 @@ summarize_sets <- function(tb, how = "mean") {
 getter_fn <- function(label, suffix, format_fn) {
   lapply(DIRS, \(x) {
     model_name <- basename_no_ext(x)
-    read_csv(here(x, SUBDIRECTORY, glue("{label}{suffix}.csv"))) |>
-      format_fn() |>
-      mutate(model = model_name)
+    file <- here(x, SUBDIRECTORY, glue("{label}{suffix}.csv"))
+    if (file.exists(file)) {
+      suppressMessages(read_csv(file)) |>
+        format_fn() |>
+        mutate(model = model_name)
+    } else {
+      NULL
+    }
   }) |>
     bind_rows() |>
     mutate(!!as.symbol(VAR) := as.character(!!as.symbol(VAR)))
@@ -232,17 +237,22 @@ roc_plot <- local({
     xlab("False positive rate (FPR)")
 })
 
-
+dir <- "/home/shannc/Bio_SDD/too-predict/data/output/cross_validation/alr_random_forest_edger_lfc/additional_splits"
+m_files <- list.files(dir, pattern = glue("{LABEL}.*cm.*csv"), full.names = TRUE)
 
 ## * Confusion matrices
 
 cm_outdir <- here(OUTDIR, "confusion_matrices")
 dir.create(cm_outdir)
-summarize_cm <- function(directory, label) {
-  m_files <- list.files(directory, pattern = glue("{label}.*cm.*csv"), full.names = TRUE)
+summarize_cm <- function(directory, label, pattern = NULL, outname = NULL) {
+  if (is.null(pattern)) {
+    m_files <- list.files(directory, pattern = glue("{label}.*cm.*csv"), full.names = TRUE)
+  } else {
+    m_files <- list.files(directory, pattern = pattern, full.names = TRUE)
+  }
   if (length(m_files) > 0) {
     matrices <- lapply(m_files, \(m) {
-      read_csv(m) |>
+      suppressMessages(read_csv(m)) |>
         rename(x = "...1") |>
         pivot_longer(-x, names_to = "y")
     })
@@ -251,14 +261,39 @@ summarize_cm <- function(directory, label) {
       summarise(value = mean(value)) |>
       ungroup()
     plot <- plot_confusion_matrix(average_m,
-      x_label = "X", y_label = "Y",
+      x_label = "True", y_label = "Prediction",
       fill_label = "Average count"
     )
-    model <- basename_no_ext(directory)
-    outfile <- glue("{here(cm_outdir, model)}_avg_cm.png")
+    if (nchar(SUBDIRECTORY) == 0) {
+      model <- basename_no_ext(directory)
+    } else {
+      model <- split_path(directory)[2]
+    }
+    if (is.null(outname)) {
+      outfile <- glue("{here(cm_outdir, model)}_{label}_avg_cm.png")
+    } else {
+      outfile <- glue("{here(cm_outdir, model)}_{outname}.png")
+      print(outfile)
+    }
     ggsave(outfile, plot, height = 12, width = 12)
     average_m |> mutate(model = model)
   }
 }
 
 all_cm <- lapply(DIRS, \(x) summarize_cm(here(x, SUBDIRECTORY), LABEL))
+
+# Look at chula organoid CM
+if (SUBDIRECTORY == "additional_splits") {
+  lapply(DIRS, \(x) {
+    summarize_cm(here(x, SUBDIRECTORY),
+      pattern = glue("{LABEL}.*cm.*CHULA.csv"),
+      outname = glue("{LABEL}-chula_avg_cm")
+    )
+  })
+  lapply(DIRS, \(x) {
+    summarize_cm(here(x, SUBDIRECTORY),
+      pattern = glue("{LABEL}.*cm.*GEO.csv"),
+      outname = glue("{LABEL}-geo_avg_cm")
+    )
+  })
+}
