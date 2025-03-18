@@ -16,6 +16,7 @@ dependencies = [
   "polars>=1.22.0",
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
+  "pyod>=2.0.3",
   "pytest>=8.3.4",
   "rpy2>=3.5.17",
   "scanpy>=1.10.4",

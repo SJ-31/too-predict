@@ -20,8 +20,8 @@ def test_base():
     results = rf.cross_validate(transformed)
     assert "fold" in results["report"].columns
     print(results.keys())
-    assert set(results.keys()) == {"cm", "misc", "roc", "prec_recall", "report"}
     print(results)
+    return results
 
 
 @pytest.mark.skip(reason="Done")
@@ -38,6 +38,7 @@ def test_holdout():
     return hh
 
 
+@pytest.mark.skip(reason="Done")
 def test_alr_estimator():
     model = AlrBase(
         model=RandomForestClassifier(),

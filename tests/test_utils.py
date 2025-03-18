@@ -52,6 +52,7 @@ from too_predict.model import (
     PredBase,
     RandomForestPred,
     SimEstimator,
+    XGBEstimator,
 )
 from too_predict.transformer import Transformer
 from too_predict.utils import (
@@ -86,7 +87,7 @@ coad = here(datadir, "tcga_coad-read.rds")
 test_sets = {"LIHC": hcc, "CHOL": chol, "COAD": coad}
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
 adata = training_data_internal_test()
-adata = adata[:, :100]
+# adata = adata[:]
 
 
 labels = adata.obs.index
@@ -119,17 +120,23 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
     return contingency
 
 
-counts = StandardScaler().fit_transform(counts)
-model = LinearSVC()
-model.fit(counts, target)
-pred = model.predict(counts)
-scores = model.decision_function(counts)
-score_df = pd.DataFrame(scores, columns=model.classes_)
+filter = Filter(feature_col="GENEID", features=chosen)
+t = Transformer("clr", impute_fn=Imputer("plus_one"))
+# model = PredBase(model=XGBEstimator())
+X = filter.fit_transform(adata)
+X = t.fit_transform(X)
+# model.fit(X, y="tumor_type")
+# underlying = model.model.model
 
-s = score_df.idxmax(axis=1)
-assert (s == pred).all()
+# imp = underlying.feature_importances_
+# # [2025-03-18 Tue] Can you use this?
+# X.var["importance"] = imp
 
-# TODO: try out a SVM
-# will need to update metrics and the alrbase to use `decision_function` instead
-# of `predict_proba`
-# Explore class_weight parameters,
+import imblearn.over_sampling as ios
+
+smote = ios.SMOTE()
+smote.fit(X.X, y=X.obs["tumor_type"])
+X_res, y_res = smote.fit_resample(X.X, y=X.obs["tumor_type"])
+
+
+# results = model.predict(X)
