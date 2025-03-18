@@ -3,6 +3,7 @@ from typing import Callable
 
 import anndata as ad
 import numpy as np
+import optuna
 import pandas as pd
 import sklearn.metrics as me
 import sklearn.model_selection as ms
@@ -193,6 +194,7 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
         prec_recall_df = None
     return {
         "cm": cm,
+        "pred": pred_vals,
         "acc": acc,
         "kappa": me.cohen_kappa_score(true, pred_vals),
         "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
@@ -223,8 +225,17 @@ def cross_validate(
     group_col="",
     n_splits=5,
     random_state=RANDOM_STATE,
+    trial: optuna.Trial | None = None,
+    get_report_val: Callable = lambda x: x["kappa"],
 ) -> dict:
-    """Evaluate model performance with cross-validation"""
+    """Evaluate model performance with cross-validation
+
+    Parameters
+    ----------
+    trial : optuna trial to report to, for use with objective function
+    get_report_val : function that takes the results dictionary as input and extracts
+        the metric to `report` to the optuna trial. Metric will be used by the pruner
+    """
     N = adata.copy()
     labels = N.obs[label_col]
     if not group_col:
@@ -247,6 +258,7 @@ def cross_validate(
         "fowlkes_mallows": [],
         "mcc": [],
     }
+    misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
         x_train = N[train_i]
         model.fit(x_train, y=label_col)
@@ -254,14 +266,20 @@ def cross_validate(
         x_test = N[test_i]
         y_true = labels.iloc[test_i]  # True values
 
-        if "predict_proba" in dir(model):
+        if model.score_fn == "predict_proba":
             score = model.predict_proba(x_test)
-        elif "decision_function" in dir(model):
+        elif model.score_fn == "decision_function":
             score = model.decision_function(x_test)
         else:
             raise AttributeError("Model has no way of getting scores!")
+
         res: dict = get_all_metrics(y_true, score, model.classes_)
+        misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"])
+        if misses.shape[0] > 0:
+            misses.loc[:, "fold"] = fold
+            misclassified.append(misses)
         others["fold"].append(fold)
+
         for o in others.keys():
             if o != "fold":
                 others[o].append(res[o])
@@ -271,10 +289,31 @@ def cross_validate(
             if df is not None:
                 df["fold"] = fold
                 v.append(df)
+
+        if trial is not None:
+            trial.report(get_report_val(res), fold)
+            if trial.should_prune():
+                raise optuna.TrialPruned()
+
     return {
         "cm": cm,
         "misc": pd.DataFrame(others),
+        "misses": pd.concat(misclassified, ignore_index=True)
+        if misclassified
+        else pd.DataFrame(),
     } | {k: pd.concat(v) for k, v in main_metrics.items() if v}
+
+
+def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.DataFrame:
+    if isinstance(true, pd.Series):
+        true = true.values
+    if isinstance(pred, pd.Series):
+        pred = pred.values
+    if adata.shape[0] != true.shape[0]:
+        raise ValueError("The shapes of the adata object and true values don't match!")
+    copy = adata.obs.copy()
+    copy["prediction"] = pred
+    return copy.loc[true != pred, :]
 
 
 def holdout(
@@ -325,10 +364,12 @@ def holdout(
                 if k == "cm":
                     continue
                 res[k] = v.loc[v["class"].isin(y_uniques), :]
+
+        res["misses"] = get_misses(x_test, y_true, res["pred"])
         res["split_prop"] = split_prop
         return res
 
-    dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": []}
+    dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": [], "misses": []}
     misc_tmp = {
         "test_set": [],
         "acc": [],
@@ -355,3 +396,13 @@ def holdout(
     concat["cm"] = cms
     concat["misc"] = pd.DataFrame(misc_tmp)
     return concat
+
+
+def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
+    """Helper function for saving cross-validation results"""
+    for name, item in cv_results.items():
+        if name != "cm" and isinstance(item, pd.DataFrame):
+            item.to_csv(outdir.joinpath(f"{prefix}{name}.csv"), index=False)
+        elif name == "cm":
+            for lab, cm in item.items():
+                cm.to_csv(outdir.joinpath(f"{prefix}-cm{cm_prefix}{lab}.csv"))
