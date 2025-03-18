@@ -9,8 +9,9 @@ from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
 from scanpy import read_h5ad
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from too_predict.filter import Filter
+from too_predict.imbalance import Balancer
 from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import (
@@ -22,6 +23,7 @@ from too_predict.utils import (
 )
 
 OUTDIR: Path = here("data", "output", "cross_validation")
+DO_CV: bool = True
 K: int = 10
 
 
@@ -32,6 +34,7 @@ def parse_args():
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-c", "--cores", default=8)
     parser.add_argument("-t", "--test", default=False, action="store_true")
+    parser.add_argument("-n", "--no_cv", default=False, action="store_true")
     parser.add_argument("-d", "--dask", default=False, action="store_true")
     parser.add_argument("-a", "--cached", default=False, action="store_true")
     parser.add_argument("-l", "--label_class", default="tumor_type")
@@ -60,8 +63,15 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "r": "variance_feature_list_lowest_20",
     },
-    "clr_xgboost_edger": {
+    "clr_xgboost_edger_smote": {
         "model": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "mutual_info_feature_list_3000",
+        "b": Balancer("SMOTE"),
+    },
+    "clr_xgboost_edger": {
+        "model": tm.PredBase(model=HistGradientBoostingClassifier(), make_dense=True),
         "t": "clr",
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
@@ -79,6 +89,15 @@ MODELS: dict = {
         ),
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
+        "r": "variance_feature_list_lowest_20",
+    },
+    "alr_xgboost_low_variance_1000": {
+        "model": tm.AlrBase(
+            tm.XGBEstimator(),
+            references=REF_LISTS["variance_feature_list_lowest_20"],
+        ),
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
         "r": "variance_feature_list_lowest_20",
     },
     "alr_random_forest_low_variance": {
@@ -157,7 +176,15 @@ ADDITIONAL_SPLITS: dict = {
 
 
 def cross_validate_helper(
-    lc, gc, model, result_dir_str, trans, impute, feature_set, references=None
+    lc,
+    gc,
+    model,
+    result_dir_str,
+    trans,
+    impute,
+    feature_set,
+    references=None,
+    balancer=None,
 ):
     adata = ADATA.copy()
     if gc is not None:
@@ -182,7 +209,7 @@ def cross_validate_helper(
         # Does nothing if trans is None
     else:
         adata = read_h5ad(output)
-    if not here(result_dir, f"{lc}-misc.csv").exists():
+    if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
         results = model.cross_validate(
             adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE, n_splits=K
         )
@@ -190,7 +217,9 @@ def cross_validate_helper(
     result_dir2 = result_dir.joinpath("additional_splits")
     result_dir2.mkdir(exist_ok=True, parents=True)
     if not here(result_dir2, f"{lc}-misc.csv").exists():
-        results2 = model.holdout(adata, ADDITIONAL_SPLITS, label_col=lc)
+        results2 = model.holdout(
+            adata, ADDITIONAL_SPLITS, label_col=lc, balancer=balancer
+        )
         write_results(results2, result_dir2, lc)
 
 
@@ -207,16 +236,17 @@ def write_results(results, result_dir, label_col, cm_prefix: str = ""):
 
 if __name__ == "__main__":
     args = parse_args()
+    label_class = args.label_class
+    DO_CV = not args.no_cv
     if args.test:
         print("Using test subset")
-        ADATA = training_data_internal_test()
+        ADATA = training_data_internal_test(label=label_class)
         OUTDIR = OUTDIR.joinpath("test")
         OUTDIR.mkdir(exist_ok=True, parents=True)
         MODELS = {k: v for k, v in MODELS.items() if k == "clr_random_forest_minfo"}
     else:
-        ADATA = training_data_internal()
+        ADATA = training_data_internal(label=label_class)
         OUTDIR.mkdir(exist_ok=True, parents=True)
-    label_class = args.label_class
     if args.dask:
         cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
         client = Client(cluster)
@@ -226,12 +256,13 @@ if __name__ == "__main__":
 
     with joblib.parallel_backend(backend):
         for name, data in MODELS.items():
-            model, transformation, imputation, features, references = (
+            model, transformation, imputation, features, references, balancer = (
                 data.get("model"),
                 data.get("t"),
                 data.get("i"),
                 data.get("f"),
                 data.get("r"),
+                data.get("b"),
             )
             cross_validate_helper(
                 lc=label_class,
@@ -242,4 +273,5 @@ if __name__ == "__main__":
                 feature_set=features,
                 impute=imputation,
                 references=references,
+                balancer=balancer,
             )
