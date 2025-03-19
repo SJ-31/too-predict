@@ -14,6 +14,8 @@ dependencies = [
   "optuna>=4.2.1",
   "pip>=25.0.1",
   "polars>=1.22.0",
+  "optuna",
+  "numpy",
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
   "pyod>=2.0.3",

@@ -25,9 +25,8 @@ from rpy2.rinterface import SexpVector
 from rpy2.robjects import default_converter, numpy2ri
 from rpy2.robjects.packages import importr
 from scipy import sparse, spatial, stats
-from scripts.cross_validate import FEATURE_LISTS
 from sklearn.cluster import KMeans
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import SGDClassifier
 from sklearn.model_selection import (
     StratifiedKFold,
@@ -63,6 +62,8 @@ from too_predict.utils import (
     dgelist2anndata,
     find_confounded,
     get_data,
+    get_zeros_internal,
+    hugo_ref_internal,
     library,
     np_to_r,
     phi_proportionality,
@@ -72,6 +73,7 @@ from too_predict.utils import (
     source,
     str_mode,
     training_data_internal_test,
+    write_feat_ref_metadata,
 )
 
 # #  --- CODE BLOCK ---
@@ -93,8 +95,9 @@ adata = training_data_internal_test()
 labels = adata.obs.index
 target = adata.obs["tumor_type"]
 # #  --- CODE BLOCK ---
-refs, features = ref_feature_lists_internal()
-chosen = features["mutual_info_feature_list_3000"]
+refs, features = ref_feature_lists_internal(False)
+chosen = features["edgeR_median_lfc_feature_list_3000"]
+
 
 counts = adata.X.toarray()
 
@@ -122,21 +125,14 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
 
 filter = Filter(feature_col="GENEID", features=chosen)
 t = Transformer("clr", impute_fn=Imputer("plus_one"))
-# model = PredBase(model=XGBEstimator())
-X = filter.fit_transform(adata)
-X = t.fit_transform(X)
-# model.fit(X, y="tumor_type")
-# underlying = model.model.model
+# model = PredBase(model=XGBEstimator(importance_type="gain"))
 
-# imp = underlying.feature_importances_
-# # [2025-03-18 Tue] Can you use this?
-# X.var["importance"] = imp
-
-import imblearn.over_sampling as ios
-
-smote = ios.SMOTE()
-smote.fit(X.X, y=X.obs["tumor_type"])
-X_res, y_res = smote.fit_resample(X.X, y=X.obs["tumor_type"])
+nonzeros = "/home/shannc/Bio_SDD/too-predict/data/output/feature_selection/nonzero_features.csv"
+all = "/home/shannc/Bio_SDD/too-predict/data/output/feature_selection/feature_lists/edgeR_median_lfc_feature_list_3000.txt"
 
 
-# results = model.predict(X)
+nz = pd.read_csv(nonzeros)
+
+# write_feat_ref_metadata()
+
+# zeros = get_zeros_internal()
