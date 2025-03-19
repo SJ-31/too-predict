@@ -8,6 +8,7 @@ import pandas as pd
 import sklearn.metrics as me
 import sklearn.model_selection as ms
 
+from too_predict.imbalance import Balancer
 from too_predict.utils import RANDOM_STATE, find_confounded
 
 
@@ -195,6 +196,7 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
     return {
         "cm": cm,
         "pred": pred_vals,
+        "balanced_acc": me.balanced_accuracy_score(true, pred_vals),
         "acc": acc,
         "kappa": me.cohen_kappa_score(true, pred_vals),
         "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
@@ -225,6 +227,7 @@ def cross_validate(
     group_col="",
     n_splits=5,
     random_state=RANDOM_STATE,
+    balancer: Balancer | None = None,
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
 ) -> dict:
@@ -255,12 +258,15 @@ def cross_validate(
         "acc": [],
         "jaccard": [],
         "kappa": [],
+        "balanced_acc": [],
         "fowlkes_mallows": [],
         "mcc": [],
     }
     misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
         x_train = N[train_i]
+        if balancer is not None:  # Avoid data leakage
+            x_train = balancer.fit_transform(x_train)
         model.fit(x_train, y=label_col)
 
         x_test = N[test_i]
@@ -320,6 +326,7 @@ def holdout(
     model,
     adata: ad.AnnData,
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
+    balancer: Balancer | None = None,
     label_col="tumor_type",
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
@@ -354,6 +361,8 @@ def holdout(
             },
             index=[0],
         )
+        if balancer is not None:
+            x_train = balancer.fit_transform(x_train, y=label_col)
         model.fit(x_train, y=label_col)
         proba = model.predict_proba(x_test)
         y_true = x_test.obs[label_col]
@@ -373,6 +382,7 @@ def holdout(
     misc_tmp = {
         "test_set": [],
         "acc": [],
+        "balanced_acc": [],
         "kappa": [],
         "jaccard": [],
         "fowlkes_mallows": [],

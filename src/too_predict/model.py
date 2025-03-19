@@ -15,6 +15,7 @@ from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
 from too_predict.evaluation import cross_validate, get_all_metrics, holdout
+from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
@@ -99,9 +100,16 @@ class PredBase:
         self,
         adata: ad.AnnData,
         split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
+        balancer: Balancer | None = None,
         label_col="tumor_type",
     ) -> dict:
-        return holdout(self, adata, split_fns, label_col)
+        return holdout(
+            model=self,
+            adata=adata,
+            split_fns=split_fns,
+            balancer=balancer,
+            label_col=label_col,
+        )
 
     def cross_validate(
         self,
@@ -452,6 +460,10 @@ class XGBEstimator:
         self.encoder = LabelEncoder()
         recoded = self.encoder.fit_transform(y)
         self.model.fit(X, recoded)
+
+    @property
+    def feature_importances_(self):
+        return self.model.feature_importances_
 
     def predict(self, X) -> np.ndarray:
         vals = self.model.predict(X)

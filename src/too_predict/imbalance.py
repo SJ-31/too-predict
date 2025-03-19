@@ -30,7 +30,7 @@ class Balancer:
                 return ios.KMeansSMOTE(**kwargs)
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
-        self.adata = adata.copy() if not self.inplace else adata
+        self.adata = adata.copy()
         self.label_col = y
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
