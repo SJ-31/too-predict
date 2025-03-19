@@ -103,7 +103,7 @@ empty_tibble <- function(headers, init = "") {
 table2tb <- function(table, row_header) {
   table |>
     as.data.frame() |>
-    rename(!!as.symbol(row_header) := Var1) |>
+    `colnames<-`(c(row_header, "Var2", "Freq")) |>
     pivot_wider(names_from = Var2, values_from = Freq)
 }
 
@@ -192,4 +192,23 @@ rank_by_metrics <- function(group_col, var_col = NULL, tb, metric_defs) {
   score_tracker_table <- table(score_tracker$winner, score_tracker$metric) |>
     table2tb(group_col)
   list(top = rank_scores, table = score_tracker_table)
+}
+
+split_path <- function(x) if (dirname(x) == x) x else c(basename(x), split_path(dirname(x)))
+
+#' Transpose a dataframe or tibble while explicitly specifying column names
+#'
+#' @param colnames either a vector of column names, or the index/name
+#' of the new column names in the df
+transpose <- function(df, colnames = 1) {
+  if (length(colnames) != ncol(df) && is.numeric(colnames)) {
+    tmp <- colnames
+    colnames <- df[, colnames]
+    df <- df[, -tmp]
+  } else if (length(colnames) != ncol(df)) {
+    tmp <- colnames
+    colnames <- df[[colnames]]
+    df[[tmp]] <- NULL
+  }
+  t(df) |> `colnames<-`(colnames)
 }

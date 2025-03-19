@@ -121,7 +121,6 @@ pheatmap_helper <- function(obs = NULL,
       get_color_lists(obs[[x]], default_cmap)
     }
   }, simplify = FALSE)
-
   if (length(sample_annotations) > 0) {
     sample_anno <- obs[, colnames(obs) %in% names(sample_annotations)] |> as.data.frame()
     if (nchar(order_on) > 0) {
