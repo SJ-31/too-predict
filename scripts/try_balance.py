@@ -52,27 +52,27 @@ def objective(
     filter = Filter(
         feature_col="GENEID", features=FEATURES["edgeR_median_lfc_feature_list_1000"]
     )
-    type = trial.suggest_categorical("sampling_type", ["oversample", "undersample"])
+    type = trial.suggest_categorical("sampling_type", ("oversample", "undersample"))
     if type == "oversample":
         method_name = trial.suggest_categorical(
-            "name",
-            [
+            "oversample_name",
+            (
                 "KMeansSMOTE",
                 "SVMSMOTE",
                 "ADASYN",
                 "BorderLineSMOTE",
                 "RandomOverSampler",
-            ],
+            ),
         )
         strategy = trial.suggest_categorical(
-            "sampling_strategy", ["minority", "not majority"]
+            "oversampling_strategy", ("minority", "not majority")
         )
     else:
         method_name = trial.suggest_categorical(
-            "name", ["TomekLinks", "RandomUnderSampler"]
+            "undersample_name", ("TomekLinks", "RandomUnderSampler")
         )
         strategy = trial.suggest_categorical(
-            "sampling_strategy", ["majority", "not minority"]
+            "undersampling_strategy", ("majority", "not minority")
         )
     bkwargs = {"method": method_name, "sampling_strategy": strategy}
     if method_name != "TomekLinks":
@@ -97,6 +97,7 @@ def objective(
     )
     trial.set_user_attr("artifact_id", artifact_id)
     value = results["misc"]["kappa"][0]
+    print(results["misc"])
     print(value)
     return value
 
@@ -121,19 +122,24 @@ if __name__ == "__main__":
         client = Client(cluster)
     backend = "dask" if args.dask else "loky"
     par_args = {"wait_for_workers_timeout": 0} if args.dask else {"n_jobs": args.cores}
-    USE_CACHED = args.cached
 
     with joblib.parallel_backend(backend):
         sampler = TPESampler(seed=RANDOM_STATE, multivariate=True, constant_liar=True)
         obj = partial(objective, test=args.test, label_class=args.label_class)
 
         if not args.use_saved:
-            study = optuna.create_study(
-                storage=JOURNAL,
-                study_name="try_balancing",
-                direction="maximize",
-                sampler=sampler,
-            )
+            try:
+                study = optuna.load_study(
+                    storage=JOURNAL, study_name="try_balancing", sampler=sampler
+                )
+            except (KeyError, FileNotFoundError):
+                study = optuna.create_study(
+                    storage=JOURNAL,
+                    study_name="try_balancing",
+                    direction="maximize",
+                    sampler=sampler,
+                )
+            study.optimize(obj, catch=(RuntimeError,))
             print("Study complete")
             print(f"Best value: {study.best_value}")
             print(f"Best params: {study.best_params}")
