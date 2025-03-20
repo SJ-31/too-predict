@@ -75,14 +75,16 @@ def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
         return ro.r(id)
 
 
-def np_to_r(arr: np.ndarray, r_symbol: str = ""):
+def np_to_r(arr: np.ndarray, r_symbol: str = "") -> None:
     np_cv_rules = ro.default_converter + numpy2ri.converter
     with np_cv_rules.context():
-        converted = ro.conversion.get_conversion().py2rpy(arr)
-        if r_symbol:
-            ro.globalenv[r_symbol] = converted
-        else:
-            return converted
+        ro.globalenv[r_symbol] = arr
+
+
+def np_from_r(robj) -> np.ndarray:
+    np_cv_rules = ro.default_converter + numpy2ri.converter
+    with np_cv_rules.context():
+        return ro.conversion.get_conversion().rpy2py(robj)
 
 
 def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
@@ -576,16 +578,46 @@ def take_from_ad(
     return missing
 
 
+def hugo_ref_internal() -> pd.DataFrame:
+    file = get_data("hgnc_complete_set_2025-3-19.tsv")
+    if file.exists():
+        return pd.read_csv(file, sep="\t")
+    raise ValueError("The data file doesn't exist!")
+
+
+# [2025-03-19 Wed] Determined in `feature_selection.py` with CLR and xgboost
+ZEROS_FILE = "edgeR_median_lfc_feature_list_3000.txt"
+
+
+def get_zeros_internal(name: str = "edgeR_median_lfc_feature_list_3000.txt") -> list:
+    file = get_data(f"output/feature_selection/zeros/{name}")
+    if file.exists():
+        with open(file, "r") as z:
+            zeros = z.read().strip().splitlines()
+        return zeros
+    raise ValueError(f"Zeros file {name} not found!")
+
+
 def ref_feature_lists_internal(add_all: bool = True) -> tuple[dict, dict]:
     features, refs = {}, {}
     fs_dir = here("data", "output", "feature_selection")
-    for fname, add_to in zip(
-        [here(fs_dir, "feature_lists"), here(fs_dir, "reference_lists")],
-        [features, refs],
+    for i, (fname, add_to) in enumerate(
+        zip(
+            [here(fs_dir, "feature_lists"), here(fs_dir, "reference_lists")],
+            [features, refs],
+        )
     ):
         for file in fname.iterdir():
+            if file.suffix != ".txt":
+                continue
             with open(file, "r") as f:
                 items = f.read().strip().splitlines()
+            try:
+                if i == 0 and (zeros := get_zeros_internal()):
+                    # Remove zero-importance features
+                    items = list(set(items) - set(zeros))
+            except ValueError:
+                print("Zeros file not found")
             name = file.stem
             add_to[name] = items
     if add_all:
@@ -625,3 +657,68 @@ def record_in_yaml(file: str | Path, record_key: str = "last_ran") -> None:
         loaded = yaml.safe_load(f) if file.stat().st_size > 0 else {}
         loaded[record_key] = date
         yaml.safe_dump(loaded, f)
+
+
+def write_feat_ref_metadata():
+    refs, features = ref_feature_lists_internal(False)
+    fs_dir = here("data", "output", "feature_selection")
+    hugo = hugo_ref_internal()
+    var_df = pd.read_csv(here("data", "training_data_var.csv"))
+    for dir, group in zip(
+        [here(fs_dir, "feature_lists"), here(fs_dir, "reference_lists")],
+        [features, refs],
+    ):
+        for k, v in group.items():
+            current = var_df.loc[var_df["GENEID"].isin(v), :]
+            with_hugo = current.merge(
+                hugo, how="left", left_on="GENENAME", right_on="symbol"
+            )
+            with_hugo = with_hugo.loc[:, list(hugo.columns) + list(current.columns)]
+            with_hugo.to_csv(here(dir, f"{k}_metadata.csv"), index=False)
+
+
+def get_go_data() -> pd.DataFrame:
+    go_evidence_codes = {
+        "EXP": ("Inferred from Experiment", 1),
+        "IDA": ("Inferred from Direct Assay", 1),
+        "IPI": ("Inferred from Physical Interaction", 1),
+        "IMP": ("Inferred from Mutant Phenotype", 1),
+        "IGI": ("Inferred from Genetic Interaction", 1),
+        "IEP": ("Inferred from Expression Pattern", 1),
+        "HTP": ("Inferred from High Throughput Experiment", 1),
+        "HDA": ("Inferred from High Throughput Direct Assay", 1),
+        "HMP": ("Inferred from High Throughput Mutant Phenotype", 1),
+        "HGI": ("Inferred from High Throughput Genetic Interaction", 1),
+        "HEP": ("Inferred from High Throughput Expression Pattern", 1),
+        "ISS": ("Inferred from Sequence or Structural Similarity", 3),
+        "ISO": ("Inferred from Sequence Orthology", 3),
+        "ISA": ("Inferred from Sequence Alignment", 3),
+        "ISM": ("Inferred from Sequence Model", 3),
+        "IGC": ("Inferred from Genomic Context", 3),
+        "IBA": ("Inferred from Biological aspect of Ancestor", 3),
+        "IBD": ("Inferred from Biological aspect of Descendant", 3),
+        "IKR": ("Inferred from Key Residues", 3),
+        "IRD": ("Inferred from Rapid Divergence", 3),
+        "RCA": ("Inferred from Reviewed Computational Analysis", 2),
+        "TAS": ("Traceable Author Statement", 2),
+        "NAS": ("Non-traceable Author Statement", 3),
+        "IC": ("Inferred by Curator", 2),
+        "ND": ("No biological Data available", 4),
+        "IEA": ("Inferred from Electronic Annotation", 3),
+    }
+    go_evidence_df = pd.DataFrame(
+        {
+            "GO term evidence code": list(go_evidence_codes.keys()),
+            "evidence rating": [i[1] for i in go_evidence_codes.values()],
+        }
+    )
+    go_map = pd.read_csv(get_data("ensembl_go_map_2025-3-20.tsv"), sep="\t")
+    go_map = go_map.loc[~go_map["GO term accession"].isna(), :]
+    go_map = (
+        go_map.merge(go_evidence_df, on="GO term evidence code", how="left")
+        .sort_values("evidence rating")
+        .groupby(["Gene stable ID", "GO term accession"])
+        .first()
+        .reset_index()
+    )
+    return go_map

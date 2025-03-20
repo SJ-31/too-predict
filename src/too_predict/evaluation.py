@@ -266,7 +266,7 @@ def cross_validate(
     for fold, (train_i, test_i) in enumerate(splits):
         x_train = N[train_i]
         if balancer is not None:  # Avoid data leakage
-            x_train = balancer.fit_transform(x_train)
+            x_train = balancer.fit_transform(x_train)  # Creates copy
         model.fit(x_train, y=label_col)
 
         x_test = N[test_i]

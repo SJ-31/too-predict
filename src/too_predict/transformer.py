@@ -10,9 +10,18 @@ from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
-from too_predict.utils import r_cleanup
+from too_predict.utils import np_from_r, np_to_r, r_cleanup
 
-IMPLEMENTED_TRANSFORMATION = {"clr", "tmm", "alr", "tpm", "fpkm", "robust_clr", "none"}
+IMPLEMENTED_TRANSFORMATION = {
+    "clr",
+    "tmm",
+    "alr",
+    "tpm",
+    "fpkm",
+    "robust_clr",
+    "none",
+    "qsmooth",
+}
 IMPLEMENTED_TRANSFORMATION = IMPLEMENTED_TRANSFORMATION | IMPLEMENTED_SIMULATION
 
 """
@@ -167,6 +176,16 @@ class Transformer:
         ro.r("edgeR::normLibSizes(dge)")
         ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
         return np.transpose(np.asarray(ro.r("counts")))
+
+    @r_cleanup
+    def qsmooth(self) -> np.ndarray:
+        # TODO: Very slow, if it works well try own implementation
+        np_to_r(np.transpose(self.counts), "matrix")
+        ro.globalenv["labels"] = ro.FactorVector(self.adata.obs["tumor_type"])
+        ro.r("library(qsmooth)")
+        ro.r("normed <- qsmooth(object = matrix, group_factor = labels)")
+        ro.r("data <- qsmoothData(normed)")
+        return np.transpose(np_from_r(ro.globalenv["data"]))
 
     def tpm(
         self,
@@ -367,6 +386,8 @@ class Transformer:
                     normalized = self.alr(**self.kwargs)
                 case "tpm":
                     normalized = self.tpm(**self.kwargs)
+                case "qsmooth":
+                    normalized = self.qsmooth(**self.kwargs)
                 case "fpkm":
                     normalized = self.fpkm(**self.kwargs)
                 case "log_clr":
