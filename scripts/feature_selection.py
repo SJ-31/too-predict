@@ -8,15 +8,16 @@ import pandas as pd
 import seaborn as sns
 import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
-from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
 from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
+from too_predict.evaluation import cross_validate, write_cross_val
+from too_predict.filter import Filter
 from too_predict.imputer import Imputer
-from too_predict.model import RandomForestPred
+from too_predict.model import PredBase, RandomForestPred, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     read_existing,
+    ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
 )
@@ -110,6 +111,35 @@ def recursive_selection(f, est, prefix: str):
     kept_features = adata.var.loc[rfecv.get_support(), :]
 
 
+# ** Checking feature importances
+# Will do this with Rfs and the xgbestimator
+def tree_importance(adata, classifier: PredBase, outdir):
+    _, feat = ref_feature_lists_internal()
+    first_filter = Filter(
+        feature_col="GENEID",
+        features=feat["edgeR_median_lfc_feature_list_3000"],
+        inplace=False,
+    )
+    transformer = Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False)
+    x: ad.AnnData = first_filter.fit_transform(adata)
+    x = transformer.fit_transform(x)
+    classifier.fit(x, y="tumor_type")
+    x.var["importance"] = classifier.model.feature_importances_
+    cv_results_1 = cross_validate(classifier, x, label_col="tumor_type")
+    write_cross_val(cv_results_1, outdir, "cv_before", "_cv_before")
+
+    nonzero = x.var.loc[x.var["importance"] != 0, :]
+
+    nonzero_features = list(nonzero["GENEID"])
+    nonzero.to_csv(here(outdir, "nonzero_features.csv"))
+
+    sec_filter = Filter(feature_col="GENEID", features=nonzero_features)
+    x2: ad.AnnData = sec_filter.fit_transform(adata)
+    x2 = transformer.fit_transform(x2)
+    cv_results_2 = cross_validate(classifier, x2, label_col="tumor_type")
+    write_cross_val(cv_results_2, outdir, "cv_after", "_cv_after")
+
+
 # * Run
 
 
@@ -120,7 +150,6 @@ def parse_args():
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-c", "--cores", default=8)
-    parser.add_argument("-n", "--no_dask", default=False, action="store_true")
     return parser.parse_args()
 
 
@@ -143,15 +172,16 @@ if __name__ == "__main__":
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex
 
-    cluster = SLURMCluster(cores=int(args.cores), memory=f"{args.memory} GB")
-    client = Client(cluster)
-    backend = "dask" if not args.no_dask else "loky"
-    with joblib.parallel_backend(backend):
-        low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
-        mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
-        prop = read_existing(
-            proportionality_file, get_proportionality, pd.read_csv
-        )  # <2025-02-28 Fri> This fails, too much data?
+    with joblib.parallel_backend("loky", n_jobs=args.cores):
+        # low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
+        # mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
+        # prop = read_existing(
+        #     proportionality_file, get_proportionality, pd.read_csv
+        # )  # <2025-02-28 Fri> This fails, too much data?
+        tree_importance(
+            adata, PredBase(model=XGBEstimator(importance_type="gain")), outdir
+        )
+        # importance score with gain are the average gain across all trees
 
         # TODO: add in recursive selection
         # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
