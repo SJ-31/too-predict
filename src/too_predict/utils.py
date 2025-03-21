@@ -722,3 +722,58 @@ def get_go_data() -> pd.DataFrame:
         .reset_index()
     )
     return go_map
+
+
+def recode_to_go(adata: ad.AnnData, id_col: str = "GENEID", summarize_method="sum"):
+    """Collapse gene expression data into GO
+
+    Parameters
+    ----------
+    param : adata
+    param : summarize_method how to aggregate the gene expression values for a given
+        GO term. Options are mean, sum or median
+
+
+    Returns
+    -------
+    An adata object where variables are
+
+    Notes
+    -----
+
+    """
+    match summarize_method:
+        case "sum":
+            agg_fn = lambda x: x.sum(axis=1)
+        case "median":
+            agg_fn = lambda x: x.median(axis=1)
+        case "mean":
+            agg_fn = lambda x: x.mean(axis=1)
+        case _:
+            raise ValueError(f"Summarize method {summarize_method} not supported!")
+    go_map = get_go_data()
+    with_gos = (
+        adata.var.reset_index(drop=True)
+        .reset_index(names="index")
+        .merge(go_map, left_on=id_col, right_on="Gene stable ID")
+        .sort_values("evidence rating")
+    )
+    group_tmp = with_gos.groupby("GO term accession")
+    with_gos_grouped = group_tmp[
+        ["evidence rating", "GO domain", "GO term name", "GO term evidence code"]
+    ].first()
+    with_gos_grouped["count"] = group_tmp.count().loc[:, "index"]
+    with_gos_grouped["GO accession"] = with_gos_grouped.index
+    was_sparse: bool = sparse.isspmatrix(adata.X)
+    arr: np.ndarray = adata.X.toarray() if was_sparse else adata.X
+    chunks = group_tmp["index"].apply(list)
+
+    go_matrix = np.transpose([agg_fn(arr[:, c]) for c in chunks])
+    go_matrix = sparse.csr_matrix(go_matrix) if was_sparse else go_matrix
+    return ad.AnnData(X=go_matrix, var=with_gos_grouped, obs=adata.obs)
+
+
+def filter_by_go(
+    adata: ad.AnnData, allowed_ontology=None, allowed_gos=None, id_col: str = "GENEID"
+):
+    pass
