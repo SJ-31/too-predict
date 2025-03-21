@@ -1,8 +1,19 @@
 #!/usr/bin/env ipython
 
+from functools import partial
+
 import joblib
 import optuna
-from too_predict.optimization import get_artifact_store, get_options, nested_optuna, run
+from optuna.pruners import HyperbandPruner
+from optuna.samplers import TPESampler
+from too_predict.optimization import (
+    Optimizer,
+    get_artifact_store,
+    get_options,
+    ignore_duplicated,
+    nested_optuna,
+    objective,
+)
 from too_predict.utils import get_data, training_data_internal
 
 #
@@ -15,10 +26,10 @@ def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--n_inner", default=3)
+    parser.add_argument("-i", "--n_inner", default=10)
     parser.add_argument("-r", "--run_name", default="run", help="", action="store")
     parser.add_argument("-l", "--label_col", default="tumor_type")
-    parser.add_argument("-o", "--n_outer", default=10)
+    parser.add_argument("-o", "--n_outer", default=5)
     args = vars(parser.parse_args())
     return args
 
@@ -35,14 +46,34 @@ if __name__ == "__main__":
     artifact_dir = get_data(".optuna_artifactstore").joinpath(args["run_name"])
     artifact_dir.mkdir(exist_ok=True, parents=True)
 
-    nested_optuna(
-        adata,
+    n_inner = args["n_inner"]
+    pruner = HyperbandPruner(min_resource=1, max_resource=n_inner, reduction_factor=4)
+
+    # [2025-03-17 Mon] With this set, maybe you can do more inner cv  loops with aggressive
+    # pruning. Will be 2 brackets with the above args and n_inner = 10
+    #
+    def get_sampler(seed):
+        return TPESampler(
+            multivariate=True, constant_liar=True, consider_endpoints=True, seed=seed
+        )
+
+    # Their default gamma is
+    # def default_gamma(x: int) -> int:
+    # return min(int(np.ceil(0.1 * x)), 25)
+    # Low noise in objective due to CV
+    search = Optimizer(
         score_fn="???",
-        n_outer=args["n_outer"],
-        n_inner=args["n_inner"],
         label_col=lc,
-        save_model=True,
         save_cv=True,
+        save_model=True,
         journal_dir=journal_dir,
         artifact_dir=artifact_dir,
+    )
+
+    results = search.nested(
+        adata,
+        n_outer=args["n_outer"],
+        n_inner=n_inner,
+        pruner=pruner,
+        sampler_fn=get_sampler,
     )
