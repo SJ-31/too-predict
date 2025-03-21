@@ -17,6 +17,7 @@ from too_predict.model import PredBase, RandomForestPred, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     read_existing,
+    recode_to_go,
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
@@ -25,11 +26,9 @@ from too_predict.utils import (
 outdir = here("data", "output", "feature_selection")
 adata: ad.AnnData
 
+RECODE_GO: bool = False
 
 # * Output files
-low_variance_file = here(outdir, "sklearn_low_variance.csv")
-proportionality_file = here(outdir, "proportionality_matrix.csv")
-mutual_info_file = here(outdir, "mutual_info.csv")
 
 # * Identify stable features for ALR
 
@@ -39,12 +38,17 @@ mutual_info_file = here(outdir, "mutual_info.csv")
 def variance_threshold(f):
     vt = fs.VarianceThreshold(threshold=4)
     _ = vt.fit_transform(n_counts)
-    low_variance = adata.var.loc[~vt.get_support(), :]
-    low_variance.loc[:, "variance"] = np.nanvar(n_counts, axis=0)[~vt.get_support()]
-    low_variance = low_variance.sort_values("variance")
-    sns.histplot(low_variance["variance"])
-    plt.savefig(here(outdir, "sklearn_variance.png"))
-    low_variance.to_csv(f, index=False)
+    variance = adata.var.loc[~vt.get_support(), :]
+    variance.loc[:, "variance"] = np.nanvar(n_counts, axis=0)[~vt.get_support()]
+    variance = variance.sort_values("variance")
+    sns.histplot(variance["variance"])
+    if RECODE_GO:
+        name = "sklearn_variance_go.png"
+        variance = variance.reset_index()
+    else:
+        name = "sklearn_variance.png"
+    plt.savefig(here(outdir, name))
+    variance.to_csv(f, index=False)
 
 
 # ** Highest proportionality
@@ -150,6 +154,9 @@ def parse_args():
     parser.add_argument("-m", "--memory", default="30")
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument(
+        "-g", "--recode_go", default=False, help="", action="store_true"
+    )
     return parser.parse_args()
 
 
@@ -163,8 +170,13 @@ if __name__ == "__main__":
     else:
         adata = training_data_internal()
 
-    # <2025-02-21 Fri> when you run the real thing, choose the best normalization method
-    # or do it in a loop and see what happens
+    RECODE_GO = args.recode_go
+    suffix = ""
+    if RECODE_GO:
+        print("Recoding adata to GO...")
+        adata = recode_to_go(adata)
+        suffix = "GO"
+
     normalized = Transformer("clr", Imputer("plus_one"), inplace=False).fit_transform(
         adata
     )
@@ -172,15 +184,20 @@ if __name__ == "__main__":
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex
 
+    variance_file = here(outdir, f"sklearn_variance_{suffix}.csv")
+    print(f"Printing out {variance_file}")
+    proportionality_file = here(outdir, f"proportionality_matrix_{suffix}.csv")
+    mutual_info_file = here(outdir, f"mutual_info_{suffix}.csv")
+
     with joblib.parallel_backend("loky", n_jobs=args.cores):
-        # low_variance = read_existing(low_variance_file, variance_threshold, pd.read_csv)
+        variance = read_existing(variance_file, variance_threshold, pd.read_csv)
         # mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
         # prop = read_existing(
         #     proportionality_file, get_proportionality, pd.read_csv
         # )  # <2025-02-28 Fri> This fails, too much data?
-        tree_importance(
-            adata, PredBase(model=XGBEstimator(importance_type="gain")), outdir
-        )
+        # tree_importance(
+        #     adata, PredBase(model=XGBEstimator(importance_type="gain")), outdir
+        # )
         # importance score with gain are the average gain across all trees
 
         # TODO: add in recursive selection

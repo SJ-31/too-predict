@@ -1,27 +1,31 @@
 suppressMessages({
   library(here)
   library(BiocParallel)
-  library(ALDEx2)
+  library(glue)
   library(tidyverse)
   library(zellkonverter)
   library(scRNAseq)
-  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
-  library(reticulate)
   library(edgeR)
 })
 
-use_python(here(".venv", "bin", "python3"))
-py_config()
 
-
+suffix <- ""
 if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
   parser <- add_option(parser, c("-t", "--test"), type = "logical", default = FALSE, action = "store_true")
   parser <- add_option(parser, c("-c", "--cores"), type = "integer", default = 8)
+  parser <- add_option(parser, c("-g", "--recode_go"), type = "logical", default = FALSE, action = "store_true")
   args <- parse_args(parser)
+  python_path <- here("remote", "envs", "too-predict", "bin", "python")
+  if (args$recode_go) {
+    suffix <- "_GO"
+  }
+} else {
+  python_path <- here(".venv", "bin", "python")
 }
-
+Sys.setenv("RETICULATE_PYTHON" = python_path)
+library(reticulate)
 source(here("src", "R", "utils.R"))
 
 pyutils <- new.env()
@@ -31,14 +35,16 @@ if (args$test) {
   print("Using test subset")
   outdir <- here(outdir, "test")
   dir.create(outdir, recursive = TRUE)
-  data <- AnnData2SCE((pyutils$training_data_internal_test()))
+  adata <- pyutils$training_data_internal_test()
 } else {
-  register(MulticoreParam(workers = args$cores))
-  data <- AnnData2SCE(pyutils$training_data_internal())
+  adata <- pyutils$training_data_internal()
 }
-rm(pyutils)
+if (args$recode_go) {
+  adata <- pyutils$recode_to_go(adata)
+}
 
-date <- "Thursday_Feb-27-2025" # TODO: need to get the date before running
+data <- AnnData2SCE(adata)
+rm(pyutils)
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
 # for their effects
@@ -137,7 +143,7 @@ get_edgeR <- function(f) {
   write_tsv(top, f)
 }
 
-edgeR_top_file <- here(outdir, "edgeR_top_types.tsv")
+edgeR_top_file <- here(outdir, glue("edgeR_top_types{suffix}.tsv"))
 edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
 
 ## * CoDACore
