@@ -17,6 +17,7 @@ from too_predict.transformer import Transformer
 from too_predict.utils import (
     RANDOM_STATE,
     RNG,
+    recode_to_go,
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
@@ -62,6 +63,18 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "r": "variance_feature_list_lowest_20",
+    },
+    "clr_xgboost_edger_GO": {
+        "model": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_go_feature_list_40",
+    },
+    "clr_xgboost_variance_GO": {
+        "model": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "variance_go_feature_list_1500",
     },
     "clr_xgboost_edger_smote": {
         "model": tm.PredBase(model=tm.XGBEstimator()),
@@ -202,11 +215,18 @@ def cross_validate_helper(
     output = here(dir, f"{trans}-{impute}.h5ad")
     transformer = None
     if (not output.exists() or trans is None) or not USE_CACHED:
+        if "GO" in result_dir_str:
+            adata = recode_to_go(adata)
+            print(adata)
         if feat := FEATURE_LISTS[feature_set]:
-            adata = Filter(
-                feat if references is None else feat + REF_LISTS[references],
-                feature_col="GENEID",
-            ).fit_transform(adata)
+            if "GO" not in result_dir_str:
+                F: Filter = Filter(
+                    feat if references is None else feat + REF_LISTS[references],
+                    feature_col="GENEID",
+                )
+            else:
+                F = Filter(feat, feature_col="GO accession")
+            adata = F.fit_transform(adata)
         kwargs = {}
         if trans == "clr" and references is not None:
             kwargs = {"features": REF_LISTS[references], "feature_col": "GENEID"}
