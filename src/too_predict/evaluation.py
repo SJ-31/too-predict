@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython
+from pathlib import Path
 from typing import Callable
 
 import anndata as ad
@@ -9,6 +10,7 @@ import sklearn.metrics as me
 import sklearn.model_selection as ms
 
 from too_predict.imbalance import Balancer
+from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, find_confounded
 
 
@@ -228,16 +230,23 @@ def cross_validate(
     n_splits=5,
     random_state=RANDOM_STATE,
     balancer: Balancer | None = None,
+    transformer: Transformer | None = None,
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
+    record_dir: Path | None = None,
 ) -> dict:
     """Evaluate model performance with cross-validation
 
     Parameters
     ----------
     trial : optuna trial to report to, for use with objective function
+    adata : adata object with filtered and possibly transformed count data
+        Passing transformed data here is fine so long as transformations occur
+        independently for each sample, otherwise pass a transformer object
     get_report_val : function that takes the results dictionary as input and extracts
         the metric to `report` to the optuna trial. Metric will be used by the pruner
+    balancer : Balancer instance that will transform the training data
+    record_dir : directory to record fold metadata
     """
     N = adata.copy()
     labels = N.obs[label_col]
@@ -264,13 +273,23 @@ def cross_validate(
     }
     misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
-        x_train = N[train_i]
+        x_train: ad.AnnData = N[train_i]
         if balancer is not None:  # Avoid data leakage
             x_train = balancer.fit_transform(x_train)  # Creates copy
+        x_test: ad.AnnData = N[test_i]
+
+        if transformer is not None:
+            x_train = transformer.fit_transform(x_train)
+            x_test = transformer.fit_transform(x_test)
+
         model.fit(x_train, y=label_col)
 
-        x_test = N[test_i]
         y_true = labels.iloc[test_i]  # True values
+        if record_dir is not None:
+            x_train.var.to_csv(
+                record_dir.joinpath(f"train_set_{fold}.csv"), index=False
+            )
+            x_test.var.to_csv(record_dir.joinpath(f"test_set_{fold}.csv"), index=False)
 
         if model.score_fn == "predict_proba":
             score = model.predict_proba(x_test)

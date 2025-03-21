@@ -70,6 +70,12 @@ MODELS: dict = {
         "f": "mutual_info_feature_list_3000",
         "b": Balancer("SMOTE"),
     },
+    "qsmooth_xgboost_edger_1000": {
+        "model": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "qsmooth",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
+    },
     "clr_xgboost_edger": {
         "model": tm.PredBase(model=HistGradientBoostingClassifier(), make_dense=True),
         "t": "clr",
@@ -115,7 +121,7 @@ MODELS: dict = {
             references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
         ),
         "i": "plus_one",
-        "f": "edgeR_median_lfc_feature_list_3000",
+        "f": "edgeR_median_lfc_feature_list_1000",
         "r": "edgeR_median_lfc_feature_list_lowest_20",
     },
     "tmm_random_forest_edger": {
@@ -194,6 +200,7 @@ def cross_validate_helper(
     result_dir.mkdir(exist_ok=True, parents=True)
     dir = STORAGE_DIR.joinpath(feature_set)
     output = here(dir, f"{trans}-{impute}.h5ad")
+    transformer = None
     if (not output.exists() or trans is None) or not USE_CACHED:
         if feat := FEATURE_LISTS[feature_set]:
             adata = Filter(
@@ -203,15 +210,23 @@ def cross_validate_helper(
         kwargs = {}
         if trans == "clr" and references is not None:
             kwargs = {"features": REF_LISTS[references], "feature_col": "GENEID"}
-        Transformer(
-            trans, impute_fn=Imputer(impute), inplace=True, **kwargs
-        ).fit_transform(adata)
+        transformer = Transformer(
+            trans, impute_fn=Imputer(impute), inplace=False, **kwargs
+        )
         # Does nothing if trans is None
     else:
         adata = read_h5ad(output)
     if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
+        track_meta = result_dir.joinpath(".metadata")
+        track_meta.mkdir(exist_ok=True)
         results = model.cross_validate(
-            adata, label_col=lc, group_col=gc, random_state=RANDOM_STATE, n_splits=K
+            adata,
+            label_col=lc,
+            group_col=gc,
+            random_state=RANDOM_STATE,
+            n_splits=K,
+            transformer=transformer,
+            record_dir=track_meta,
         )
         write_results(results, result_dir, lc, cm_prefix="fold_")
     result_dir2 = result_dir.joinpath("additional_splits")
