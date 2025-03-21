@@ -118,6 +118,7 @@ class PredBase:
         group_col="",
         n_splits=5,
         random_state=RANDOM_STATE,
+        **kwargs,
     ) -> dict:
         return cross_validate(
             self,
@@ -126,6 +127,7 @@ class PredBase:
             group_col=group_col,
             n_splits=n_splits,
             random_state=random_state,
+            **kwargs,
         )
 
     def rfecv(

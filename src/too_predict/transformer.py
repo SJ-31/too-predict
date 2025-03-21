@@ -9,6 +9,7 @@ import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
+import too_predict.utils as ut
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
 from too_predict.utils import np_from_r, np_to_r, r_cleanup
 

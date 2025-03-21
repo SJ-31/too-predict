@@ -12,16 +12,16 @@ import anndata as ad
 import numpy as np
 import optuna
 import optuna.artifacts as oa
+import optuna.storages.journal as oj
 import sklearn.linear_model as sl
 import sklearn.metrics as sm
+import sklearn.model_selection as ms
 import sklearn.svm as sv
 import yaml
-from optuna.pruners import HyperbandPruner
-from optuna.samplers import TPESampler
-from optuna.storages import JournalStorage
+from optuna.pruners import BasePruner, HyperbandPruner
+from optuna.samplers import BaseSampler, TPESampler
 from optuna.trial import TrialState
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold
 from sklearn.pipeline import Pipeline
 
 from too_predict import transformer
@@ -318,6 +318,7 @@ class Optimizer:
         n_outer: int,
         n_inner: int,
         pruner: BasePruner | None = None,
+        sampler_fn: Callable[[int], BaseSampler] | None = None,
     ):
         outer_results = []
         if not self.group_col:
@@ -339,7 +340,9 @@ class Optimizer:
             # Search hyperparameter space in inner loop
             x_train = adata[train_i]
             x_test, y_test = adata[test_i], adata.obs[self.label_col].iloc[test_i]
-            sampler = TPESampler(seed=fold)
+            sampler: BaseSampler = (
+                TPESampler(seed=fold) if sampler_fn is None else sampler_fn(fold)
+            )  # Sampler function takes seed as param
             study_kwargs = {
                 "study_name": "optimize_predictions",
                 "direction": "maximize",

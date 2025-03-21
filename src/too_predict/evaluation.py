@@ -286,10 +286,10 @@ def cross_validate(
 
         y_true = labels.iloc[test_i]  # True values
         if record_dir is not None:
-            x_train.var.to_csv(
+            x_train.obs.to_csv(
                 record_dir.joinpath(f"train_set_{fold}.csv"), index=False
             )
-            x_test.var.to_csv(record_dir.joinpath(f"test_set_{fold}.csv"), index=False)
+            x_test.obs.to_csv(record_dir.joinpath(f"test_set_{fold}.csv"), index=False)
 
         if model.score_fn == "predict_proba":
             score = model.predict_proba(x_test)
