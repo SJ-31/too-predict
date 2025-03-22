@@ -212,3 +212,17 @@ transpose <- function(df, colnames = 1) {
   }
   t(df) |> `colnames<-`(colnames)
 }
+
+#' Determine a Bonferroni-adjusted cutoff for the proportionality coefficient
+#'
+#' @description
+#' @param N number of samples
+#' @param alpha desired significance level
+#' @param D number of features
+find_prop_cutoff <- function(N, alpha, D, one_tailed = TRUE) {
+  sd <- 1 / sqrt(N - 3)
+  z_alpha <- qnorm(alpha / (D * (D - 1)), lower.tail = !one_tailed) # one-tailed test if you only
+  # consider positive correlations
+  z_cutoff <- sd * z_alpha
+  tanh(z_cutoff)
+}
