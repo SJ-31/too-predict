@@ -153,7 +153,8 @@ def get_in_house_salmon(p):
         pd.DataFrame({"gene_id": counts.index})
         .merge(tx2gene, how="left", left_on="gene_id", right_on="GENEID")
         .rename({"SYMBOL": "gene_name"}, axis="columns")
-    ).drop("GENEID", axis="columns")
+        .drop("GENEID", axis="columns")
+    )
     adata = ad.AnnData(
         X=np.transpose(counts.values), obs=pd.DataFrame(obs_dict), var=var
     )
@@ -639,11 +640,13 @@ def get_combined(f):
     combined.obs_names_make_unique()
     combined.var_names_make_unique()
     add_gene_metadata(combined)
+    combined.var["GENENAME"] = combined.var["GENENAME"].astype(str)
     combined.obs.to_csv(here("all_obs.csv"))
     combined.X[np.isnan(combined.X)] = 0
     combined.X = sparse.csr_matrix(combined.X)
     sc.pp.calculate_qc_metrics(combined, inplace=True)
     combined.write_h5ad(f)
+    return combined
 
 
 combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
