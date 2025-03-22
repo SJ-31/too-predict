@@ -1,4 +1,4 @@
-#!/usr/bin/env ipython
+#!/usr/bin/env python
 
 import importlib.resources as res
 import itertools
@@ -104,8 +104,8 @@ def df_from_r(robj) -> pd.DataFrame:
         ro.r("rm(df_from_r_tmp)")
         converted = ro.conversion.get_conversion().rpy2py(robj)
         # BUG <2025-02-11 Tue>: rpy2 doesn't convert R NAs correctly
-        df = converted.map(lambda x: np.nan if type(x) in NA_TYPES else x)
-        return df
+        # df = converted.map(lambda x: np.nan if type(x) in NA_TYPES else x)
+        return converted
 
 
 def r_cleanup(fn: Callable):
@@ -204,6 +204,33 @@ def library(package: str) -> InstalledSTPackage | InstalledPackage:
         globals()[package] = loaded
         return loaded
     return check
+
+
+@r_cleanup
+def tximport_salmon(
+    files: list[Path], sample_names: list[str] | None = None, column="counts"
+) -> pd.DataFrame:
+    """Wrapper for importing multiple salmon files with tximport"""
+    tx2gene = pd.read_csv(get_data("tx2gene.tsv"), sep="\t")
+    df_to_r(tx2gene.loc[:, ["TXID", "GENEID"]], "tx2gene")
+    ro.globalenv["paths"] = ro.StrVector([str(f) for f in files])
+    # FIXME: would rather have tximport handle the file list automatically, but
+    #   it will raise an error if any of the files don't have the same tx
+    ro.r(f"""
+    library(tidyverse)
+    library(tximport)
+    imp <- lapply(paths, \\(x) tximport(x, "salmon", tx2gene = tx2gene,
+                                                ignoreTxVersion = TRUE))
+    df <- lapply(imp, \\(x) rownames_to_column(as.data.frame(x${column}), "id")) |>
+        reduce(\\(x, y) full_join(x, y, by = join_by(id))) |>
+        column_to_rownames("id")
+    colnames(df) <- paste0("V", seq_len(ncol(df)))
+    """)
+    genes = list(ro.r("rownames(df)"))
+    counts = np_from_r(ro.r("as.matrix(df)"))
+    sample_names = sample_names if sample_names else list(ro.r("colnames(df)"))
+    result = pd.DataFrame(counts, index=genes, columns=sample_names)
+    return result
 
 
 @r_cleanup
