@@ -15,9 +15,11 @@ from scipy.io import mmread
 from too_predict.utils import (
     add_gene_metadata,
     collect_gdc_counts,
+    get_data,
     into_pseudobulks,
     read_existing,
     rename_genes,
+    tximport_salmon,
 )
 
 logger = logging.getLogger(__name__)
@@ -101,7 +103,62 @@ sitemap = {
     "LIHC": "liver and intrahepatic bile ducts",
     "CHOL": "liver and intrahepatic bile ducts",
     "COAD-READ": "colon",
+    "PAAD": "pancreas",
 }
+
+# TODO: [2025-03-21 Fri] need to do this
+in_house_salmon: dict[str, list[Path]] = {
+    "PAAD": [
+        Path("/data/project/stemcell/PDAC/processed/RNAseq"),
+        here("remote", "PDAC"),
+    ]
+}
+
+
+def get_in_house_salmon(p):
+    print("Getting salmon...")
+    all_files = {}
+    obs_dict: dict = {
+        "Case_ID": [],
+        "tumor_type": [],
+        "Sample_Type": "Organoid",
+        "Project_ID": [],
+        "primary_site": [],
+    }
+    tx2gene: pd.DataFrame = (
+        pd.read_csv(get_data("tx2gene.tsv"), sep="\t")
+        .loc[:, ["GENEID", "SYMBOL"]]
+        .drop_duplicates()
+    )
+    for type, directories in in_house_salmon.items():
+        for d in directories:
+            for salmon_dir in d.iterdir():
+                case_name = salmon_dir.stem.replace("_salmon_quant", "")
+                if case_name in all_files:
+                    raise ValueError(f"Case {case_name} is not unique! Exiting...")
+                qf = salmon_dir.joinpath("quant.sf")
+                if not qf.exists():
+                    raise FileNotFoundError(
+                        f"`quant.sf` in {salmon_dir} doesn't exist!"
+                    )
+                all_files[case_name] = qf
+                obs_dict["Case_ID"].append(case_name)
+                obs_dict["tumor_type"].append(type)
+                obs_dict["Project_ID"].append(f"CHULA-{type}")
+                obs_dict["primary_site"].append(sitemap.get(type))
+    counts = tximport_salmon(
+        files=all_files.values(), sample_names=all_files.keys(), column="counts"
+    )
+    var = (
+        pd.DataFrame({"gene_id": counts.index})
+        .merge(tx2gene, how="left", left_on="gene_id", right_on="GENEID")
+        .rename({"SYMBOL": "gene_name"}, axis="columns")
+    ).drop("GENEID", axis="columns")
+    adata = ad.AnnData(
+        X=np.transpose(counts.values), obs=pd.DataFrame(obs_dict), var=var
+    )
+    adata.obs = adata.obs.reset_index(drop=True)
+    adata.write_h5ad(p)
 
 
 def get_in_house(p):
@@ -130,7 +187,9 @@ def get_in_house(p):
 
 
 in_house_file = here(outdir, "in_house_organoids.h5ad")
+in_house_salmon_file = here(outdir, "in_house_organoids_salmon.h5ad")
 read_existing(in_house_file, get_in_house, lambda x: x)
+read_existing(in_house_salmon_file, get_in_house_salmon, lambda x: x)
 
 # * Get all other GEO
 GEO_PATH: Path = here(public_data, "GEO")
@@ -588,4 +647,4 @@ def get_combined(f):
 
 
 combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
-combined = read_existing(combined_file, get_combined, ad.read_h5ad)
+combined = read_existing(combined_file, get_combined, lambda x: x)
