@@ -280,9 +280,24 @@ class AlrEstimator:
             )
 
     def _alr(self, X: pd.DataFrame, by: str, **kwargs) -> np.ndarray:
+        X = self.impute_fn(X)
         result: np.ndarray = Transformer(
-            "alr", impute_fn=self.impute_fn, inplace=False, by=by, **kwargs
+            "alr", inplace=False, by=by, **kwargs
         ).fit_transform(X)
+        total = np.prod(result.shape)
+        is_inf = np.isinf(result)
+        is_nan = np.isnan(result)
+        if is_inf.any():
+            count = is_inf.sum()
+            percent = round(count / total * 100)
+            print(
+                f"Warning: X contains {count} inf values ({percent}%), converting to nan..."
+            )
+            result[is_inf] = np.nan
+        if is_nan.any():
+            count = is_nan.sum()
+            percent = round(count / total * 100)
+            print(f"Warning: X contains {count} nan values ({percent}%)")
         return result
 
     def fit(
@@ -309,23 +324,13 @@ class AlrEstimator:
             self.cur_weights = np.copy(self.all_weights)
         self.models = {r: clone(self.model) for r in self.cur_refs}
 
-        total = np.prod(X.shape)
         for r in self.cur_refs:
-            if r in X.columns:
+            zeros, X, is_here = self._check_ref(X, r)
+            X = X.loc[~X[r].isna(), :]
+            if is_here:
+                if len(zeros) > 0:
+                    print(f"WARNING: {len(zeros)} samples have reference {r} as zero!")
                 transformed = self._alr(X, r, **kwargs)
-                is_inf = np.isinf(transformed)
-                is_nan = np.isnan(transformed)
-                if is_inf.any():
-                    count = is_inf.sum()
-                    percent = round(count / total * 100)
-                    print(
-                        f"Warning: X contains {count} inf values ({percent}%), converting to nan..."
-                    )
-                    transformed[is_inf] = np.nan
-                if is_nan.any():
-                    count = is_nan.sum()
-                    percent = round(count / total * 100)
-                    print(f"Warning: X contains {count} nan values ({percent}%)")
                 self.models[r].fit(transformed, y)
                 self.n_fit += 1
             else:
@@ -337,13 +342,37 @@ class AlrEstimator:
         if self.n_fit == 0:
             raise ValueError("No model could be fitted!")
 
+    def _check_ref(
+        self, X: pd.DataFrame, ref: str
+    ) -> tuple[np.ndarray | None, pd.DataFrame | None, bool]:
+        """Ensure that all samples in X (sample x feature dataframe)
+            have valid values for ALR reference feature `ref`
+
+        Returns
+        -------
+        A tuple of
+            the indices of the rows for which `ref` is zero
+            X where values of `ref` with zero are replaced with nan
+            Whether or not `ref` is in X at all
+
+        Notes
+        -----
+        Imputation for `ref` should be handled before passing X to this model
+        """
+        if ref not in X.columns:
+            return None, None, False
+        bmask = X[ref] == 0
+        X.loc[bmask, ref] = np.nan
+        zeros: np.ndarray = np.where(bmask)[0]
+        return (zeros, X, True)
+
     def predict(self, X) -> np.ndarray:
         score_df = pd.DataFrame(
             self._predict_score(X, self._score_method), columns=self.classes_
         )
         return np.array(score_df.idxmax(1))
 
-    def _predict_score(self, X, score_method: str) -> np.ndarray:
+    def _predict_score(self, X: pd.DataFrame, score_method: str) -> np.ndarray:
         """Get predictions using all trained estimators for each reference
 
         Parameters
@@ -354,14 +383,19 @@ class AlrEstimator:
         self.n_pred = 0
         self.missing_references = []
         for r, m in self.models.items():
-            if r in X.columns:
+            zeros, X, is_here = self._check_ref(X, r)
+            if is_here:
+                if len(zeros) > 0:
+                    print(f"WARNING: {len(zeros)} samples have reference {r} as zero!")
                 transformed = self._alr(X, r)
                 if score_method == "predict_proba":
-                    scores.append(m.predict_proba(transformed))
+                    cur_score = m.predict_proba(transformed)
                 elif score_method == "decision_function":
-                    scores.append(m.decision_function(transformed))
+                    cur_score = m.decision_function(transformed)
                 else:
                     raise ValueError(f"Score method {score_method} not recognized!")
+                cur_score[zeros] = np.nan
+                scores.append(cur_score)
                 self.n_pred += 1
             else:
                 # Don't try to normalize by it if it isn't present
