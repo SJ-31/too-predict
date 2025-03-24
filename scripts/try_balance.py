@@ -6,12 +6,13 @@ import joblib
 import optuna
 import optuna.artifacts as oa
 import optuna.storages.journal as oj
+import pandas as pd
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from imblearn.ensemble import BalancedRandomForestClassifier
 from optuna.samplers import TPESampler
 from pyhere import here
-from too_predict.evaluation import holdout
+from too_predict.evaluation import holdout, summarize_studies
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
@@ -32,9 +33,9 @@ SPLITS = {
     ),
 }
 
-store_dir = here("data", ".optuna_artifactstore", "balancing")
+store_dir = here("remote", "optuna_artifactstore", "balancing")
 store_dir.mkdir(exist_ok=True)
-journal_path = here("data", ".optuna_journals", "balancing_journal.log")
+journal_path = here("remote", "optuna_journals", "balancing_journal.log")
 
 ARTIFACT_STORE: oa.FileSystemArtifactStore = oa.FileSystemArtifactStore(store_dir)
 JOURNAL = oj.JournalStorage(oj.JournalFileBackend(str(journal_path)))
@@ -57,9 +58,8 @@ def objective(
         method_name = trial.suggest_categorical(
             "oversample_name",
             (
-                "KMeansSMOTE",
+                "SMOTE",
                 "SVMSMOTE",
-                "ADASYN",
                 "BorderLineSMOTE",
                 "RandomOverSampler",
             ),
@@ -132,17 +132,23 @@ if __name__ == "__main__":
                 study = optuna.load_study(
                     storage=JOURNAL, study_name="try_balancing", sampler=sampler
                 )
-            except (KeyError, FileNotFoundError):
+                print("Study complete")
+                print(f"Best value: {study.best_value}")
+                print(f"Best params: {study.best_params}")
+            except (KeyError, FileNotFoundError, ValueError):
                 study = optuna.create_study(
                     storage=JOURNAL,
                     study_name="try_balancing",
                     direction="maximize",
                     sampler=sampler,
                 )
-            study.optimize(obj, catch=(RuntimeError,))
-            print("Study complete")
-            print(f"Best value: {study.best_value}")
-            print(f"Best params: {study.best_params}")
-            joblib.dump(study, here(store_dir, "study.pkl"))
+                study.optimize(obj, catch=(RuntimeError,))
+                print("Study complete")
+                print(f"Best value: {study.best_value}")
+                print(f"Best params: {study.best_params}")
+                joblib.dump(study, here(store_dir, "study.pkl"))
         else:
-            study = joblib.load(here(store_dir, "study.pkl"))
+            study = optuna.load_study(
+                storage=JOURNAL, study_name="try_balancing", sampler=sampler
+            )
+            df = summarize_studies(study, "kappa")

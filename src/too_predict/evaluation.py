@@ -6,8 +6,10 @@ import anndata as ad
 import numpy as np
 import optuna
 import pandas as pd
+import shap
 import sklearn.metrics as me
 import sklearn.model_selection as ms
+from scipy import sparse
 
 from too_predict.imbalance import Balancer
 from too_predict.transformer import Transformer
@@ -438,3 +440,86 @@ def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
         elif name == "cm":
             for lab, cm in item.items():
                 cm.to_csv(outdir.joinpath(f"{prefix}-cm{cm_prefix}{lab}.csv"))
+
+
+def get_shapley_adata(
+    adata: ad.AnnData,
+    explainer: shap.Explainer,
+    classifier,
+    label_col: str = "tumor_type",
+    feature_col: str = "GENEID",
+    compare_only: bool = True,
+) -> pd.DataFrame:
+    """Get shapley values for the samples in `adata`
+
+    Parameters
+    ----------
+    classifier : pre-fitted classifier
+    explainer : shap.Explainer pre-fitted on `classifier`
+
+    Returns
+    -------
+    A df of shape (n_samples * 2, n_features + 3)
+        The three added columns are
+           label: the label of this sample (either prediction or true)
+           is_true: boolean for whether or not the sample is actually that label
+           sample_name
+    If `compare_only` == False, then nrows is n_samples * n_classes
+
+    The shapley values in the feature columns represent the contributions of that feature
+        to the classification score (e.g. probability) of the given label for that sample
+    By default (`compare_only` True),
+        only the true and the predicted labels are included for comparison
+
+    """
+    classes = classifier.classes_
+    y_true: np.ndarray = adata.obs[label_col]
+    y_pred: np.ndarray = classifier.predict(adata)
+    class2index = dict(zip(classes, range(len(classes))))
+    features = adata.var[feature_col]
+    sample_names = adata.obs["Project_ID"].combine(
+        adata.obs["Case_ID"], lambda x, y: f"{x}-{y}"
+    )
+    svals = explainer.shap_values(
+        adata.X if not sparse.isspmatrix(adata.X) else adata.X.toarray()
+    )
+    dfs = []
+    for shapley, name, true, pred in zip(svals, sample_names, y_true, y_pred):
+        if compare_only:
+            cur_shapley = np.transpose(
+                shapley[:, (class2index.get(true), class2index.get(pred))]
+            )
+            sdf = pd.DataFrame(cur_shapley, columns=features)
+            sdf.loc[:, "sample_name"] = [name] * 2
+            sdf.loc[:, "is_true"] = [True, False]
+            sdf.loc[:, "label"] = [true, pred]
+        else:
+            cur_shapley = np.transpose(shapley)
+            sdf = pd.DataFrame(cur_shapley, columns=features)
+            sdf.loc[:, "sample_name"] = [name] * len(classes)
+            sdf.loc[:, "is_true"] = true == classes
+            sdf.loc[:, "label"] = classes
+        dfs.append(sdf)
+    all_shapley = pd.concat(dfs)
+    return all_shapley.reset_index(drop=True)
+
+
+def summarize_studies(study: optuna.Study, objective_name: str) -> pd.DataFrame:
+    tmp = {}
+    seen_params = set()
+    for trial in study.trials:
+        pdict = trial.params
+        if set(pdict.keys()) <= seen_params:
+            continue
+        for p in pdict.keys():
+            seen_params |= set(trial.params.keys())
+            tmp[p] = []
+    tmp["n"] = []
+    vkey = f"objective_value-{objective_name}"
+    tmp[vkey] = []
+    for trial in study.trials:
+        for param in seen_params:
+            tmp[param].append(trial.params.get(param))
+        tmp["n"].append(trial.number)
+        tmp[vkey].append(trial.value)
+    return pd.DataFrame(tmp)
