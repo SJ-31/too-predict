@@ -40,6 +40,7 @@ class PredBase:
             None  # Requested features to subset by that weren't found
         )
         self.make_dense = make_dense
+        self.had_inf = False
         self.var = None
         if "predict_proba" in dir(model):
             self.score_fn = "predict_proba"
@@ -47,6 +48,17 @@ class PredBase:
             self.score_fn = "decision_function"
         else:
             self.score_fn = None
+
+    def _check_inf(self, X: np.ndarray) -> np.ndarray | sparse.csr_matrix:
+        was_sparse = sparse.isspmatrix(X)
+        X = X.toarray() if was_sparse else X
+        is_inf = np.isinf(X)
+        count = is_inf.sum()
+        if is_inf.any():
+            print(f"Warning: X contains {count} inf values, converting to nan...")
+            X[is_inf] = np.nan
+        self.had_inf = True
+        return sparse.csr_matrix(X) if was_sparse else X
 
     def fit(
         self,
@@ -64,13 +76,18 @@ class PredBase:
             raise ValueError(f"The column '{y}' is not present in X.obs")
         self.var = X.var
         self._is_fitted = True
-        self.model.fit(self._check_dense(X.X), X.obs[y])
+        self.model.fit(self._validate(X.X), X.obs[y])
 
     def _check_dense(self, X):
         if not self.make_dense or not sparse.isspmatrix(X):
             return X
         elif self.make_dense and sparse.isspmatrix(X):
             return X.toarray()
+
+    def _validate(self, X):
+        X = self._check_dense(X)
+        X = self._check_inf(X)
+        return X
 
     @property
     def feature_importances_(self):
@@ -80,17 +97,17 @@ class PredBase:
         return self._is_fitted
 
     def predict_proba(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.predict_proba(self._check_dense(X.X))
+        return self.model.predict_proba(self._validate(X.X))
 
     def decision_function(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.decision_function(self._check_dense(X.X))
+        return self.model.decision_function(self._validate(X.X))
 
     def load(self, path: str) -> None:
         """Load the fitted estimator from the saved path"""
         self.model = pickle.load(path)
 
     def predict(self, X: ad.AnnData) -> np.ndarray:
-        return self.model.predict(self._check_dense(X.X))
+        return self.model.predict(self._validate(X.X))
 
     @property
     def classes_(self):
@@ -183,10 +200,7 @@ class AlrBase(PredBase):
 
     @override
     def fit(self, X: ad.AnnData, y="tumor_type") -> None:
-        if sparse.isspmatrix(X.X):
-            vals = X.X.toarray()
-        else:
-            vals = X.X
+        vals = self._validate(X.X)
         counts = pd.DataFrame(vals, columns=X.var[self.var_col], index=None)
         self.var = X.var
         self._is_fitted = True
@@ -295,9 +309,23 @@ class AlrEstimator:
             self.cur_weights = np.copy(self.all_weights)
         self.models = {r: clone(self.model) for r in self.cur_refs}
 
+        total = np.prod(X.shape)
         for r in self.cur_refs:
             if r in X.columns:
                 transformed = self._alr(X, r, **kwargs)
+                is_inf = np.isinf(transformed)
+                is_nan = np.isnan(transformed)
+                if is_inf.any():
+                    count = is_inf.sum()
+                    percent = round(count / total * 100)
+                    print(
+                        f"Warning: X contains {count} inf values ({percent}%), converting to nan..."
+                    )
+                    transformed[is_inf] = np.nan
+                if is_nan.any():
+                    count = is_nan.sum()
+                    percent = round(count / total * 100)
+                    print(f"Warning: X contains {count} nan values ({percent}%)")
                 self.models[r].fit(transformed, y)
                 self.n_fit += 1
             else:

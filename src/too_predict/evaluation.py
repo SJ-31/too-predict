@@ -298,6 +298,9 @@ def cross_validate(
         else:
             raise AttributeError("Model has no way of getting scores!")
 
+        if model.had_inf:
+            record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
+
         res: dict = get_all_metrics(y_true, score, model.classes_)
         misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"])
         if misses.shape[0] > 0:
