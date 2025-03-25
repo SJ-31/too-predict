@@ -11,6 +11,7 @@ import h5py
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import polars as pl
 import rpy2.robjects as ro
 import scanpy as sc
 import seaborn as sns
@@ -19,6 +20,7 @@ import sklearn.metrics as sm
 import sklearn.neighbors as sn
 import too_predict
 import too_predict._rust_helpers as rh
+import too_predict.utils as ut
 from imblearn.under_sampling import TomekLinks
 from pyhere import here
 from rpy2.rinterface import SexpVector
@@ -55,6 +57,7 @@ from too_predict.model import (
 )
 from too_predict.transformer import Transformer
 from too_predict.utils import (
+    RNG,
     adata_x_to_r,
     add_gene_metadata,
     df_from_r,
@@ -62,9 +65,11 @@ from too_predict.utils import (
     dgelist2anndata,
     find_confounded,
     get_data,
+    get_go_data,
     get_zeros_internal,
     hugo_ref_internal,
     library,
+    np_from_r,
     np_to_r,
     phi_proportionality,
     r_cleanup,
@@ -98,6 +103,7 @@ target = adata.obs["tumor_type"]
 refs, features = ref_feature_lists_internal(False)
 chosen = features["edgeR_median_lfc_feature_list_3000"]
 
+adata = adata[:, :500]
 
 counts = adata.X.toarray()
 
@@ -124,15 +130,20 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
 
 
 filter = Filter(feature_col="GENEID", features=chosen)
-t = Transformer("clr", impute_fn=Imputer("plus_one"))
-# model = PredBase(model=XGBEstimator(importance_type="gain"))
+t = Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False)
+result = t.fit_transform(adata)
 
-nonzeros = "/home/shannc/Bio_SDD/too-predict/data/output/feature_selection/nonzero_features.csv"
-all = "/home/shannc/Bio_SDD/too-predict/data/output/feature_selection/feature_lists/edgeR_median_lfc_feature_list_3000.txt"
+model = PredBase(model=XGBEstimator(importance_type="gain"))
 
 
-nz = pd.read_csv(nonzeros)
-
-# write_feat_ref_metadata()
-
-# zeros = get_zeros_internal()
+train, test = ut.split_and_sample(
+    adata,
+    lambda x: (
+        x[~x.obs["Project_ID"].str.contains("CHULA"), :],
+        x[x.obs["Project_ID"].str.contains("CHULA"), :],
+    ),
+    {
+        # "tumor_type": [("UCEC", 8), ("LUAD", 4), ("LUSC", 3)],
+        "Project_ID": [("TARGET-AML", 8), ("TCGA-COAD", 5)],
+    },
+)

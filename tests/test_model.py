@@ -38,8 +38,8 @@ def test_holdout():
     return hh
 
 
-@pytest.mark.skip(reason="Done")
 def test_alr_estimator():
+
     model = AlrBase(
         model=RandomForestClassifier(),
         references=refs["variance_feature_list_lowest_20"],
