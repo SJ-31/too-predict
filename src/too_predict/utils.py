@@ -804,3 +804,57 @@ def filter_by_go(
     adata: ad.AnnData, allowed_ontology=None, allowed_gos=None, id_col: str = "GENEID"
 ):
     pass
+
+
+def adata_sample_by(
+    adata,
+    label_spec: dict[str, list[tuple[str, int]]],
+    rng: np.random.Generator = RNG,
+    replace: bool = False,
+) -> np.ndarray:
+    """Split adata into train and test sets, then randomly draw training
+    examples from train and add to test
+
+    Parameters
+    ----------
+    label_spec : dictionary of
+        column in adata.obs -> [(name of label class to draw, n_instances), ...]
+        e.g. {"tumor_type" : [("CHOL", 5), ("LIHC", 8)],
+              "Project_ID" : [("TARGET", 2)]}
+
+    Returns
+    -------
+    ndarray of indices with the random selection
+    """
+    indices = []
+    for label, targets in label_spec.items():
+        candidates = adata.obs[label]
+        for name, n in targets:
+            choices = np.where(candidates == name)[0]
+            if not replace and n >= len(choices):
+                print(
+                    f"WARNING: n for target {name} >= the n of target in training data. Taking all samples from trainin..."
+                )
+                n = len(choices)
+            chosen = rng.choice(choices, size=n, replace=replace)
+            indices.extend(chosen)
+    return np.array(indices)
+
+
+def split_and_sample(
+    adata,
+    split_fn,
+    label_spec: dict[str, list[tuple[str, int]]],
+    rng: np.random.Generator = RNG,
+    replace: bool = False,
+) -> tuple[ad.AnnData, ad.AnnData]:
+    """Split adata into train and test sets, then randomly draw training
+    examples from train and add to test
+    """
+    train, test = split_fn(adata)
+    train_index = pd.Series(range(len(train)))
+    indices = adata_sample_by(train, label_spec, rng, replace)
+    from_train = train[indices, :]
+    train = train[~train_index.isin(indices)]
+    test = ad.concat([test, from_train], axis="obs", merge="same")
+    return train, test
