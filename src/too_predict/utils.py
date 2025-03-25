@@ -43,7 +43,7 @@ NA_TYPES: set = {
 RANDOM_STATE: int = 9874  # Last modified <2025-03-05 Wed>
 # Use for CV splitters
 
-RNG = np.random.RandomState(297)  # Last modified <2025-03-05 Wed>
+RNG = np.random.default_rng(297)  # Last modified [2025-03-25 Tue]
 # Use for any relevant estimators
 
 
