@@ -3,6 +3,7 @@
 from functools import partial
 
 import joblib
+import numpy as np
 import optuna
 import optuna.artifacts as oa
 import optuna.storages.journal as oj
@@ -12,11 +13,13 @@ from dask_jobqueue import SLURMCluster
 from imblearn.ensemble import BalancedRandomForestClassifier
 from optuna.samplers import TPESampler
 from pyhere import here
+from sklearn.ensemble import RandomForestClassifier
 from too_predict.evaluation import holdout, summarize_studies
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, XGBEstimator
+from too_predict.optimization import ignore_duplicated
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     RANDOM_STATE,
@@ -42,41 +45,58 @@ JOURNAL = oj.JournalStorage(oj.JournalFileBackend(str(journal_path)))
 
 REFS, FEATURES = ref_feature_lists_internal()
 
+UNDERSAMPLING = (
+    "RandomUnderSampler",
+    "EditedNearestNeighbours",
+    "InstanceHardnessThreshold",
+)
+OVERSAMPLING = ("SMOTEENN", "SMOTETomek")
+
+# OVERSAMPLING = ("SMOTE", "SVMSMOTE", "BorderLineSMOTE", "RandomOverSampler")
+# Finished above on 2025-3-24
+
 
 def objective(
     trial: optuna.Trial, label_class: str = "tumor_type", test: bool = False
-) -> float:
+) -> float | None:
     if test:
         adata = training_data_internal_test(label=label_class)
     else:
         adata = training_data_internal(label=label_class)
+    is_duplicated, val = ignore_duplicated(trial)
+    if is_duplicated:
+        return val
     filter = Filter(
         feature_col="GENEID", features=FEATURES["edgeR_median_lfc_feature_list_1000"]
     )
     type = trial.suggest_categorical("sampling_type", ("oversample", "undersample"))
     if type == "oversample":
-        method_name = trial.suggest_categorical(
-            "oversample_name",
-            (
-                "SMOTE",
-                "SVMSMOTE",
-                "BorderLineSMOTE",
-                "RandomOverSampler",
-            ),
-        )
+        method_name = trial.suggest_categorical("oversample_name", OVERSAMPLING)
         strategy = trial.suggest_categorical(
-            "oversampling_strategy", ("minority", "not majority")
+            "oversampling_strategy", ("minority", "not majority", "targeted")
         )
     else:
-        method_name = trial.suggest_categorical(
-            "undersample_name", ("TomekLinks", "RandomUnderSampler")
-        )
+        method_name = trial.suggest_categorical("undersample_name", UNDERSAMPLING)
         strategy = trial.suggest_categorical(
-            "undersampling_strategy", ("majority", "not minority")
+            "undersampling_strategy", ("not minority", "targeted")
         )
+    if strategy == "targeted" and type == "oversample":
+        strategy = [
+            "PAAD",
+            "LIHC",
+            "CHOL",
+        ]  # Oversample routinely misclassified classes
+    elif strategy == "targeted":
+        strategy = ["COAD-READ"]  # Undersample the classes that are commonly mistaken
+
     bkwargs = {"method": method_name, "sampling_strategy": strategy}
-    if method_name != "TomekLinks":
+
+    if method_name not in {"TomekLinks", "EditedNearestNeighbors"}:
         bkwargs["random_state"] = RANDOM_STATE
+    if method_name == "EditedNearestNeighbors":
+        bkwargs["kind_sel"] = "mode"
+    if method_name == "InstanceHardnessThreshold":
+        bkwargs["estimator"] = RandomForestClassifier()  # Would use XGB, but want speed
 
     balancer = Balancer(**bkwargs)
 
@@ -91,14 +111,14 @@ def objective(
         model = PredBase(model=BalancedRandomForestClassifier())
 
     results = holdout(model, adata, SPLITS, label_col=label_class, balancer=balancer)
-    write_pickle(balancer, "balancer.pkl")
-    artifact_id = oa.upload_artifact(
-        artifact_store=ARTIFACT_STORE, file_path="balancer.pkl", study_or_trial=trial
-    )
-    trial.set_user_attr("artifact_id", artifact_id)
-    value = results["misc"]["kappa"][0]
-    print(results["misc"])
-    print(value)
+    # write_pickle(balancer, "balancer.pkl")
+    # artifact_id = oa.upload_artifact(
+    #     artifact_store=ARTIFACT_STORE, file_path="balancer.pkl", study_or_trial=trial
+    # )
+    # trial.set_user_attr("artifact_id", artifact_id)
+    miss_counts = results["misses"].loc[:, label_class].value_counts().to_dict()
+    trial.set_user_attr("misses", miss_counts)
+    value = results["misc"]["balanced_acc"][0]  # [2025-03-26 Wed] Changed to b acc
     return value
 
 
@@ -152,3 +172,4 @@ if __name__ == "__main__":
                 storage=JOURNAL, study_name="try_balancing", sampler=sampler
             )
             df = summarize_studies(study, "kappa")
+            df.to_csv(here("data", "output", "balancing_results.csv"), index=False)
