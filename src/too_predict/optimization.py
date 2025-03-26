@@ -82,6 +82,7 @@ class Constructor:
                 "l2_regularization", 0, 5, step=1
             )  # lambda
             max_depth = self.trial.suggest_int("max_depth", 3, 15, step=5)
+            max_bin = self.trial.suggest_int("max_bin", 150, 350, step=50)
             if name == "XGBEstimator":
                 l1_reg = self.trial.suggest_float(
                     "l1_regularization", 0, 5, step=1

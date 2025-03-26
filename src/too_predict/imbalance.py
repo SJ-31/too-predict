@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 import anndata as ad
+import imblearn.combine as icc
 import imblearn.over_sampling as ios
 import imblearn.under_sampling as ius
 import pandas as pd
@@ -14,9 +15,13 @@ IMBLEARN_METHODS: set = {
     "ADASYN",
     "SVMSMOTE",
     "BorderLineSMOTE",
+    "InstanceHardnessThreshold",
     "RandomOverSampler",
     "RandomUnderSampler",
     "TomekLinks",
+    "SMOTEENN",
+    "SMOTETomek",
+    "EditedNearestNeighbours",
 }
 IMPLEMENTED_BALANCE: set = IMBLEARN_METHODS | OTHERS
 
@@ -46,10 +51,18 @@ class Balancer:
                 return ios.ADASYN(**kwargs)
             case "RandomOverSampler":
                 return ios.RandomOverSampler(**kwargs)
+            case "SMOTEENN":
+                return icc.SMOTEENN(**kwargs)
+            case "SMOTETomek":
+                return icc.SMOTETomek(**kwargs)
+            case "EditedNearestNeighbours":
+                return ius.EditedNearestNeighbours(**kwargs)
             case "TomekLinks":
                 return ius.TomekLinks(**kwargs)
             case "BorderLineSMOTE":
                 return ios.BorderlineSMOTE(**kwargs)
+            case "InstanceHardnessThreshold":
+                return ius.InstanceHardnessThreshold(**kwargs)
             case "RandomUnderSampler":
                 return ius.RandomUnderSampler(**kwargs)
 

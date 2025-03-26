@@ -14,15 +14,11 @@ from sklearn.feature_selection import RFECV
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
-from too_predict.evaluation import cross_validate, get_all_metrics, holdout
+from too_predict.evaluation import cross_validate, holdout
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
-
-# def train_test_split_adata():
-# <2025-02-13 Thu> TODO: make a batch-aware and stratified test_train_split fn
-# for adata objects
 
 
 class PredBase:
@@ -48,6 +44,13 @@ class PredBase:
             self.score_fn = "decision_function"
         else:
             self.score_fn = None
+
+    def get_model(self):
+        if isinstance(self.model, XGBEstimator):
+            return self.model.model
+        elif isinstance(self.model, AlrEstimator):
+            return self.models
+        return self.model
 
     def _check_inf(self, X: np.ndarray) -> np.ndarray | sparse.csr_matrix:
         was_sparse = sparse.isspmatrix(X)
@@ -76,7 +79,7 @@ class PredBase:
             raise ValueError(f"The column '{y}' is not present in X.obs")
         self.var = X.var
         self._is_fitted = True
-        self.model.fit(self._validate(X.X), X.obs[y])
+        self.model.fit(self._validate(X.X), X.obs[y].astype(str))
 
     def _check_dense(self, X):
         if not self.make_dense or not sparse.isspmatrix(X):
@@ -166,7 +169,7 @@ class PredBase:
         """
         params = rfecv_params if rfecv_params else {}
         rfecv = RFECV(self.model, **params)
-        rfecv.fit(X.X, X.obs[label_col])
+        rfecv.fit(X.X, X.obs[label_col].astype(str))
         return rfecv
 
 
