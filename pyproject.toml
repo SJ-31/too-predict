@@ -15,6 +15,7 @@ dependencies = [
   "pip>=25.0.1",
   "polars>=1.22.0",
   "optuna",
+  "obonet",
   "numpy",
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
@@ -25,6 +26,8 @@ dependencies = [
   "scikit-bio>=0.6.3",
   "scikit-learn>=1.6.1",
   "xgboost>=2.1.4",
+  "shap>=0.47.1",
+  "interpret>=0.6.9",
 ]
 
 [build-system]

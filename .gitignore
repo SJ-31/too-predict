@@ -19,3 +19,5 @@ data
 /.python-version
 /uv.lock
 /.stfolder.removed-20250227-160118/
+/all_obs.csv
+/scripts/balancer.pkl
