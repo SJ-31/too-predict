@@ -16,7 +16,7 @@ from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
 from too_predict.evaluation import holdout, summarize_studies
 from too_predict.filter import Filter
-from too_predict.imbalance import Balancer
+from too_predict.imbalance import Balancer, spaced_resample
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, XGBEstimator
 from too_predict.optimization import ignore_duplicated
@@ -36,21 +36,19 @@ SPLITS = {
     ),
 }
 
-store_dir = here("remote", "optuna_artifactstore", "balancing")
+store_dir = here("remote", "repos", "too-predict", "optuna_artifactstore", "balancing")
 store_dir.mkdir(exist_ok=True)
-journal_path = here("remote", "optuna_journals", "balancing_journal.log")
+journal_path = here(
+    "remote", "repos", "too-predict", "optuna_journals", "balancing_journal.log"
+)
 
 ARTIFACT_STORE: oa.FileSystemArtifactStore = oa.FileSystemArtifactStore(store_dir)
 JOURNAL = oj.JournalStorage(oj.JournalFileBackend(str(journal_path)))
 
 REFS, FEATURES = ref_feature_lists_internal()
 
-UNDERSAMPLING = (
-    "RandomUnderSampler",
-    "EditedNearestNeighbours",
-    "InstanceHardnessThreshold",
-)
-OVERSAMPLING = ("SMOTEENN", "SMOTETomek")
+UNDERSAMPLING = ("RandomUnderSampler", "EditedNearestNeighbours", "NearMiss")
+OVERSAMPLING = ("SMOTEENN", "SMOTETomek", "SMOTE")
 
 # OVERSAMPLING = ("SMOTE", "SVMSMOTE", "BorderLineSMOTE", "RandomOverSampler")
 # Finished above on 2025-3-24
@@ -80,22 +78,31 @@ def objective(
         strategy = trial.suggest_categorical(
             "undersampling_strategy", ("not minority", "targeted")
         )
+    hist_spec = None
     if strategy == "targeted" and type == "oversample":
-        strategy = [
-            "PAAD",
-            "LIHC",
-            "CHOL",
-        ]  # Oversample routinely misclassified classes
+        hist_spec = {
+            "PAAD": 3,
+            "LIHC": 3,
+            "CHOL": 2.1,  # Aggressive because so few
+        }  # Oversample routinely misclassified classes
+    elif strategy == "targeted" and method_name in {"EditedNearestNeighbors"}:
+        hist_spec = {
+            "COAD-READ": 1
+        }  # Undersample the classes that are commonly mistaken
     elif strategy == "targeted":
-        strategy = ["COAD-READ"]  # Undersample the classes that are commonly mistaken
+        strategy = lambda y: spaced_resample(
+            y, targets=hist_spec, undersample=type == "undersample", n_bins=40
+        )
 
     bkwargs = {"method": method_name, "sampling_strategy": strategy}
 
-    if method_name not in {"TomekLinks", "EditedNearestNeighbors"}:
+    if method_name not in {"TomekLinks", "EditedNearestNeighbors", "NearMiss"}:
         bkwargs["random_state"] = RANDOM_STATE
-    if method_name == "EditedNearestNeighbors":
+    elif method_name == "EditedNearestNeighbors":
         bkwargs["kind_sel"] = "mode"
-    if method_name == "InstanceHardnessThreshold":
+    elif method_name == "NearMiss":
+        bkwargs["version"] = 3
+    elif method_name == "InstanceHardnessThreshold":
         bkwargs["estimator"] = RandomForestClassifier()  # Would use XGB, but want speed
 
     balancer = Balancer(**bkwargs)
@@ -152,9 +159,6 @@ if __name__ == "__main__":
                 study = optuna.load_study(
                     storage=JOURNAL, study_name="try_balancing", sampler=sampler
                 )
-                print("Study complete")
-                print(f"Best value: {study.best_value}")
-                print(f"Best params: {study.best_params}")
             except (KeyError, FileNotFoundError, ValueError):
                 study = optuna.create_study(
                     storage=JOURNAL,
@@ -171,5 +175,7 @@ if __name__ == "__main__":
             study = optuna.load_study(
                 storage=JOURNAL, study_name="try_balancing", sampler=sampler
             )
+            print(f"Best value: {study.best_value}")
+            print(f"Best params: {study.best_params}")
             df = summarize_studies(study, "kappa")
             df.to_csv(here("data", "output", "balancing_results.csv"), index=False)

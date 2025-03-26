@@ -19,6 +19,7 @@ IMBLEARN_METHODS: set = {
     "InstanceHardnessThreshold",
     "RandomOverSampler",
     "RandomUnderSampler",
+    "NearMiss",
     "TomekLinks",
     "SMOTEENN",
     "SMOTETomek",
@@ -46,6 +47,8 @@ class Balancer:
                 return ios.SMOTE(**kwargs)
             case "KMeansSMOTE":
                 return ios.KMeansSMOTE(**kwargs)
+            case "NearMiss":
+                return ius.NearMiss(**kwargs)
             case "SVMSMOTE":
                 return ios.SVMSMOTE(**kwargs)
             case "ADASYN":
