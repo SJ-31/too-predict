@@ -11,7 +11,7 @@ from scipy import sparse
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from xgboost import XGBClassifier
 
 from too_predict.evaluation import cross_validate, holdout
@@ -50,6 +50,8 @@ class PredBase:
             return self.model.model
         elif isinstance(self.model, AlrEstimator):
             return self.models
+        elif isinstance(self, BatchBase):
+            return self.i_model
         return self.model
 
     def _check_inf(self, X: np.ndarray) -> np.ndarray | sparse.csr_matrix:
@@ -178,6 +180,17 @@ class RandomForestPred(PredBase):
         super().__init__(model=RandomForestClassifier(random_state=RNG, **kwargs))
 
 
+# class BatchBase(PredBase):
+#     def __init__(self, model, outer=None) -> None:
+#         super().__init__(model=BatchEstimator(model, outer), make_dense=True)
+
+#     @override
+#     def fit(self, X: ad.AnnData, y=["Sample_Type", "tumor_type"]) -> None:
+#         vals = pd.DataFrame(self._validate(X.X))
+#         y_vals = X.obs.loc[:, y].values
+#         self.model.fit(vals, y_vals)
+
+
 class AlrBase(PredBase):
     def __init__(
         self,
@@ -230,6 +243,99 @@ class SimPred(PredBase):
         if not kwargs:
             kwargs = {"n_instances": 15}
         super().__init__(model=SimEstimator(method, model=model, **kwargs))
+
+
+class BatchBase(PredBase):
+    """Ensemble estimator that uses an `outer` classifier to
+    predict unknown categorical features of X. The `outer` predictions are added into
+    X's features before being classified with the final `inner` estimator for the class
+    labels
+
+    WARNING: the inner model must have support for categorical features
+    """
+
+    def __init__(
+        self,
+        inner,
+        outer_y: str,
+        outer=None | PredBase,
+        categorical_support: bool = False,
+        make_dense: bool = False,
+        balancer: Balancer = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            model=inner,
+            make_dense=make_dense | categorical_support,
+            balancer=balancer,
+            **kwargs,
+        )
+        self.outer_y = outer_y
+        self.o_model: PredBase = outer if outer is not None else PredBase(inner)
+        self.encoder: OneHotEncoder | None = (
+            OneHotEncoder(sparse_output=False) if not categorical_support else None
+        )
+        # When no native categorical support is available
+
+    def _add_pred(self, X: ad.AnnData, fit: bool = True) -> np.ndarray | pd.DataFrame:
+        if fit:
+            self.o_model.fit(X, self.outer_y)
+        predictions = self.o_model.predict(X)
+        reshaped = pd.DataFrame(np.reshape(predictions, (-1, 1)))
+        # Get outer model predictions
+
+        counts = self._validate(X.X)
+        if self.encoder is None:
+            if isinstance(counts, np.ndarray):
+                counts = pd.DataFrame(counts)
+            combined = pd.concat([counts, reshaped], axis=1)
+            final = list(combined.columns)[-1]
+            combined = combined.astype({final: "category"})
+        if fit:
+            self.encoder.fit(reshaped)
+        print(reshaped)
+        encoded = self.encoder.transform(reshaped)
+        combined = np.concatenate([counts, encoded], axis=1)
+        return combined
+
+    def cross_validate_outer(
+        self,
+        adata,
+        label_col,
+        group_col="",
+        n_splits=5,
+        random_state=RANDOM_STATE,
+        **kwargs,
+    ):
+        return cross_validate(
+            self.o_model,
+            adata,
+            label_col=label_col,
+            group_col=group_col,
+            n_splits=n_splits,
+            random_state=random_state,
+            **kwargs,
+        )
+
+    @override
+    def fit(self, X: ad.AnnData, y: str = "tumor_type") -> None:
+        counts = self._add_pred(X, fit=True)
+        self.model.fit(counts, X.obs[y].astype(str))
+        self._is_fitted = True
+
+    @property
+    def classes_(self):
+        return self.i_model.classes_
+
+    @override
+    def predict(self, X: ad.AnnData, _=None) -> np.ndarray:
+        counts = self._add_pred(X, fit=False)
+        return self.model.predict(counts)
+
+    @override
+    def predict_proba(self, X, _=None) -> np.ndarray:
+        counts = self._add_pred(X, fit=False)
+        return self.i_model.predict_proba(counts)
 
 
 # * Estimators
@@ -554,12 +660,3 @@ class XGBEstimator:
     @property
     def classes_(self):
         return self.encoder.inverse_transform(self.model.classes_)
-
-
-class SVMEstimator:
-    """Wrapper class for Sklearn estimators
-    Only need this so as to optinally do scaling as part of the model
-    """
-
-    def __init__(self) -> None:
-        pass
