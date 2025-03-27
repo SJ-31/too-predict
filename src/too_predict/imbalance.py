@@ -38,6 +38,7 @@ class Balancer:
         self.is_imblearn: bool = False
         if self.method in IMBLEARN_METHODS:
             self.is_imblearn = True
+            print(f"From balancer kwargs {kwargs}")
             self.model = self._imblearn_model(method, **kwargs)
         self.kwargs = kwargs
 

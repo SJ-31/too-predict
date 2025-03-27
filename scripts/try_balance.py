@@ -3,11 +3,9 @@
 from functools import partial
 
 import joblib
-import numpy as np
 import optuna
 import optuna.artifacts as oa
 import optuna.storages.journal as oj
-import pandas as pd
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from imblearn.ensemble import BalancedRandomForestClassifier
@@ -26,7 +24,6 @@ from too_predict.utils import (
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
-    write_pickle,
 )
 
 SPLITS = {
@@ -95,9 +92,9 @@ def objective(
         )
 
     bkwargs = {"method": method_name, "sampling_strategy": strategy}
-    print(bkwargs)
 
     if method_name not in {"TomekLinks", "EditedNearestNeighbours", "NearMiss"}:
+        print("Adding random state")
         bkwargs["random_state"] = RANDOM_STATE
     if method_name == "EditedNearestNeighbours":
         bkwargs["kind_sel"] = "mode"
@@ -167,11 +164,11 @@ if __name__ == "__main__":
                     direction="maximize",
                     sampler=sampler,
                 )
-                study.optimize(obj, catch=(RuntimeError,))
-                print("Study complete")
-                print(f"Best value: {study.best_value}")
-                print(f"Best params: {study.best_params}")
-                joblib.dump(study, here(store_dir, "study.pkl"))
+            study.optimize(obj, catch=(RuntimeError,))
+            print("Study complete")
+            print(f"Best value: {study.best_value}")
+            print(f"Best params: {study.best_params}")
+            joblib.dump(study, here(store_dir, "study.pkl"))
         else:
             study = optuna.load_study(
                 storage=JOURNAL, study_name="try_balancing", sampler=sampler

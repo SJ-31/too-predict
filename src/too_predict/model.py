@@ -299,7 +299,6 @@ class BatchBase(PredBase):
             combined = combined.astype({final: "category"})
         if fit:
             self.encoder.fit(reshaped)
-        print(reshaped)
         encoded = self.encoder.transform(reshaped)
         combined = np.concatenate([counts, encoded], axis=1)
         return combined
