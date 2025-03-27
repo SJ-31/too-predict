@@ -8,6 +8,7 @@ from typing import override
 
 import anndata as ad
 import h5py
+import interpret.blackbox as ib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -18,9 +19,12 @@ import seaborn as sns
 import skbio.stats.composition as comp
 import sklearn.metrics as sm
 import sklearn.neighbors as sn
-import too_predict
+import sklearn.preprocessing as sp
 import too_predict._rust_helpers as rh
+import too_predict.evaluation as te
+import too_predict.model as tm
 import too_predict.utils as ut
+from distributed.deploy import spec
 from imblearn.under_sampling import TomekLinks
 from pyhere import here
 from rpy2.rinterface import SexpVector
@@ -29,23 +33,9 @@ from rpy2.robjects.packages import importr
 from scipy import sparse, spatial, stats
 from sklearn.cluster import KMeans
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import SGDClassifier
-from sklearn.model_selection import (
-    StratifiedKFold,
-    StratifiedShuffleSplit,
-    cross_val_predict,
-    cross_validate,
-    train_test_split,
-)
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from sklearn.svm import LinearSVC
-from too_predict.evaluation import (
-    classification_report2df,
-    get_all_metrics,
-    precision_recall_multiclass,
-    roc_multiclass,
-)
 from too_predict.filter import Filter, count_tomek_links
 from too_predict.imputer import Imputer
 from too_predict.model import (
@@ -56,51 +46,22 @@ from too_predict.model import (
     XGBEstimator,
 )
 from too_predict.transformer import Transformer
-from too_predict.utils import (
-    RNG,
-    adata_x_to_r,
-    add_gene_metadata,
-    df_from_r,
-    df_to_r,
-    dgelist2anndata,
-    find_confounded,
-    get_data,
-    get_go_data,
-    get_zeros_internal,
-    hugo_ref_internal,
-    library,
-    np_from_r,
-    np_to_r,
-    phi_proportionality,
-    r_cleanup,
-    ref_feature_lists_internal,
-    rename_genes,
-    source,
-    str_mode,
-    training_data_internal_test,
-    write_feat_ref_metadata,
-)
 
 # #  --- CODE BLOCK ---
 #
 base = importr("base")
 ensembldb = importr("ensembldb")
-ALDex2 = importr("ALDEx2")
-datadir = here("data", "tests")
-hcc = here(datadir, "tcga_hcc.rds")
-chol = here(datadir, "tcga_chol.rds")
-coad = here(datadir, "tcga_coad-read.rds")
+obs = pd.read_csv(here("data", "training_data_obs.csv"))
 
-test_sets = {"LIHC": hcc, "CHOL": chol, "COAD": coad}
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
-adata = training_data_internal_test()
+adata = ut.training_data_internal_test()
 # adata = adata[:]
 
 
 labels = adata.obs.index
 target = adata.obs["tumor_type"]
 # #  --- CODE BLOCK ---
-refs, features = ref_feature_lists_internal(False)
+refs, features = ut.ref_feature_lists_internal(False)
 chosen = features["edgeR_median_lfc_feature_list_3000"]
 
 adata = adata[:, :500]
@@ -136,14 +97,5 @@ result = t.fit_transform(adata)
 model = PredBase(model=XGBEstimator(importance_type="gain"))
 
 
-train, test = ut.split_and_sample(
-    adata,
-    lambda x: (
-        x[~x.obs["Project_ID"].str.contains("CHULA"), :],
-        x[x.obs["Project_ID"].str.contains("CHULA"), :],
-    ),
-    {
-        # "tumor_type": [("UCEC", 8), ("LUAD", 4), ("LUSC", 3)],
-        "Project_ID": [("TARGET-AML", 8), ("TCGA-COAD", 5)],
-    },
-)
+model.fit(result)
+xgb = model.get_model()
