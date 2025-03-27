@@ -3,14 +3,11 @@ from pathlib import Path
 from typing import Callable
 
 import anndata as ad
-import matplotlib.pyplot as plt
 import numpy as np
 import optuna
 import pandas as pd
-import shap
 import sklearn.metrics as me
 import sklearn.model_selection as ms
-from scipy import sparse
 
 from too_predict.imbalance import Balancer
 from too_predict.transformer import Transformer
@@ -441,72 +438,6 @@ def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
         elif name == "cm":
             for lab, cm in item.items():
                 cm.to_csv(outdir.joinpath(f"{prefix}-cm{cm_prefix}{lab}.csv"))
-
-
-def get_shapley_adata(
-    adata: ad.AnnData,
-    explainer: shap.Explainer,
-    classifier,
-    label_col: str = "tumor_type",
-    feature_col: str = "GENEID",
-    summary_plot: bool = True,
-    interaction_matrix: bool = False,
-    plot_feature_col: str = "GENENAME",
-    plot_directory: Path | None = None,
-) -> tuple[ad.AnnData, shap.Explanation]:
-    """Get shapley values for the samples in `adata`
-
-    Parameters
-    ----------
-    classifier : pre-fitted classifier
-    explainer : shap.Explainer pre-fitted on `classifier`
-    summary_plot : path to directory to save summary plots. A summary plot
-        will be made for each available class
-
-    Returns
-    -------
-    1. Adata object storing the shapley values for each class in adata.obsm[shap_{class}]
-        Each of these is a matrix of shape n_samples x n_features
-    2. shap explanation object
-    """
-    classes = classifier.classes_
-    y_true: np.ndarray = adata.obs[label_col]
-    y_pred: np.ndarray = classifier.predict(adata)
-    class2index = dict(zip(classes, range(len(classes))))
-    features = adata.var[feature_col]
-    counts = pd.DataFrame(
-        adata.X if not sparse.isspmatrix(adata.X) else adata.X.toarray(),
-        columns=features,
-    )
-    empty = ad.AnnData(var=adata.var, obs=adata.obs)
-    empty.obs.loc[:, "y_true"] = y_true
-    empty.obs.loc[:, "y_pred"] = y_pred
-
-    svals: np.ndrray = explainer.shap_values(counts)
-    imatrix: np.ndarray | None = None
-    explanation = shap.Explanation(svals, base_values=counts, feature_names=features)
-    if plot_feature_col:
-        p_features = adata.var[plot_feature_col].combine_first(features)
-        counts.columns = p_features
-    if interaction_matrix and isinstance(explainer, shap.TreeExplainer):
-        imatrix = explainer.shap_interaction_values(counts)
-    if plot_directory is not None:
-        plot_directory.mkdir(parents=True, exist_ok=True)
-        for c, i in class2index.items():
-            if summary_plot:
-                shap.summary_plot(svals[:, :, i], counts)
-                plt.savefig(
-                    plot_directory.joinpath(f"{c}_summary.png"),
-                    dpi=500,
-                    bbox_inches="tight",
-                )
-                plt.close()
-    for clss, i in class2index.items():
-        empty.obsm[f"shap_{clss}"] = pd.DataFrame(
-            svals[:, :, i], index=empty.obs.index, columns=empty.var.index
-        )
-    empty.uns["shap_interaction_matrix"] = imatrix
-    return empty, explanation
 
 
 def summarize_studies(study: optuna.Study, objective_name: str) -> pd.DataFrame:
