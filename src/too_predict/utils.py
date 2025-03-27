@@ -29,6 +29,7 @@ from rpy2.robjects import RObject, numpy2ri, pandas2ri
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
+from sklearn.model_selection import ShuffleSplit, train_test_split
 
 import too_predict
 
@@ -45,6 +46,12 @@ RANDOM_STATE: int = 9874  # Last modified <2025-03-05 Wed>
 
 RNG = np.random.default_rng(297)  # Last modified [2025-03-25 Tue]
 # Use for any relevant estimators
+
+
+def train_test_split_ad(adata: ad.AnnData, **kwargs) -> tuple[ad.AnnData, ad.AnnData]:
+    splitter = ShuffleSplit(n_splits=1, **kwargs)
+    train, test = next(splitter.split(np.zeros(adata.shape)))
+    return adata[train, :], adata[test, :]
 
 
 def register_biocparallel(workers: int, param="MulticoreParam") -> None:
