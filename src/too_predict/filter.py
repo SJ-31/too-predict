@@ -14,8 +14,12 @@ class Filter:
     in missing features with 0s.
     """
 
-    def __init__(self, features, feature_col="GENENAME", inplace=False) -> None:
+    def __init__(
+        self, features, feature_col="GENENAME", inplace=False, blacklist=None
+    ) -> None:
         self.features = features  # Requested features to subset data by
+        if blacklist is not None:
+            self.features = [f for f in features if f not in blacklist]
         self.feature_col = feature_col
         self.discarded_features = None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
         self.inplace = inplace
