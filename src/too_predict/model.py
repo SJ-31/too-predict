@@ -28,7 +28,9 @@ class PredBase:
     and normalization
     """
 
-    def __init__(self, model, make_dense: bool = False) -> None:
+    def __init__(
+        self, model, make_dense: bool = False, balancer: Balancer = None
+    ) -> None:
         self.model = model
         self._estimator_type = "classifier"
         self._is_fitted = False
@@ -38,6 +40,8 @@ class PredBase:
         self.make_dense = make_dense
         self.had_inf = False
         self.var = None
+        self.balancer: None | Balancer = balancer  # Address class imbalance ONLY during
+        # fitting
         if "predict_proba" in dir(model):
             self.score_fn = "predict_proba"
         elif "decision_function" in dir(model):
@@ -77,6 +81,8 @@ class PredBase:
         ----------
         X : data to fit to
         """
+        if self.balancer is not None:
+            X = self.balancer.fit_transform(X, y=y)
         if y not in X.obs.columns:
             raise ValueError(f"The column '{y}' is not present in X.obs")
         self.var = X.var
