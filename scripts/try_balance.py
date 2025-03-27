@@ -85,24 +85,25 @@ def objective(
             "LIHC": 3,
             "CHOL": 2.1,  # Aggressive because so few
         }  # Oversample routinely misclassified classes
-    elif strategy == "targeted" and method_name in {"EditedNearestNeighbors"}:
+    elif strategy == "targeted" and method_name in {"EditedNearestNeighbours"}:
         hist_spec = {
             "COAD-READ": 1
         }  # Undersample the classes that are commonly mistaken
-    elif strategy == "targeted":
+    if strategy == "targeted":
         strategy = lambda y: spaced_resample(
             y, targets=hist_spec, undersample=type == "undersample", n_bins=40
         )
 
     bkwargs = {"method": method_name, "sampling_strategy": strategy}
+    print(bkwargs)
 
-    if method_name not in {"TomekLinks", "EditedNearestNeighbors", "NearMiss"}:
+    if method_name not in {"TomekLinks", "EditedNearestNeighbours", "NearMiss"}:
         bkwargs["random_state"] = RANDOM_STATE
-    elif method_name == "EditedNearestNeighbors":
+    if method_name == "EditedNearestNeighbours":
         bkwargs["kind_sel"] = "mode"
-    elif method_name == "NearMiss":
+    if method_name == "NearMiss":
         bkwargs["version"] = 3
-    elif method_name == "InstanceHardnessThreshold":
+    if method_name == "InstanceHardnessThreshold":
         bkwargs["estimator"] = RandomForestClassifier()  # Would use XGB, but want speed
 
     balancer = Balancer(**bkwargs)
@@ -111,7 +112,7 @@ def objective(
     adata = filter.fit_transform(adata)
     adata = transformer.fit_transform(adata)
 
-    classifier_name = trial.suggest_categorical("classifier", ["XGB", "BalancedRF"])
+    classifier_name = trial.suggest_categorical("classifier", ["XGB"])
     if classifier_name == "XGB":
         model = PredBase(model=XGBEstimator())
     else:
