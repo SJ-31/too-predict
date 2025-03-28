@@ -39,6 +39,43 @@ class Explain:
         self.train_vals = train_importances
         self.tkey, self.pkey = true_pred
         self.label_col = label_col
+        self.labels: pd.Series = train_importances.obs[label_col].unique()
+
+    def _importance_consistency(
+        self, adata: ad.AnnData, labels, summary: str = "std"
+    ) -> dict[str, pd.DataFrame | None] | pd.DataFrame | None:
+        def one_label(label: str):
+            vals = adata.obsm[self.local_getter(label)]
+            dfs = []
+            if summary == "counts":
+                directions = ["positive", "negative", "zero"]
+                for fn in [lambda x: x > 0, lambda x: x < 0, lambda x: x == 0]:
+                    applied = fn(vals)
+                    percentage = (applied.sum(axis=0) / vals.shape[0]) * 100
+                    dfs.append(percentage)
+                df = pd.concat(dfs, axis=1)
+                df.loc[:, "label"] = label
+                df.columns = directions
+            elif summary == "std":
+                df = pd.DataFrame({label: np.nanstd(vals, axis=0)}, index=vals.columns)
+            elif summary == "range":
+                max = np.max(vals, axis=0)
+                min = np.min(vals, axis=0)
+                df = pd.DataFrame({label: max - min}, index=vals.columns)
+            else:
+                df = pd.DataFrame({label: np.nanvar(vals, axis=0)}, index=vals.columns)
+            if np.all(df.isna()):
+                return None
+            return df
+
+        if isinstance(labels, str):
+            return one_label(labels)
+        result = {}
+        for label in labels:
+            df = one_label(label)
+            if df is not None:
+                result[label] = df
+        return result
 
     def _split_three(
         self, df: pd.DataFrame, col: str
@@ -103,7 +140,7 @@ class Explain:
         combined_neg = set()
         combined_0 = set()
         combined_pos = set()
-        for label in self.train_vals.obs[self.label_col].unique():
+        for label in self.labels:
             pos, neg, zero = one_label(label)
             label_specific[label] = neg
             combined_neg |= neg
@@ -120,6 +157,40 @@ class Explain:
         result = self._negative_contributions(n)
         self.local_getter = None
         return result
+
+    def shap_consistency(
+        self, right_wrong: bool = True, summary: str = "std"
+    ) -> tuple[dict, dict]:
+        self.local_getter = lambda x: f"shap_{x}"
+        results: dict = {}
+        stats: dict = {}
+        for g, adata in zip(["train", "test"], [self.train_vals, self.test_vals]):
+            if right_wrong:
+                results[g] = {}
+                stats[g] = {self.label_col: [], "right": [], "wrong": []}
+                tmp_r, tmp_w = [], []
+                for label in self.labels:
+                    stats[g][self.label_col].append(label)
+                    r, w = self._local_right_wrong(adata, label)
+
+                    right = adata[adata.obs.index.isin(r.columns)]
+                    stats[g]["right"].append(right.shape[0])
+
+                    wrong = adata[adata.obs.index.isin(w.columns)]
+                    stats[g]["wrong"].append(wrong.shape[0])
+                    rdf = self._importance_consistency(right, label, summary)
+                    if rdf is not None:
+                        tmp_r.append(rdf)
+                    wdf = self._importance_consistency(wrong, label, summary)
+                    if wdf is not None:
+                        tmp_w.append(wdf)
+                results[g]["right"] = pd.concat(tmp_r, axis=1) if tmp_r else None
+                results[g]["wrong"] = pd.concat(tmp_w, axis=1) if tmp_w else None
+                stats[g] = pd.DataFrame(stats[g])
+            else:
+                results[g] = self._importance_consistency(adata, self.labels)
+        self.local_getter = None
+        return results, stats
 
 
 def get_shap_adata(
