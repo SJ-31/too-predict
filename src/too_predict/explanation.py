@@ -10,7 +10,7 @@ import shap
 from scipy import sparse
 
 
-class FindFeatures:
+class Explain:
     """Class for analyzing feature importance/rankings
 
     The adata objects `train_importances`, `test_importances` are expected to contain
@@ -37,14 +37,14 @@ class FindFeatures:
         self.local_getter: Callable[[str], str]
         self.test_vals = test_importances
         self.train_vals = train_importances
-        self.true_key, self.pred_key = true_pred
+        self.tkey, self.pkey = true_pred
         self.label_col = label_col
 
     def _split_three(
         self, df: pd.DataFrame, col: str
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        pos = df.loc[df.loc[:, col] < 0, :]
-        neg = df.loc[df.loc[:, col] > 0, :]
+        pos = df.loc[df.loc[:, col] > 0, :]
+        neg = df.loc[df.loc[:, col] < 0, :]
         zero = df.loc[df.loc[:, col] == 0, :]
         return pos, neg, zero
 
@@ -55,19 +55,22 @@ class FindFeatures:
         agg_fn: Callable = lambda x: np.median(x, axis=1),
     ) -> tuple[pd.DataFrame | np.ndarray, pd.DataFrame | np.ndarray]:
         vals = adata.obsm[self.local_getter(label)]
-        wrong = np.transpose(
-            vals.loc[adata.obs[self.true_key] != adata.obs[self.pred_key], :]
+
+        wrong_mask = adata.obs[self.tkey].astype(str) != adata.obs[self.pkey].astype(
+            str
         )
-        right = np.transpose(
-            vals.loc[adata.obs[self.true_key] == adata.obs[self.pred_key], :]
+        right_mask = adata.obs[self.tkey].astype(str) == adata.obs[self.pkey].astype(
+            str
         )
+        wrong = np.transpose(vals.loc[wrong_mask, :])
+        right = np.transpose(vals.loc[right_mask, :])
         wrong.loc[:, "agg"] = agg_fn(wrong)
         right.loc[:, "agg"] = agg_fn(right)
+
         return right, wrong
 
     def _negative_contributions(
-        self,
-        n: int = -1,
+        self, n: int = -1, strict: bool = False
     ) -> tuple[set[str], dict]:
         def i2s(df: pd.DataFrame) -> set[str]:
             return set(df.index)
@@ -76,8 +79,8 @@ class FindFeatures:
             right, wrong = self._local_right_wrong(self.test_vals, label)
             right_train, _ = self._local_right_wrong(
                 self.train_vals[
-                    (self.train_vals.obs[self.true_key] == label)
-                    & (self.train_vals.obs[self.pred_key] == label)
+                    (self.train_vals.obs[self.tkey] == label)
+                    & (self.train_vals.obs[self.pkey] == label)
                 ],
                 label,
             )
@@ -86,14 +89,12 @@ class FindFeatures:
             wrong_n = wrong_n.sort_values("agg").iloc[:n, :]
 
             right_p, right_n, right_0 = self._split_three(right, "agg")
-            right_train_p, _, right_train_0 = self._split_three(right_train, "agg")
+            rtrain_p, rtrain_n, rtrain_0 = self._split_three(right_train, "agg")
 
-            neg_contrib = (i2s(wrong_n) - i2s(right_p)) & (
-                i2s(right_n) | i2s(right_0) | i2s(right_train_0) | i2s(right_train_p)
-            )
-
-            all_zero = i2s(right_train_0) | i2s(right_0) | i2s(wrong_0)
-            pos_contrib = i2s(right_p) | i2s(right_train_p) | i2s(wrong_p)
+            all_zero = i2s(rtrain_0) | i2s(right_0)
+            pos_contrib = i2s(right_p) | i2s(rtrain_p) | i2s(wrong_p)
+            neg_contrib = i2s(wrong_n) & (i2s(right_n) | i2s(rtrain_n))
+            neg_contrib -= pos_contrib
 
             return pos_contrib, neg_contrib, all_zero
 
@@ -109,6 +110,9 @@ class FindFeatures:
             combined_pos |= pos
             combined_0 |= zero
         combined_neg = combined_neg & combined_0
+        if strict:
+            combined_neg -= combined_pos  # Will discard features that are considered
+            # positive in the context of classifying other labels
         return combined_neg, label_specific
 
     def shap_neg_contributions(self, n: int = -1) -> tuple[set[str], dict]:

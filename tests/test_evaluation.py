@@ -47,6 +47,10 @@ current = "DLBC"
 
 n = 50
 
+# [2025-03-28 Fri] safety review says that we shouldn't place anything blocking the fire extinguisher
 
-ff = FindFeatures(rshap, tshap)
-shap_neg = ff.shap_neg_contributions()
+ff = ee.Explain(rshap, tshap)
+all_neg, specific = ff.shap_neg_contributions()
+for k, v in specific.items():
+    print(k, len(v))
+print(len(all_neg) / rshap.shape[1])
