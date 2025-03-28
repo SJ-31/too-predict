@@ -6,6 +6,7 @@ import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scipy.spatial.distance as sd
 import shap
 from scipy import sparse
 
@@ -191,6 +192,35 @@ class Explain:
                 results[g] = self._importance_consistency(adata, self.labels)
         self.local_getter = None
         return results, stats
+
+    def _importance_distance(
+        self,
+        target: str = "test",
+        metric: str = "euclidean",
+        agg_fn: Callable = lambda x: np.median(x, axis=0),
+        square: bool = True,
+    ) -> pd.DataFrame | np.ndarray:
+        adata = self.test_vals if target == "test" else self.train_vals
+        tmp = [
+            pd.DataFrame(
+                {label: agg_fn(adata.obsm[self.local_getter(label)])},
+                index=adata.var.index,
+            )
+            for label in self.labels
+        ]
+        df = np.transpose(pd.concat(tmp, axis=1))
+        dist: np.ndarray = sd.pdist(df, metric=metric)
+        if square:
+            return pd.DataFrame(
+                sd.squareform(dist), index=self.labels, columns=self.labels
+            )
+        return dist
+
+    def shap_distance(self, **kwargs):
+        self.local_getter = lambda x: f"shap_{x}"
+        result = self._importance_distance(**kwargs)
+        self.local_getter = None
+        return result
 
 
 def get_shap_adata(
