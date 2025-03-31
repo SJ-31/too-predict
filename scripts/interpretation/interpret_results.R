@@ -18,11 +18,12 @@ tumor_types <- unique(obs_meta$tumor_type)
 
 ## Plotting and filtering results
 vtb <- read_csv(here(fs_dir, "sklearn_low_variance.csv"))
+vtb_go <- read_csv(here(fs_dir, "sklearn_variance_GO.csv"))
 minfo <- read_csv(here(fs_dir, "mutual_info.csv")) |>
   filter(!is.na(feature)) |>
   inner_join(gene_meta, by = join_by(x$feature == y$GENEID)) |>
   rename(GENEID = feature)
-edger <- read_tsv(here(fs_dir, "edgeR_top_types.tsv"))
+edger <- read_tsv(here(fs_dir, "edgeR_top_types_backup.tsv"))
 
 # pct_dropout_by_counts: Percentage of cells the feature doesn't appear in
 max_dropout_pct <- 10 # Don't want genes that are missing in > 90% of samples
@@ -49,10 +50,12 @@ feature_tbs <- list(edgeR_median_lfc = edger, variance = vtb, mutual_info = minf
 ## * Visualize feature distribution
 
 features_together <- lapply(names(feature_tbs), \(x) {
-  select(feature_tbs[[x]], GENEID, value) |>
-    mutate(value = scale(value, center = FALSE)) |>
-    rename(!!as.symbol(x) := value) |>
-    filter(!is.na(GENEID))
+  if (x != "variance_go") {
+    select(feature_tbs[[x]], GENEID, value) |>
+      mutate(value = scale(value, center = FALSE)) |>
+      rename(!!as.symbol(x) := value) |>
+      filter(!is.na(GENEID))
+  }
 }) |>
   reduce(\(x, y) full_join(x, y, by = join_by(GENEID))) |>
   pivot_longer(cols = -GENEID, names_to = "metric")
@@ -75,6 +78,23 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
   features
 }) |> `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
+
+n_ontology <- 500
+go_top_n <- vtb_go |>
+  group_by(`GO domain`) |>
+  nest() |>
+  filter(!is.na(`GO domain`)) |>
+  mutate(data = lapply(data, \(x) head(arrange(x, desc(variance)), n = n_ontology))) |>
+  unnest(cols = c(data)) |>
+  ungroup()
+
+## head(n = n_ontology)
+
+writeLines(
+  go_top_n$`GO term accession`,
+  here(ref_lists, glue("variance_go_feature_list_{n_ontology * 3}.txt"))
+)
+write_csv(go_top_n, here(fs_dir, glue("variance_go_{n_ontology * 3}.csv")))
 
 ggsave(here(fs_dir, glue("selected_ml_features_overlap_{n_features}.png")), feature_venn)
 
@@ -162,3 +182,71 @@ write_csv(ranked$table, here(n_dir, "ranked_combinations.csv"))
 orf <- read_csv(here("data", "output", "organoid_feature_selection", "chula_tcga_dge.csv"))
 # Find common
 log_fcs <- orf |> select(GENEID, contains("logFC"))
+
+
+## * edgeR go
+## --- CODE BLOCK ---
+
+get_edger_go <- function() {
+  n_type <- 40
+  min_count <- 5 # For robustness to missing genes
+  edger_go <- read_tsv(here(fs_dir, "edgeR_top_types_GO.tsv"))
+  if (!"GO term accession" %in% colnames(edger_go)) {
+    go_map <- read_csv(here("data", "go_names2acc.csv"))
+    edger_go <- edger_go |>
+      distinct(GO.term.name, .keep_all = TRUE) |>
+      inner_join(go_map, by = join_by(x$GO.term.name == y$`GO term name`)) |>
+      relocate(`GO term accession`, .before = everything())
+  }
+  lfc_re <- "_tumor_type"
+  lfc_groups <- keep(colnames(edger_go), \(x) str_detect(x, "logFC"))
+  print(glue("Total GO features: {length(lfc_groups) * n_type}"))
+  tracker <- list() # Want to see the overlap between the top D go terms and tumor types
+  seen_acc <- c() # Make sure we don't get duplicate accs
+  combined_gos <- lapply(lfc_groups, \(x) {
+    filtered <- edger_go |>
+      filter(PValue < 0.01) |>
+      mutate(sort = abs(!!as.symbol(x))) |>
+      arrange(desc(sort)) |>
+      select(`GO term accession`, sort)
+
+    tracker[[x]] <<- head(filtered$`GO term accession`, n = n_type)
+
+    new_gos <- filtered |> filter(!`GO term accession` %in% seen_acc)
+    top_n <- head(new_gos$`GO term accession`, n = n_type)
+    seen_acc <<- c(seen_acc, top_n)
+    top_n
+  }) |>
+    unlist()
+  writeLines(combined_gos, here(fs_lists, glue("edgeR_go_feature_list_{n_type}.txt")))
+
+  # Plot jaccard similarity to visualize overlap
+  fc_x_go <- as_tibble(tracker) |>
+    pivot_longer(everything()) |>
+    pivot_wider(names_from = value, id_cols = name, values_fn = \(x) 1, values_fill = 0)
+
+  fc_dist <- vegan::vegdist(select(fc_x_go, where(is.numeric)), method = "jaccard")
+}
+
+dist_heatmap <- function(dist, vars, var_name = "feature") {
+  tb <- dist |>
+    as.matrix() |>
+    as_tibble() |>
+    `colnames<-`(vars)
+  tb[[var_name]] <- as.factor(vars)
+  tb <- tb |>
+    pivot_longer(-!!as.symbol(var_name), names_to = "y") |>
+    mutate(y = as.factor(y))
+  tb |>
+    ggplot(aes(x = !!as.symbol(var_name), y = as.factor(y), fill = value)) +
+    geom_tile() +
+    xlab(var_name) +
+    ylab(var_name)
+}
+dist_heatmap(fc_dist, lfc_groups)
+
+
+# Need a function to plot dist
+
+
+## --- CODE BLOCK ---
