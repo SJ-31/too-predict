@@ -287,3 +287,35 @@ def get_shap_adata(
         )
     empty.uns["shap_interaction_matrix"] = imatrix
     return empty, explanation
+
+
+def get_most_important(
+    adata: ad.AnnData,
+    n: int = 20,
+    agg: str = "median",
+    prefix: str = "shap_",
+    label_col: str = "tumor_type",
+) -> pd.DataFrame:
+    """Get the most important features
+
+    Parameters
+    ----------
+    prefix : prefix of adata.obsm df storing the per-class feature importances
+
+    Returns
+    -------
+    dataframe of shape n x n_classes, where each column contains the most important
+    features for that class assignment
+    """
+    tmp = []
+    for label in adata.obs[label_col].unique():
+        vals = adata.obsm[f"{prefix}{label}"]
+        if agg == "median":
+            vals = vals.median(axis=0)
+        elif agg == "mean":
+            vals = vals.mean(axis=0)
+        else:
+            raise ValueError(f"`agg` argument {agg} not recognized!")
+        vals = vals.abs().sort_values(ascending=False).iloc[:n]
+        tmp.append(pd.DataFrame({label: vals.index}))
+    return pd.concat(tmp, axis=1)
