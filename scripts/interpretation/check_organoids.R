@@ -5,28 +5,54 @@ suppressMessages({
   library(edgeR)
   library(scRNAseq)
   library(zellkonverter)
-  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
-  library(reticulate)
-  source(here("src", "R", "utils.R"))
 })
+
+if (path.expand("~") != "/home/shannc") {
+  python_path <- here("remote", "envs", "too-predict", "bin", "python")
+  adata_fn <- function() ut$training_data_internal()
+} else {
+  python_path <- here(".venv", "bin", "python")
+  adata_fn <- function() ut$training_data_internal_test()
+}
+
+Sys.setenv("RETICULATE_PYTHON" = python_path)
+library(reticulate)
+source(here("src", "R", "utils.R"))
+
+tf <- import("too_predict.filter")
+ut <- import("too_predict.utils")
 
 outdir_o <- here("data", "output", "chula_organoid_comparison")
 outdir <- here("data", "output", "organoid_feature_selection")
 dir.create(outdir)
+
+TMP <- ut$ref_feature_lists_internal()
+REFS <- TMP[[2]]$edgeR_median_lfc_feature_list_3000
 
 
 ## --- CODE BLOCK ---
 lihc_cases <- c("CHULA_LIHC", "TCGA_LIHC")
 chol_cases <- c("CHULA_CHOL", "TCGA_CHOL")
 coad_cases <- c("CHULA_COAD_READ", "TCGA_COAD_READ")
-all_cases <- c(lihc_cases, chol_cases, coad_cases)
+paad_cases <- c("CHULA_PAAD", "TCGA_PAAD")
+all_cases <- c(lihc_cases, chol_cases, coad_cases, paad_cases)
+
+get_none_sce <- function(save_to) {
+  print("Filtering from training data internal...")
+  adata <- adata_fn()
+  filter <- tf$Filter(REFS, feature_col = "GENEID")
+  adata <- filter$fit_transform(adata)
+  adata$write_h5ad(save_to)
+  readH5AD(save_to)
+}
 
 edger_analysis <- function(file) {
   sce_file <- here(
     "data", "output", "normalization_comparison", "edgeR_median_lfc_feature_list_3000",
     "none-plus_one.h5ad"
   )
-  sce <- readH5AD(sce_file)
+
+  sce <- read_existing(sce_file, get_none_sce, readH5AD)
 
   rowData(sce) <- rowData(sce) |>
     as_tibble() |>
@@ -38,16 +64,16 @@ edger_analysis <- function(file) {
   ) |> str_replace_all("-", "_")
 
   sce <- sce[, colData(sce)$Project_ID %in% all_cases]
-  ## lihc <- sce[, colData(sce)$Project_ID %in% lihc_cases]
   dge <- sce2dge(sce)
 
   normLibSizes(dge)
   mm <- model.matrix(~ 0 + Project_ID, dge$samples)
 
   contrasts <- list(
-    lihc = c(0, 0, 1, 0, 0, -1),
-    chol = c(1, 0, 0, -1, 0, 0),
-    coad_read = c(0, 1, 0, 0, -1, 0)
+    lihc = makeContrasts("Project_IDCHULA_LIHC - Project_IDTCGA_LIHC", levels = colnames(mm)),
+    chol = makeContrasts("Project_IDCHULA_CHOL - Project_IDTCGA_CHOL", levels = colnames(mm)),
+    coad_read = makeContrasts("Project_IDCHULA_COAD_READ - Project_IDTCGA_COAD_READ", levels = colnames(mm)),
+    paad = makeContrasts("Project_IDCHULA_PAAD - Project_IDTCGA_PAAD", levels = colnames(mm))
   )
 
   dge <- estimateDisp(dge, design = mm, robust = TRUE)
@@ -84,8 +110,22 @@ edger_analysis <- function(file) {
 
 edger_file <- here(outdir, "chula_tcga_dge.csv")
 edger_results <- read_existing(edger_file, edger_analysis, read_csv)
+edger_all <- read_tsv(here("data", "output", "feature_selection", "edgeR_top_types_backup.tsv"))
 
 ## * Compare fold changes using transformed values
+
+get_clr_adata <- function(save_to) {
+  adata <- adata_fn()
+  filter <- tf$Filter(REFS, feature_col = "GENEID")
+  tt <- import("too_predict.transformer")
+  ti <- import("too_predict.imputer")
+  impute <- ti$Imputer("plus_one")
+  tra <- tt$Transformer("clr", impute, inplace = FALSE)
+  adata <- filter$fit_transform(adata)
+  adata <- tra$fit_transform(adata)
+  adata$write_h5ad(save_to)
+  adata
+}
 
 compare_fold_changes <- function(f) {
   sc <- import("scanpy")
@@ -95,18 +135,20 @@ compare_fold_changes <- function(f) {
     "data", "output", "normalization_comparison", "edgeR_median_lfc_feature_list_3000",
     "clr-plus_one.h5ad"
   )
-  adata <- ad$read_h5ad(sce_file)
-  wanted_types <- c("LIHC", "CHOL", "COAD_READ")
+  adata <- read_existing(sce_file, get_clr_adata, ad$read_h5ad)
+  adata$obs$tumor_type <- str_replace(adata$obs$tumor_type, "-", "_")
+  wanted_types <- c("LIHC", "CHOL", "COAD_READ", "PAAD")
   wanted_sample <- c("organoid", "primary")
 
   adata <- adata[(adata$obs$tumor_type %in% wanted_types) & (adata$obs$Sample_Type %in% wanted_sample), ]
 
   compared_fc <- lapply(wanted_types, \(x) {
     current <- adata[adata$obs$tumor_type == x, ]
+    print(glue("Current tumor type {x}"))
+    print(current)
     # Compare fold change in organoids vs primary for each tumor type
     sc$tl$rank_genes_groups(current, "Sample_Type", method = "wilcoxon", reference = "primary")
     sc_results <- current$uns$rank_genes_groups
-    print(sc_results$params)
     sc_results |>
       within(rm(params)) |>
       as_tibble() |>
@@ -117,8 +159,8 @@ compare_fold_changes <- function(f) {
 
   sig_stats <- table(compared_fc$is_sig, compared_fc$tumor_type_comparison) |> table2tb("is_significant")
 
-  fc_plot <- compared_fc |> ggplot(aes(x = logfoldchanges, fill = tumor_type_comparison, y = tumor_type_comparison)) +
-    geom_density_ridges()
+  ## fc_plot <- compared_fc |> ggplot(aes(x = logfoldchanges, fill = tumor_type_comparison, y = tumor_type_comparison)) +
+  ##   geom_density_ridges()
 
   summarized <- compared_fc |>
     group_by(tumor_type_comparison) |>
@@ -156,5 +198,8 @@ ggsave(here(outdir_o, "tree_importance_plot.png"))
 # have different lfcs vs primary in the more important features
 # but this doesn't seem to be the case
 
+## ** LFC consistency between types
+
 # [2025-03-31 Mon] TODO: compare the lfc differences of a given feature when
 # in organoids vs primary against within-sample
+# Will be using `edger_results` and `edger_all`
