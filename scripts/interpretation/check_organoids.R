@@ -3,7 +3,6 @@ suppressMessages({
   library(tidyverse)
   library(glue)
   library(edgeR)
-  library(ggridges)
   library(scRNAseq)
   library(zellkonverter)
   Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
@@ -139,6 +138,7 @@ compare_fold_changes <- function(f) {
 
 all_fc <- read_existing(here(outdir_o, "genes_all_lfc.csv"), compare_fold_changes, read_csv)
 
+# Importance metric is tree feature importance
 nz_file <- here("data", "output", "feature_selection", "nonzero_features.csv")
 nonzero <- read_csv(nz_file)
 
@@ -150,7 +150,11 @@ joined |> ggplot(aes(x = tumor_type_comparison, y = log(importance), fill = is_s
 imp_plot <- joined |> ggplot(aes(x = logfoldchanges, y = log(importance), color = is_sig)) +
   geom_point() +
   facet_wrap(~tumor_type_comparison)
+ggsave(here(outdir_o, "tree_importance_plot.png"))
 
 # [2025-03-19 Wed] What you're trying to see here is whether or not lihc and chol
 # have different lfcs vs primary in the more important features
 # but this doesn't seem to be the case
+
+# [2025-03-31 Mon] TODO: compare the lfc differences of a given feature when
+# in organoids vs primary against within-sample
