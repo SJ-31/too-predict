@@ -4,27 +4,32 @@ from pathlib import Path
 
 import anndata as ad
 import joblib
+import matplotlib.pyplot as plt
 import pandas as pd
 import shap
 import too_predict.explanation as ex
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
-from too_predict.evaluation import get_all_metrics, write_cross_val
+from too_predict.evaluation import get_all_metrics, write_cross_val, write_metrics
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, XGBEstimator
+from too_predict.plotting import plot_diagonal_matrix
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     RNG,
+    load_pickle,
     ref_feature_lists_internal,
     split_and_sample,
     training_data_internal,
     training_data_internal_test,
+    write_pickle,
 )
 
 OUTDIR: Path = here("data", "output", "explanations", "chula_misses")
 OUTDIR.mkdir(exist_ok=True, parents=True)
+STORAGE: Path = here("remote", "repos", "too-predict")
 REFS, FEATURES = ref_feature_lists_internal()
 
 ADDITIONAL_SPLITS: dict = {
@@ -67,6 +72,7 @@ def shap_helper(
     test: ad.AnnData,
     label_col: str,
     set_name: str,
+    n: int = 10,
 ):
     outdir = OUTDIR.joinpath("shapley")
     explainer = shap.TreeExplainer(model.get_model())
@@ -91,9 +97,22 @@ def shap_helper(
         summary_plot=False,
         plot_directory=None,
     )
-    s_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}.h5ad")))
+    outfile = here(outdir.joinpath(f"shapley-{set_name}.h5ad"))
+    if not outfile.exists():
+        s_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}.h5ad")))
     ff = ex.Explain(s_train, s_test, label_col=label_col)
-    neg_contrib, per_label = ff.shap_neg_contributions()
+    neg_contrib, per_label = ff.shap_neg_contributions(n=10)
+    # [2025-03-28 Fri] Let's try with n = 20
+    train_mat = ff.shap_distance(target="train", square=True)
+    fig, ax = plt.subplots()
+    plot_diagonal_matrix(train_mat, ax, cmap="coolwarm")
+    fig.savefig(outdir.joinpath(f"train_dist-{set_name}.png"))
+
+    test_mat = ff.shap_distance(target="test", square=True)
+    fig, ax = plt.subplots()
+    plot_diagonal_matrix(test_mat, ax, cmap="coolwarm")
+    fig.savefig(outdir.joinpath(f"test_dist-{set_name}.png"))
+
     return neg_contrib
 
 
@@ -113,40 +132,54 @@ def main(args):
 
     label_col = args.label_class
     if not args.no_shap:
+        model_storage = STORAGE.joinpath("shapley")
+        model_storage.mkdir(parents=True, exist_ok=True)
         model = PredBase(model=XGBEstimator())
         for name, fn in ADDITIONAL_SPLITS.items():
             _, test = fn(adata)
             unique_values = test.obs[label_col].unique()
             spec = {label_col: [(u, 5) for u in unique_values]}
             train, test = split_and_sample(adata, fn, spec, RNG)
-            model.fit(train)
-            neg_contrib = shap_helper(
-                model, train, test, label_col=label_col, set_name=name
-            )
-            new_filter = Filter(
-                feature_col="GENEID",
-                features=FEATURES[feature_set],
-                blacklist=neg_contrib,
-            )
-            proba = model.predict_proba(test)
-            perf = get_all_metrics(test.obs[label_col], proba, model.classes_)
-            metrics = (
-                f"acc: {perf.get('acc')}\nbalanced_acc: {perf.get('balanced_acc')}\n"
-                f"kappa: {perf.get('kappa')}"
-            )
-            OUTDIR.joinpath("shapley").joinpath(f"{name}_before.txt").write_text(
-                metrics
-            )
+            saved_model_file = model_storage.joinpath(f"{name}_model.pkl")
+            if not saved_model_file.exists():
+                model.fit(train)
+                write_pickle(model, saved_model_file)
+            else:
+                model = load_pickle(saved_model_file)
+            for n in [20, 10, 5]:
+                n_outdir = OUTDIR.joinpath("shapley").joinpath(n)
+                n_outdir.mkdir(exist_ok=True)
+                neg_contrib = shap_helper(
+                    model, train, test, label_col=label_col, set_name=name
+                )
+                proba = model.predict_proba(test)
+                perf = get_all_metrics(test.obs[label_col], proba, model.classes_)
+                before = n_outdir.joinpath(f"{name}_before.txt")
+                write_metrics(before, perf)
 
-            no_neg_contrib = new_filter.fit_transform(adata)
-            # See how the model performs after removing the negatively contributing
-            # features
-            updated_perf = model.holdout(  # Will refit in here
-                no_neg_contrib,
-                {k: v for k, v in ADDITIONAL_SPLITS if k == name},
-                label_col=label_col,
-            )
-            write_cross_val(updated_perf, OUTDIR.joinpath("shapley"), prefix=name)
+                # Try hard masking the negatively-contributing features
+                test.X[:, test.var["GENEID"].isin(neg_contrib)] = 0
+                proba = model.predict_proba(test)
+                perf_after = get_all_metrics(test.obs[label_col], proba, model.classes_)
+                after = n_outdir.joinpath(f"{name}_after.txt")
+                write_metrics(after, perf_after)
+
+            # Try removing altogether [2025-03-28 Fri] DONE
+            # new_filter = Filter(
+            #     feature_col="GENEID",
+            #     features=FEATURES[feature_set],
+            #     blacklist=neg_contrib,
+            # )
+            # no_neg_contrib = new_filter.fit_transform(adata)
+            # print(f"Old shape: {adata.shape}\nNew shape: {no_neg_contrib.shape}")
+            # # See how the model performs after removing the negatively contributing
+            # # features
+            # updated_perf = model.holdout(  # Will refit in here
+            #     no_neg_contrib,
+            #     {k: v for k, v in ADDITIONAL_SPLITS.items() if k == name},
+            #     label_col=label_col,
+            # )
+            # write_cross_val(updated_perf, OUTDIR.joinpath("shapley"), prefix=name)
 
 
 if __name__ == "__main__":
