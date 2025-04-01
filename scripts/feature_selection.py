@@ -1,5 +1,7 @@
 #!/usr/bin/env ipython
 
+from pathlib import Path
+
 import anndata as ad
 import joblib
 import matplotlib.pyplot as plt
@@ -10,8 +12,9 @@ import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
 from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
 from too_predict.evaluation import cross_validate, write_cross_val
-from too_predict.filter import Filter
+from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
 from too_predict.transformer import Transformer
@@ -22,6 +25,7 @@ from too_predict.utils import (
     training_data_internal,
     training_data_internal_test,
 )
+from xgboost import XGBClassifier
 
 outdir = here("data", "output", "feature_selection")
 adata: ad.AnnData
@@ -102,13 +106,19 @@ def mutual_info(f):
 
 # ** Recursive
 #
-# <2025-02-21 Fri> define a different shuffle split
-# can compare this with different estimators
-# also see if you can make this compatible with the ALR model
-# cv =
-# <2025-02-24 Mon> this will take forever to run, you should narrow done the list
-# using a threshold of some kind
-def recursive_selection(f, est, prefix: str):
+def recursive_selection(adata):
+    _, feat = ref_feature_lists_internal()
+    first_filter = Filter(
+        feature_col="GENEID",
+        features=feat["edgeR_median_lfc_feature_list_3000"],
+        inplace=False,
+    )
+    transformer = Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False)
+    x: ad.AnnData = first_filter.fit_transform(adata)
+    x = transformer.fit_transform(x)
+    model = XGBClassifier()
+    encoder = LabelEncoder()
+    # est = PredBase(model=)
     rfecv = fs.RFECV(estimator=RandomForestClassifier(), verbose=1)
     rfecv.fit(n_counts, y=labels)
     results = rfecv.cv_results_
@@ -142,6 +152,38 @@ def tree_importance(adata, classifier: PredBase, outdir):
     x2 = transformer.fit_transform(x2)
     cv_results_2 = cross_validate(classifier, x2, label_col="tumor_type")
     write_cross_val(cv_results_2, outdir, "cv_after", "_cv_after")
+
+
+# ** Removing redundant features
+
+
+def remove_redundant(adata):
+    _, features = ref_feature_lists_internal()
+    original = features["edgeR_median_lfc_feature_list_3000"]
+    r_outdir: Path = outdir.joinpath("redundant_features")
+    r_outdir.mkdir(exist_ok=True, parents=True)
+    hrange = [0.4, 0.6, 0.8]
+    method_spec = ["correlation", "rho_prop"]
+    filter = Filter(original, feature_col="GENEID")
+    adata = filter.fit_transform(adata)
+    clr = Transformer("clr", Imputer("plus_one"), inplace=False)
+    model = PredBase(XGBEstimator())
+    for method in method_spec:
+        cur_outdir = r_outdir.joinpath(method)
+        cur_outdir.mkdir(exist_ok=True, parents=True)
+        if method == "correlation":
+            tmp = clr.fit_transform(adata)
+        else:
+            tmp = adata.copy()
+        for height in hrange:
+            kept, removed, var = get_redundant_features(tmp, height, method)
+            if len(kept) == len(adata.var.index):
+                print(f"WARNING: {method} at height {height} did not cluster!")
+                continue
+            new_filter = Filter(kept, feature_col="GENEID")
+            tmp = new_filter.fit_transform(tmp)
+            results = model.cross_validate(tmp, n_splits=3, record_dir=cur_outdir)
+            write_cross_val(results, cur_outdir, prefix=f"height_{height}")
 
 
 # * Run
@@ -185,12 +227,12 @@ if __name__ == "__main__":
     # Need to normalize first to move out of simplex
 
     variance_file = here(outdir, f"sklearn_variance_{suffix}.csv")
-    print(f"Printing out {variance_file}")
     proportionality_file = here(outdir, f"proportionality_matrix_{suffix}.csv")
     mutual_info_file = here(outdir, f"mutual_info_{suffix}.csv")
 
     with joblib.parallel_backend("loky", n_jobs=args.cores):
-        variance = read_existing(variance_file, variance_threshold, pd.read_csv)
+        remove_redundant(adata)
+        # variance = read_existing(variance_file, variance_threshold, pd.read_csv)
         # mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
         # prop = read_existing(
         #     proportionality_file, get_proportionality, pd.read_csv
