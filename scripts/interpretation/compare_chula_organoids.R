@@ -7,10 +7,10 @@ suppressMessages({
   library(scRNAseq)
   library(broom)
   library(zellkonverter)
-  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
   source(here("src", "R", "utils.R"))
   source(here("src", "R", "plotting.R"))
   library(reticulate)
+  use_condaenv("too-predict")
 })
 
 outdir <- here("data", "output", "chula_organoid_comparison")

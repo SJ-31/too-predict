@@ -15,8 +15,8 @@ if (path.expand("~") != "/home/shannc") {
   adata_fn <- function() ut$training_data_internal_test()
 }
 
-Sys.setenv("RETICULATE_PYTHON" = python_path)
 library(reticulate)
+use_condaenv("too-predict")
 source(here("src", "R", "utils.R"))
 
 tf <- import("too_predict.filter")

@@ -17,15 +17,12 @@ if (sys.nframe() == 0) {
   parser <- add_option(parser, c("-c", "--cores"), type = "integer", default = 8)
   parser <- add_option(parser, c("-g", "--recode_go"), type = "logical", default = FALSE, action = "store_true")
   args <- parse_args(parser)
-  python_path <- here("remote", "envs", "too-predict", "bin", "python")
   if (args$recode_go) {
     suffix <- "_GO"
   }
-} else {
-  python_path <- here(".venv", "bin", "python")
 }
-Sys.setenv("RETICULATE_PYTHON" = python_path)
 library(reticulate)
+use_condaenv("too-predict")
 source(here("src", "R", "utils.R"))
 
 pyutils <- new.env()

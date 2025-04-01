@@ -8,9 +8,9 @@ suppressMessages({
   library(ggVennDiagram)
   library(here)
   library(ggridges)
-  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
   library(reticulate)
   source(here("src", "R", "utils.R"))
+  use_condaenv(condaenv = "too-predict")
 })
 
 ## * Setup
