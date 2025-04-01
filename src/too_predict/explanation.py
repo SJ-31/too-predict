@@ -301,7 +301,23 @@ class Exp:
         empty.obs.loc[:, "y_pred"] = y_pred
         return empty
 
-    def anchor(self, **kwargs):
+    def anchor(
+        self,
+        train_data: ad.AnnData,
+        adata: ad.AnnData | None = None,
+        explain_kwargs: dict | None = None,
+        fit_kwargs: dict | None = None,
+    ) -> tuple[ad.AnnData, pd.DataFrame]:
+        if adata is not None:
+            self.new_adata(adata)
+        if not explain_kwargs:
+            explain_kwargs = {
+                "threshold": 0.90,
+                "batch_size": 70,
+            }
+        if not fit_kwargs:
+            fit_kwargs = {"disc_perc": (25, 50, 75)}
+
         def add_anchor_exp(result: interfaces.Explanation, importance_vec: np.ndarray):
             # Define importance of a feature here as the precision increase
             # when adding the feature to the (anchor + coverage) - 1
@@ -326,12 +342,12 @@ class Exp:
         )
         y_pred = self.model.predict(self.adata)
         empty = self._make_empty(self.adata, self.y_true, y_pred)
-        if not kwargs:
-            kwargs = {"threshold": 0.90, "batch_size": 70}
-        counts = self._count_df()
+        train_counts = self._count_df(train_data).values
+        counts = self._count_df().values
         feature_vec = np.zeros_like(self.features)
-        explainer.fit(counts, **kwargs)
+        explainer.fit(train_counts, **fit_kwargs)
         class2importance = {}
+
         all_tracker = {
             self.label_col: [],
             "anchor": [],
@@ -343,7 +359,9 @@ class Exp:
             indices = np.where(self.y_true == label)[0]
             tmp = []
             for i in indices:
-                explanation: interfaces.Explanation = explainer.explain(counts[i, :])
+                explanation: interfaces.Explanation = explainer.explain(
+                    counts[i, :], **explain_kwargs
+                )
                 ivec = add_anchor_exp(explanation, feature_vec.copy())
                 tmp.append([ivec])
                 all_tracker[self.label_col].append(label)
@@ -351,7 +369,12 @@ class Exp:
                 all_tracker["anchor"].append(" AND ".join(explanation.anchor))
                 all_tracker["n_features"].append(len(explanation.anchor))
                 all_tracker["precision"].append(explanation.precision)
-            class2importance[label] = np.concatenate(tmp, axis=1)
+            if tmp:
+                tmp_vals = np.zeros_like(counts)
+                concatenated = np.concatenate(tmp, axis=1)
+                tmp_vals[indices, :] = concatenated
+                tmp_vals[~indices, :] = np.nan
+                class2importance[label] = tmp_vals
         metric_df = pd.DataFrame(all_tracker)
         self._into_obsm(empty, "anchor_", class2importance)
         return empty, metric_df
