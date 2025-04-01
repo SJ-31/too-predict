@@ -6,12 +6,14 @@ import anndata as ad
 import joblib
 import pandas as pd
 import scanpy as sc
+import sklearn.feature_selection as fs
 import sklearn.inspection as si
+import sklearn.metrics as sm
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
-from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
@@ -35,7 +37,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--memory", default="30")
-    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-c", "--cores", default=8, type=int)
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-d", "--dask", default=False, action="store_true")
     parser.add_argument("-a", "--cached", default=False, action="store_true")
@@ -48,7 +50,7 @@ def main():
     else:
         adata = training_data_internal()
 
-    model = HistGradientBoostingClassifier()
+    model = RandomForestClassifier()
 
     filter = Filter(
         feature_col="GENEID",
@@ -69,39 +71,23 @@ def main():
     print(f"Shape after balancing {adata.shape}")
     labels = adata.obs["is_organoid"]
     counts = adata.X.toarray()
-    # scorer = sm.make_scorer(sm.cohen_kappa_score)
+    scorer = sm.make_scorer(sm.cohen_kappa_score)
     x_train, x_test, y_train, y_test = train_test_split(counts, labels)
     model.fit(x_train, y_train)
+    adata.var.loc[:, "raw_importance"] = model.feature_importances_
+    adata.var.to_csv(OUTDIR.joinpath("raw_importances.csv"), index=False)
 
-    results = si.permutation_importance(
-        model,
-        x_train,
-        y_train,
-        n_repeats=3 if not TEST else 1,
-        random_state=RNG,
-    )
-    # [2025-03-13 Thu] Why are these all 0?
-    # cross validation results indicate that they can learn this
+    # [2025-03-13 Thu] Results were all zero with permutation_importance
+    rfecv = fs.RFECV(estimator=model, step=1, cv=StratifiedKFold(5), scoring=scorer)
+    rfecv.fit(counts, labels)
 
     cv_score = cross_val_score(model, x_train, y_train)
     print(cv_score)
-    print(results)
-    imp = results["importances"]
 
-    df = pd.DataFrame(
-        dict(
-            {k: v for k, v in results.items() if k != "importances"},
-            **{"GENEID": adata.var["GENEID"]},
-        )
-    )
-
-    importance = pd.DataFrame(imp, columns=[f"repeat_{i}" for i in range(imp.shape[1])])
-    df = (
-        pd.concat([df, importance], axis=1, ignore_index=True)
-        .reset_index(drop=True)
-        .set_axis(list(df.columns) + list(importance.columns), axis=1)
-    )
+    df = pd.DataFrame({"GENEID": adata.var["GENEID"], "ranking": rfecv.ranking_})
     df.to_csv(OUTDIR.joinpath("importances.csv"), index=False)
+    score_df = pd.DataFrame(rfecv.cv_results_)
+    score_df.to_csv(OUTDIR.joinpath("cv_results.csv"), index=False)
 
 
 if __name__ == "__main__":

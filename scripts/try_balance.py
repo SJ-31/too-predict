@@ -164,7 +164,7 @@ if __name__ == "__main__":
                     direction="maximize",
                     sampler=sampler,
                 )
-            study.optimize(obj, catch=(RuntimeError,))
+            study.optimize(obj, catch=(RuntimeError, ValueError))
             print("Study complete")
             print(f"Best value: {study.best_value}")
             print(f"Best params: {study.best_params}")
@@ -175,5 +175,5 @@ if __name__ == "__main__":
             )
             print(f"Best value: {study.best_value}")
             print(f"Best params: {study.best_params}")
-            df = summarize_studies(study, "kappa")
+            df = summarize_studies(study, "balanced_acc")
             df.to_csv(here("data", "output", "balancing_results.csv"), index=False)
