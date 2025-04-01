@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Callable
 
+import alibi.explainers as ae
 import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,9 +11,11 @@ import scipy.spatial.distance as sd
 import shap
 from scipy import sparse
 
+from too_predict.utils import RANDOM_STATE
 
-class Explain:
-    """Class for analyzing feature importance/rankings
+
+class ExpInterpreter:
+    """Class for interpreting feature explanations (importance/rankings)
 
     The adata objects `train_importances`, `test_importances` are expected to contain
         local feature importances (i.e. per sample) in obsm.
@@ -45,6 +48,23 @@ class Explain:
     def _importance_consistency(
         self, adata: ad.AnnData, labels, summary: str = "std"
     ) -> dict[str, pd.DataFrame | None] | pd.DataFrame | None:
+        """Quantify the consistency of feature importances across samples
+
+        Parameters
+        ----------
+        summary : function used to measure the spread of importance values
+            `counts` : proportion of samples in which the feature is positive, negative, zero
+            `std` : standard deviation of importance across samples
+            `range` : range of importance values
+
+        Returns
+        -----
+        One of
+            a single df of consistency results if len(label) == 1
+            a dictionary mapping label to consistency results, if `labels` is a list
+            None if all calculations for each feature failed
+        """
+
         def one_label(label: str):
             vals = adata.obsm[self.local_getter(label)]
             dfs = []
@@ -223,70 +243,122 @@ class Explain:
         return result
 
 
-def get_shap_adata(
-    adata: ad.AnnData,
-    explainer: shap.Explainer,
-    classifier,
-    label_col: str = "tumor_type",
-    feature_col: str = "GENEID",
-    summary_plot: bool = True,
-    interaction_matrix: bool = False,
-    plot_feature_col: str = "GENENAME",
-    plot_directory: Path | None = None,
-) -> tuple[ad.AnnData, shap.Explanation]:
-    """Get shapley values for the samples in `adata`
+# def shap_adata(adata: ad.AnnData):
+
+
+class Exp:
+    """Helper class for unifying feature explanations
 
     Parameters
     ----------
-    classifier : pre-fitted classifier
-    explainer : shap.Explainer pre-fitted on `classifier`
-    summary_plot : path to directory to save summary plots. A summary plot
-        will be made for each available class
-
-    Returns
-    -------
-    1. Adata object storing the shapley values for each class in adata.obsm[shap_{class}]
-        Each of these is a matrix of shape n_samples x n_features
-    2. shap explanation object
+    model : fitted model
     """
-    classes = classifier.classes_
-    y_true: np.ndarray = adata.obs[label_col]
-    y_pred: np.ndarray = classifier.predict(adata)
-    class2index = dict(zip(classes, range(len(classes))))
-    features = adata.var[feature_col]
-    counts = pd.DataFrame(
-        adata.X if not sparse.isspmatrix(adata.X) else adata.X.toarray(),
-        columns=features,
-    )
-    empty = ad.AnnData(var=adata.var, obs=adata.obs)
-    empty.obs.loc[:, "y_true"] = y_true
-    empty.obs.loc[:, "y_pred"] = y_pred
 
-    svals: np.ndrray = explainer.shap_values(counts)
-    imatrix: np.ndarray | None = None
-    explanation = shap.Explanation(svals, base_values=counts, feature_names=features)
-    if plot_feature_col:
-        p_features = adata.var[plot_feature_col].combine_first(features)
-        counts.columns = p_features
-    if interaction_matrix and isinstance(explainer, shap.TreeExplainer):
-        imatrix = explainer.shap_interaction_values(counts)
-    if plot_directory is not None:
-        plot_directory.mkdir(parents=True, exist_ok=True)
-        for c, i in class2index.items():
-            if summary_plot:
-                shap.summary_plot(svals[:, :, i], counts)
-                plt.savefig(
-                    plot_directory.joinpath(f"{c}_summary.png"),
-                    dpi=500,
-                    bbox_inches="tight",
-                )
-                plt.close()
-    for clss, i in class2index.items():
-        empty.obsm[f"shap_{clss}"] = pd.DataFrame(
-            svals[:, :, i], index=empty.obs.index, columns=empty.var.index
+    def __init__(
+        self,
+        model,
+        adata: ad.AnnData,
+        label_col: str = "tumor_type",
+        feature_col: str = "GENEID",
+    ) -> None:
+        self.adata: ad.AnnData
+        self.features: np.ndarray
+        self.y_true: np.ndarray
+        self.model = model
+        self.label_col = label_col
+        self.feature_col = feature_col
+        self.class2index = dict(
+            zip(self.model.classes_, range(len(self.model.classes_)))
         )
-    empty.uns["shap_interaction_matrix"] = imatrix
-    return empty, explanation
+        self.new_adata(adata)
+
+    def new_adata(self, adata: ad.AnnData):
+        self.adata = adata
+        self.features = adata.var[self.feature_col]
+        self.y_true = adata.obs[self.label_col]
+
+    def _count_df(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            self.adata.X
+            if not sparse.isspmatrix(self.adata.X)
+            else self.adata.X.toarray(),
+            columns=self.features,
+        )
+
+    def _into_obsm(self, adata, prefix, importances: dict[str, np.ndarray]):
+        for cls, i_vals in importances.items():
+            adata.obsm[f"{prefix}{cls}"] = pd.DataFrame(
+                i_vals, index=adata.obs.index, columns=adata.var.index
+            )
+
+    @staticmethod
+    def _make_empty(adata: ad.AnnData, y_true, y_pred) -> ad.AnnData:
+        empty = ad.AnnData(var=adata.var, obs=adata.obs)
+        empty.obs.loc[:, "y_true"] = y_true
+        empty.obs.loc[:, "y_pred"] = y_pred
+        return empty
+
+    def anchor(self, adata: ad.AnnData):
+        features = adata.var[self.feature_col]
+        explainer = ae.AnchorTabular(
+            predictor=lambda x: self.model.get_model().predict_proba(x),
+            feature_names=features,
+            seed=RANDOM_STATE,
+        )
+
+    def shap(
+        self,
+        explain_fn,
+        summary_plot: bool = True,
+        interaction_matrix: bool = False,
+        plot_feature_col: str = "GENENAME",
+        plot_directory: Path | None = None,
+    ) -> tuple[ad.AnnData, shap.Explanation]:
+        """Get shapley values for the samples in `adata`
+
+        Parameters
+        ----------
+        classifier : pre-fitted classifier
+        explainer : shap.Explainer pre-fitted on `classifier`
+        summary_plot : path to directory to save summary plots. A summary plot
+            will be made for each available class
+
+        Returns
+        -------
+        1. Adata object storing the shapley values for each class in adata.obsm[shap_{class}]
+            Each of these is a matrix of shape n_samples x n_features
+        2. shap explanation object
+        """
+        y_pred: np.ndarray = self.model.predict(self.adata)
+        explainer: shap.Explainer = explain_fn(self.model.get_model())
+        counts = self._count_df()
+        empty: ad.AnnData = self._make_empty(self.adata, self.y_true, y_pred)
+
+        svals: np.ndrray = explainer.shap_values(counts)
+        imatrix: np.ndarray | None = None
+        explanation = shap.Explanation(
+            svals, base_values=counts, feature_names=self.features
+        )
+        if plot_feature_col:
+            p_features = self.adata.var[plot_feature_col].combine_first(self.features)
+            counts.columns = p_features
+        if interaction_matrix and isinstance(explainer, shap.TreeExplainer):
+            imatrix = explainer.shap_interaction_values(counts)
+        class2shap = {c: svals[:, :, i] for (c, i) in self.class2index.items()}
+        if plot_directory is not None:
+            plot_directory.mkdir(parents=True, exist_ok=True)
+            for c, vals in class2shap.items():
+                if summary_plot:
+                    shap.summary_plot(vals, counts)
+                    plt.savefig(
+                        plot_directory.joinpath(f"{c}_summary.png"),
+                        dpi=500,
+                        bbox_inches="tight",
+                    )
+                    plt.close()
+        self._into_obsm(empty, "shap_", class2shap)
+        empty.uns["shap_interaction_matrix"] = imatrix
+        return empty, explanation
 
 
 def get_most_important(

@@ -75,34 +75,27 @@ def shap_helper(
     n: int = 10,
 ):
     outdir = OUTDIR.joinpath("shapley")
-    explainer = shap.TreeExplainer(model.get_model())
-    s_test, s_vals = ex.get_shap_adata(
-        test,
-        explainer,
-        model,
-        label_col,
-        feature_col="GENEID",
+    exp_fn = shap.TreeExplainer(model.get_model())
+    exp = ex.Exp(model, adata=test, feature_col="GENEID", label_col=label_col)
+    s_test, s_vals = exp.shap(
+        explain_fn=exp_fn,
         summary_plot=True,
         plot_feature_col="GENENAME",
         plot_directory=here(outdir.joinpath(f"{set_name}_plots")),
     )
     s_test.obs.loc[:, "dataset"] = set_name
     # write_pickle(s_vals, here(outdir.joinpath(f"shapley_explanation-{set_name}.pkl")))
-    s_train, _ = ex.get_shap_adata(
-        train,
-        explainer,
-        model,
-        label_col,
-        feature_col="GENEID",
+    exp.new_adata(train)
+    s_train, _ = exp.shap(
+        explain_fn=exp_fn,
         summary_plot=False,
         plot_directory=None,
     )
     outfile = here(outdir.joinpath(f"shapley-{set_name}.h5ad"))
     if not outfile.exists():
         s_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}.h5ad")))
-    ff = ex.Explain(s_train, s_test, label_col=label_col)
-    neg_contrib, per_label = ff.shap_neg_contributions(n=10)
-    # [2025-03-28 Fri] Let's try with n = 20
+    ff = ex.ExpInterpreter(s_train, s_test, label_col=label_col)
+    neg_contrib, per_label = ff.shap_neg_contributions(n=n)
     train_mat = ff.shap_distance(target="train", square=True)
     fig, ax = plt.subplots()
     plot_diagonal_matrix(train_mat, ax, cmap="coolwarm")
@@ -141,13 +134,14 @@ def main(args):
             spec = {label_col: [(u, 5) for u in unique_values]}
             train, test = split_and_sample(adata, fn, spec, RNG)
             saved_model_file = model_storage.joinpath(f"{name}_model.pkl")
-            if not saved_model_file.exists():
-                model.fit(train)
-                write_pickle(model, saved_model_file)
-            else:
-                model = load_pickle(saved_model_file)
+            model.fit(train)
+            # if not saved_model_file.exists():
+            # BUG: [2025-03-31 Mon] Using the loaded model results in really poor performance for some reason
+            #     write_pickle(model, saved_model_file)
+            # else:
+            #     model = load_pickle(saved_model_file)
             for n in [20, 10, 5]:
-                n_outdir = OUTDIR.joinpath("shapley").joinpath(n)
+                n_outdir = OUTDIR.joinpath("shapley").joinpath(str(n))
                 n_outdir.mkdir(exist_ok=True)
                 neg_contrib = shap_helper(
                     model, train, test, label_col=label_col, set_name=name
