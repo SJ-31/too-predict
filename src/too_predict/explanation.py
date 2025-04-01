@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Callable
 
+import alibi.api.interfaces as interfaces
 import alibi.explainers as ae
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -11,6 +12,7 @@ import scipy.spatial.distance as sd
 import shap
 from scipy import sparse
 
+from too_predict.model import PredBase
 from too_predict.utils import RANDOM_STATE
 
 
@@ -256,7 +258,7 @@ class Exp:
 
     def __init__(
         self,
-        model,
+        model: PredBase,
         adata: ad.AnnData,
         label_col: str = "tumor_type",
         feature_col: str = "GENEID",
@@ -265,6 +267,7 @@ class Exp:
         self.features: np.ndarray
         self.y_true: np.ndarray
         self.model = model
+        self.u_model = self.model.get_model()  # Underlying model of PredBase
         self.label_col = label_col
         self.feature_col = feature_col
         self.class2index = dict(
@@ -298,13 +301,60 @@ class Exp:
         empty.obs.loc[:, "y_pred"] = y_pred
         return empty
 
-    def anchor(self, adata: ad.AnnData):
-        features = adata.var[self.feature_col]
-        explainer = ae.AnchorTabular(
-            predictor=lambda x: self.model.get_model().predict_proba(x),
-            feature_names=features,
+    def anchor(self, **kwargs):
+        def add_anchor_exp(result: interfaces.Explanation, importance_vec: np.ndarray):
+            # Define importance of a feature here as the precision increase
+            # when adding the feature to the (anchor + coverage) - 1
+            # So importance ranges from [-1, 1]
+            # [2025-04-01 Tue] might want to change this
+            coverage = result.coverage
+            precisions = result.raw["precision"]
+            feature_indices = result.raw["feature"]
+            for i, f_index in enumerate(feature_indices):
+                if i == 0:
+                    cur_prec = precisions[i]
+                else:
+                    cur_prec = precisions[i] - precisions[i - 1]
+                importance = cur_prec + coverage
+                importance_vec[f_index] = importance
+            return importance_vec
+
+        explainer: ae.AnchorTabular = ae.AnchorTabular(
+            predictor=lambda x: self.u_model.predict_proba(x),
+            feature_names=self.features,
             seed=RANDOM_STATE,
         )
+        y_pred = self.model.predict(self.adata)
+        empty = self._make_empty(self.adata, self.y_true, y_pred)
+        if not kwargs:
+            kwargs = {"threshold": 0.90, "batch_size": 70}
+        counts = self._count_df()
+        feature_vec = np.zeros_like(self.features)
+        explainer.fit(counts, **kwargs)
+        class2importance = {}
+        all_tracker = {
+            self.label_col: [],
+            "anchor": [],
+            "precision": [],
+            "n_features": [],
+            "coverage": [],
+        }
+        for label in self.class2index.keys():
+            indices = np.where(self.y_true == label)[0]
+            tmp = []
+            for i in indices:
+                explanation: interfaces.Explanation = explainer.explain(counts[i, :])
+                ivec = add_anchor_exp(explanation, feature_vec.copy())
+                tmp.append([ivec])
+                all_tracker[self.label_col].append(label)
+                all_tracker["coverage"].append(explanation.coverage)
+                all_tracker["anchor"].append(" AND ".join(explanation.anchor))
+                all_tracker["n_features"].append(len(explanation.anchor))
+                all_tracker["precision"].append(explanation.precision)
+            class2importance[label] = np.concatenate(tmp, axis=1)
+        metric_df = pd.DataFrame(all_tracker)
+        self._into_obsm(empty, "anchor_", class2importance)
+        return empty, metric_df
 
     def shap(
         self,
