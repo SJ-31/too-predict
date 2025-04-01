@@ -3,20 +3,21 @@ name = "too_predict"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12,<3.13"
 dependencies = [
   "anndata>=0.11.3",
+  "alibi>=0.9.6",
   "anndata2ri>=1.3.2",
   "dask>=2025.2.0",
   "dask-jobqueue>=0.9.0",
   "imbalanced-learn>=0.13.0",
-  "ipython>=8.32.0",
+  "ipython==8",               # Syntax highlighting issue
   "optuna>=4.2.1",
   "pip>=25.0.1",
   "polars>=1.22.0",
   "optuna",
   "obonet",
-  "numpy",
+  "numpy<2",
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
   "pyod>=2.0.3",
@@ -28,6 +29,8 @@ dependencies = [
   "xgboost>=2.1.4",
   "shap>=0.47.1",
   "interpret>=0.6.9",
+  "setuptools>=77.0.3",
+  "wheel>=0.45.1",
 ]
 
 [build-system]

@@ -63,11 +63,11 @@ def get_data(path: str, must_exist: bool = True) -> Path:
     """Retrieve the path of a file in this package's `data` directory
     :param: path relative path to the desired file
     """
-    with res.path(too_predict) as root:
-        file = root.parent.parent.joinpath("data").joinpath(path)
-        if must_exist and not file.exists():
-            raise FileNotFoundError(f"{path} doesn't exist!")
-        return file.absolute()
+    root = res.files(too_predict)
+    file = root.parent.parent.joinpath("data").joinpath(path)
+    if must_exist and not file.exists():
+        raise FileNotFoundError(f"{path} doesn't exist!")
+    return file.absolute()
 
 
 def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
@@ -191,16 +191,16 @@ def adata_x_to_r(adata: ad.AnnData, r_symbol: str = "", layer=None):
 
 def source(r_script: str, in_r=False) -> STAP | None:
     """Import `r script` in src/R as a STAP"""
-    with res.path(too_predict) as root:
-        r_src = root.parent.joinpath("R")
-        script = r_src.joinpath(r_script)
-        if not script.exists():
-            raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
-        if in_r:
-            ro.r(f"source('{script.absolute()}')")
-        else:
-            text = script.read_text()
-            return STAP(text, Path(r_script).stem)
+    root = res.files(too_predict)
+    r_src = root.parent.joinpath("R")
+    script = r_src.joinpath(r_script)
+    if not script.exists():
+        raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
+    if in_r:
+        ro.r(f"source('{script.absolute()}')")
+    else:
+        text = script.read_text()
+        return STAP(text, Path(r_script).stem)
 
 
 def library(package: str) -> InstalledSTPackage | InstalledPackage:
