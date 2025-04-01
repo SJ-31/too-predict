@@ -175,16 +175,19 @@ class ExpInterpreter:
             # positive in the context of classifying other labels
         return combined_neg, label_specific
 
-    def shap_neg_contributions(self, n: int = -1) -> tuple[set[str], dict]:
-        self.local_getter = lambda x: f"shap_{x}"
+    def neg_contributions(self, prefix: str, n: int = -1) -> tuple[set[str], dict]:
+        print("Will retrieve data from the following: ")
+        obs_names = [k for k in self.adata.obsm.keys() if k.startswith(prefix)]
+        print(obs_names)
+        self.local_getter = lambda x: f"{prefix}{x}"
         result = self._negative_contributions(n)
         self.local_getter = None
         return result
 
-    def shap_consistency(
-        self, right_wrong: bool = True, summary: str = "std"
+    def consistency(
+        self, prefix: str, right_wrong: bool = True, summary: str = "std"
     ) -> tuple[dict, dict]:
-        self.local_getter = lambda x: f"shap_{x}"
+        self.local_getter = lambda x: f"{prefix}{x}"
         results: dict = {}
         stats: dict = {}
         for g, adata in zip(["train", "test"], [self.train_vals, self.test_vals]):
@@ -215,13 +218,15 @@ class ExpInterpreter:
         self.local_getter = None
         return results, stats
 
-    def _importance_distance(
+    def importance_distance(
         self,
+        prefix: str,
         target: str = "test",
         metric: str = "euclidean",
         agg_fn: Callable = lambda x: np.median(x, axis=0),
         square: bool = True,
     ) -> pd.DataFrame | np.ndarray:
+        self.local_getter = lambda x: f"{prefix}{x}"
         adata = self.test_vals if target == "test" else self.train_vals
         tmp = [
             pd.DataFrame(
@@ -236,13 +241,8 @@ class ExpInterpreter:
             return pd.DataFrame(
                 sd.squareform(dist), index=self.labels, columns=self.labels
             )
-        return dist
-
-    def shap_distance(self, **kwargs):
-        self.local_getter = lambda x: f"shap_{x}"
-        result = self._importance_distance(**kwargs)
         self.local_getter = None
-        return result
+        return dist
 
 
 # def shap_adata(adata: ad.AnnData):
@@ -277,14 +277,14 @@ class Exp:
 
     def new_adata(self, adata: ad.AnnData):
         self.adata = adata
-        self.features = adata.var[self.feature_col]
+        self.features = adata.var[self.feature_col].astype(str)
         self.y_true = adata.obs[self.label_col]
 
-    def _count_df(self) -> pd.DataFrame:
+    def _count_df(self, adata=None) -> pd.DataFrame:
+        if adata is None:
+            adata = self.adata
         return pd.DataFrame(
-            self.adata.X
-            if not sparse.isspmatrix(self.adata.X)
-            else self.adata.X.toarray(),
+            adata.X if not sparse.isspmatrix(adata.X) else adata.X.toarray(),
             columns=self.features,
         )
 
