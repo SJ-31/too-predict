@@ -10,8 +10,11 @@ import numpy as np
 import pandas as pd
 import scipy.spatial.distance as sd
 import shap
+from matplotlib.figure import Figure
 from scipy import sparse
+from sklearn.decomposition import PCA
 
+import too_predict.plotting as plotting
 from too_predict.model import PredBase
 from too_predict.utils import RANDOM_STATE
 
@@ -219,7 +222,54 @@ class ExpInterpreter:
         self.local_getter = None
         return results, stats
 
-    # def
+    def instance_pca(
+        self,
+        prefix: str,
+        plot: bool = True,
+        subset=None,
+        colors=None,
+        **kwargs,
+    ) -> tuple[np.ndarray, None | Figure]:
+        self.local_getter = lambda x: f"{prefix}{x}"
+        tmp = []
+        for adata in (self.train_vals, self.test_vals):
+            for label in self.labels:
+                if subset is not None and label in subset:
+                    continue
+                mask = adata.obs[self.label_col] == label
+                cur = adata[mask, :]
+                cur_importance = adata.obsm[self.local_getter(label)]
+                if cur_importance.shape[0] != cur.shape[0]:
+                    cur_importance = cur_importance.loc[
+                        cur_importance.index.isin(cur.obs.index), :
+                    ]
+                df = pd.DataFrame(
+                    cur_importance, index=cur.obs.index, columns=cur.var.index
+                )
+                tmp.append(df)
+        x = pd.concat(tmp, axis=0)
+
+        all_obs = pd.concat(
+            [
+                self.train_vals.obs.assign(usage="train"),
+                self.test_vals.obs.assign(usage="test"),
+            ],
+            axis=0,
+        )
+        x, all_obs = x.align(all_obs, join="inner", axis=0)
+        pca = PCA(**kwargs)
+        result = pca.fit_transform(x)
+        if plot:
+            if not colors:
+                colors = (self.label_col,)
+            fig, ax = plt.subplots(ncols=len(colors))
+            for i, color in enumerate(colors):
+                plotting.plot_pca(result, all_obs[color], ax[i], **kwargs)
+            rval = result, fig
+        else:
+            rval = result, None
+        self.local_getter = None
+        return rval
 
     def instance_distances(
         self,
