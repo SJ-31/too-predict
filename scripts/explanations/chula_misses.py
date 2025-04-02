@@ -6,14 +6,13 @@ from typing import Callable
 import anndata as ad
 import joblib
 import matplotlib.pyplot as plt
-import pandas as pd
 import shap
 import too_predict.explanation as ex
 from dask.distributed import Client
 from dask_jobqueue import SLURMCluster
 from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
-from too_predict.evaluation import get_all_metrics, write_cross_val, write_metrics
+from too_predict.evaluation import get_all_metrics, write_metrics
 from too_predict.filter import Filter
 from too_predict.model import PredBase
 from too_predict.plotting import plot_diagonal_matrix, plot_instance_dist
@@ -121,6 +120,17 @@ def plot_save_helper(
     plot_diagonal_matrix(test_mat, ax, cmap="coolwarm")
     fig.savefig(plotdir.joinpath(f"{set_name}_test_dist.png"))
     compare_mats = interpreter.instance_distances(prefix, dataset="compare")
+
+    subset = set(test_imp.obs[label_col])
+    pca_plot = plotdir.joinpath(f"{set_name}-pca.png")
+    pca, fig = interpreter.instance_pca(
+        prefix,
+        plot=True,
+        colors=(label_col, "usage"),
+        subset=subset,
+    )
+    fig.set_size_inches((10, 8))
+    fig.savefig(pca_plot, bbox_inches="tight", dpi=500)
 
     for label, m in compare_mats.items():
         fig, ax = plt.subplots()
