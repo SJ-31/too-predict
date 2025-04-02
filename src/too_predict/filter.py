@@ -127,3 +127,55 @@ def count_tomek_links(
         count_matrix.loc[y, x] = c
 
     return formatted_class, formatted_pairs, count_matrix
+
+
+def get_redundant_features(
+    adata,
+    height: int | float,
+    method: str = "correlation",
+    col: str = "cluster",
+    n_cell_col: str = "n_cells",
+) -> tuple[list, list, pd.DataFrame]:
+    """Detect and remove potentially redundant features in `adata` by clustering on
+        an association metric and selecting a single feature from each
+
+    Parameters
+    ----------
+    method : association metric to use, includes `correlation`
+        (recommended after a log-transformation), `phi_prop` and `rho_prop`.
+        The phi and rho proportionality should be used on raw counts
+    height : the cutoff at which to determine clusters
+
+    Returns
+    -------
+    An tuple of [filtered features, features removed,
+            updated adata.var df with cluster assignments]
+
+    Notes
+    -----
+    The representative of a cluster is chosen as the feature found in the most samples
+    of `adata`
+    """
+    if method == "correlation":
+        matrix = spd.pdist(np.transpose(adata.X.toarray()), "correlation")  #
+        # transpose because we want correlation between features, not the samples
+        height = 1 - height  # because correlation distance is 1 - correlation
+    elif method == "phi_prop":
+        matrix = rh.phi_matrix(adata.X.toarray(), True)
+    elif method == "rho_prop":
+        matrix = rh.rho_matrix(adata.X.toarray(), True)
+    else:
+        raise ValueError(f"Method {method} not supported!")
+    link_mat = sch.linkage(matrix, method="average")
+    clusters = sch.fcluster(link_mat, t=height, criterion="distance")
+    adata.var.loc[:, col] = clusters
+    print(f"N clusters: {len(set(clusters))}")
+    most_cells = (
+        adata.var.loc[:, [col, n_cell_col]]
+        .groupby(col)
+        .idxmax()
+        .loc[:, n_cell_col]
+        .to_list()
+    )
+    removed = list(set(adata.var.index) - set(most_cells))
+    return most_cells, removed, adata.var.copy()
