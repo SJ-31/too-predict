@@ -1,11 +1,17 @@
 #!/usr/bin/env ipython
 
+from __future__ import annotations
+
 import anndata as ad
 import numpy as np
 import pandas as pd
-import scanpy as sc
+import scipy.cluster.hierarchy as sch
+import scipy.spatial.distance as spd
 import sklearn.neighbors as sn
 from scipy import sparse
+
+import too_predict._rust_helpers as rh
+from too_predict.model import PredBase
 
 
 class Filter:
@@ -17,13 +23,41 @@ class Filter:
     def __init__(
         self, features, feature_col="GENENAME", inplace=False, blacklist=None
     ) -> None:
-        self.features = features  # Requested features to subset data by
+        self.features: list = list(set(features))
+        # Requested features to subset data by
         if blacklist is not None:
             self.features = [f for f in features if f not in blacklist]
         self.feature_col = feature_col
         self.discarded_features = None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
         self.inplace = inplace
         self.missing_features = []
+
+    def copy(self) -> Filter:
+        return Filter(
+            features=self.features, feature_col=self.feature_col, inplace=self.inplace
+        )
+
+    def from_feature_importance(self, model: PredBase) -> None:
+        underlying = model.get_model()
+        if "feature_importances_" in dir(underlying):
+            if len(imp := underlying.feature_importances_) != len(self.features):
+                raise ValueError(
+                    "The number of features in the fitted model does not match the number in this Filter instance!"
+                )
+            new_features = []
+            self.discarded_features = (
+                [] if self.discarded_features is None else self.discarded_features
+            )
+            for i, f in enumerate(self.features):
+                if imp[i] == 0:
+                    self.discarded_features.append(f)
+                else:
+                    print(f)
+                    new_features.append(f)
+            self.features = new_features
+        else:
+            print("WARNING: the passed model has no feature importances")
+            print("ignoring...")
 
     def fit(self, adata: ad.AnnData) -> None:
         self.adata = adata.copy() if not self.inplace else adata
