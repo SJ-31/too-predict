@@ -19,6 +19,7 @@ from too_predict.model import PredBase
 from too_predict.plotting import plot_diagonal_matrix, plot_instance_dist
 from too_predict.utils import (
     RNG,
+    read_existing,
     split_and_sample,
     training_data_internal,
     training_data_internal_test,
@@ -26,104 +27,106 @@ from too_predict.utils import (
 
 OUTDIR: Path = here("data", "output", "explanations", "chula_misses")
 OUTDIR.mkdir(exist_ok=True, parents=True)
-STORAGE: Path = here("remote", "repos", "too-predict")
+STORAGE: Path = here("remote", "repos", "too-predict", "explanations")
+STORAGE.mkdir(exist_ok=True, parents=True)
+
+# * Feature importance functions
 
 
-def parse_args():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-m", "--memory", default="30")
-    parser.add_argument("-c", "--cores", default=8)
-    parser.add_argument("-t", "--test", default=False, action="store_true")
-    parser.add_argument("-i", "--ignored", default="")
-    parser.add_argument("-d", "--dask", default=False, action="store_true")
-    parser.add_argument("--no_shap", default=False, action="store_true")
-    parser.add_argument("--no_morris", default=False, action="store_true")
-    parser.add_argument("-l", "--label_class", default="tumor_type")
-    return parser.parse_args()
-
-
-def anchor_helper(
-    out: str,
-    model: PredBase,
-    train: ad.AnnData,
-    test: ad.AnnData,
-    label_col: str,
-    set_name: str,
-    n: int = 10,
-):
-    # [2025-04-01 Tue] Use anchors to identify which features are responsible
-    # for causing consistent misclassifications
-    outdir = OUTDIR.joinpath(out)
-    exp = ex.Exp(model, adata=test, feature_col="GENEID", label_col=label_col)
-    s_test, test_metrics = exp.anchor()
-    outfile = here(outdir.joinpath(f"anchor-{set_name}.h5ad"))
-    s_train, train_metrics = exp.anchor(train)
-
-    test_metrics.loc[:, "set"] = "test"
-    train_metrics.loc[:, "set"] = "train"
-    all_metrics = pd.concat([test_metrics, train_metrics])
-    all_metrics.to_csv(here(outdir.joinpath(f"anchor-{set_name}.csv")), index=False)
-
-    if not outfile.exists():
-        s_test.write_h5ad(here(outdir.joinpath(f"anchor-{set_name}.h5ad")))
-
-    ff = ex.ExpInterpreter(s_train, s_test, label_col=label_col)
-    neg_contrib, per_label = ff.neg_contributions(prefix="anchor_", n=n)
-    return neg_contrib
-
-
-def shap_helper(
-    out: str,
-    model: PredBase,
-    train: ad.AnnData,
-    test: ad.AnnData,
-    label_col: str,
-    set_name: str,
-    n: int = 10,
-):
-    outdir = OUTDIR.joinpath(out)
-    exp_fn = lambda x: shap.TreeExplainer(x)
-    exp = ex.Exp(model, feature_col="GENEID", label_col=label_col)
-    exp.fit(test)
-    shap_test, s_vals = exp.shap(
-        explain_fn=exp_fn,
+def get_shap_explanations(explainer: ex.Exp, outdir, set_name, dataset_type):
+    val, _ = explainer.shap(
+        explain_fn=lambda x: shap.TreeExplainer(x),
         summary_plot=True,
         plot_feature_col="GENENAME",
         plot_directory=here(outdir.joinpath(f"{set_name}_plots")),
     )
-    shap_test.obs.loc[:, "dataset"] = set_name
-    # write_pickle(s_vals, here(outdir.joinpath(f"shapley_explanation-{set_name}.pkl")))
-    exp.fit(train)
-    shap_train, _ = exp.shap(
-        explain_fn=exp_fn,
-        summary_plot=False,
-        plot_directory=None,
+    return val
+
+
+def get_anchors(explainer: ex.Exp, outdir, set_name, dataset_type):
+    val, metrics = explainer.anchor()
+    metrics.loc[:, "set"] = dataset_type
+    metrics.to_csv(here(outdir.joinpath(f"anchor-{set_name}.csv")), index=False)
+    return val
+
+
+# * Higher-level functions
+
+
+def helper(
+    importance_getter: Callable[[ex.Exp, str, str, str], ad.AnnData],
+    out: str,
+    model: PredBase,
+    train: ad.AnnData,
+    test: ad.AnnData,
+    label_col: str,
+    set_name: str,
+    n: int = 10,
+):
+    outdir = OUTDIR.joinpath(out)
+    exp = ex.Exp(model, feature_col="GENEID", label_col=label_col)
+
+    def get_test(f):
+        exp.fit(test)
+        val = importance_getter(exp, outdir, set_name, "test")
+        val.write_h5ad(f)
+
+    def get_train(f):
+        exp.fit(train)
+        val = importance_getter(exp, outdir, set_name, "train")
+        val.obs.loc[:, "dataset"] = set_name
+        val.write_h5ad(f)
+
+    train_out = here(STORAGE.joinpath(f"{out}{set_name}_train.h5ad"))
+    test_out = here(STORAGE.joinpath(f"{out}{set_name}_test.h5ad"))
+    test_vals = read_existing(test_out, get_test, ad.read_h5ad)
+    train_vals = read_existing(train_out, get_train, ad.read_h5ad)
+
+    neg_contrib = plot_save_helper(
+        prefix=out,
+        n=n,
+        train_imp=train_vals,
+        test_imp=test_vals,
+        label_col=label_col,
+        set_name=set_name,
+        outdir=outdir,
     )
-    outfile = here(outdir.joinpath(f"shapley-{set_name}.h5ad"))
-    if not outfile.exists():
-        shap_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}_test.h5ad")))
-    ff = ex.ExpInterpreter(shap_train, shap_test, label_col=label_col)
-    neg_contrib, per_label = ff.neg_contributions("shap_", n=n)
-    train_mat = ff.label_distances("shap_", dataset="train", square=True)
+
+    return neg_contrib
+
+
+def plot_save_helper(
+    prefix: str,
+    n: int,
+    train_imp: ad.AnnData,
+    test_imp: ad.AnnData,
+    label_col,
+    set_name,
+    outdir,
+):
+    interpreter = ex.ExpInterpreter(
+        train_importances=train_imp, test_importances=test_imp, label_col=label_col
+    )
+    neg_contrib, per_label = interpreter.neg_contributions(prefix, n=n)
     plotdir = outdir.joinpath(set_name)
     plotdir.mkdir(exist_ok=True, parents=True)
+
+    train_mat = interpreter.label_distances(prefix, dataset="train", square=True)
     fig, ax = plt.subplots()
     plot_diagonal_matrix(train_mat, ax, cmap="coolwarm")
-    fig.savefig(plotdir.joinpath("train_dist.png"))
+    fig.savefig(plotdir.joinpath(f"{set_name}_train_dist.png"))
 
-    test_mat = ff.label_distances("shap_", dataset="test", square=True)
+    test_mat = interpreter.label_distances(prefix, dataset="test", square=True)
     fig, ax = plt.subplots()
     plot_diagonal_matrix(test_mat, ax, cmap="coolwarm")
-    fig.savefig(plotdir.joinpath("test_dist.png"))
-    compare_mats = ff.instance_distances("shap_", dataset="compare")
+    fig.savefig(plotdir.joinpath(f"{set_name}_test_dist.png"))
+    compare_mats = interpreter.instance_distances(prefix, dataset="compare")
+
     for label, m in compare_mats.items():
         fig, ax = plt.subplots()
         plot_instance_dist(m, ax)
         ax.set(title=f"{label_col}: {label}")
-        fig.savefig(plotdir.joinpath(f"{label}_train_test.png"))
-
+        fig.savefig(plotdir.joinpath(f"{set_name}-{label}_train_test.png"))
     return neg_contrib
 
 
@@ -138,6 +141,9 @@ def remove_zero_features(
     train2, test2 = splitter(zeros_removed)
     model.fit(train2)
     return train2, test2
+
+
+# * Main
 
 
 def main(args):
@@ -165,14 +171,18 @@ def main(args):
             model=M,  # will get fit
             splitter=lambda x: split_and_sample(x, fn, spec, RNG),
         )
-        for method, fn in [("shapley", shap_helper), ("anchor", anchor_helper)]:
+        for getter, method in [
+            (get_shap_explanations, "shap_"),
+            (get_anchors, "anchor_"),
+        ]:
             if method in ignored:
                 print(f"Ignoring method {method}")
                 continue
             for n in [20, 10, 5]:
                 n_outdir = OUTDIR.joinpath(method).joinpath(str(n))
                 n_outdir.mkdir(exist_ok=True)
-                neg_contrib = fn(
+                neg_contrib = helper(
+                    importance_getter=getter,
                     out=method,
                     model=M,
                     train=train,
@@ -192,6 +202,24 @@ def main(args):
                 perf_after = get_all_metrics(test.obs[label_col], proba, M.classes_)
                 after = n_outdir.joinpath(f"{name}_after.txt")
                 write_metrics(after, perf_after)
+
+
+# * CLI
+
+
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-m", "--memory", default="30")
+    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-t", "--test", default=False, action="store_true")
+    parser.add_argument("-i", "--ignored", default="")
+    parser.add_argument("-d", "--dask", default=False, action="store_true")
+    parser.add_argument("--no_shap", default=False, action="store_true")
+    parser.add_argument("--no_morris", default=False, action="store_true")
+    parser.add_argument("-l", "--label_class", default="tumor_type")
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
