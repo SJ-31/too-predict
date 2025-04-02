@@ -46,6 +46,7 @@ class ExpInterpreter:
         self.tkey, self.pkey = true_pred
         self.label_col = label_col
         self.labels: pd.Series = train_importances.obs[label_col].unique()
+        self.labels_test: pd.Series = test_importances.obs[label_col].unique()
 
     def _importance_consistency(
         self, adata: ad.AnnData, labels, summary: str = "std"
@@ -218,29 +219,139 @@ class ExpInterpreter:
         self.local_getter = None
         return results, stats
 
-    def importance_distance(
+    # def
+
+    def instance_distances(
         self,
         prefix: str,
-        target: str = "test",
+        dataset: str = "test",
+        metric: str = "euclidean",
+        subset=None,
+        square: bool = True,
+    ) -> dict[str, pd.DataFrame | np.ndarray]:
+        """Compute distance between instances on the basis of feature importance
+        For each label, collect instances of that label and compute distance between
+        them.
+
+        Parameters
+        ----------
+        dataset : one of test|train|compare. If test or train, compute distances per-label
+            within the train or test set.
+            If `compare`, compute distance between train and test sets for instances
+            of the same label
+        subset : restrict to only these labels
+
+        Returns
+        -------
+        A dict mapping labels to the following
+        - If dataset == test|train, a square dataframe containing distances if `square`, else a condensed distance
+        matrix
+        - if compare, a dataframe with shape train_labels x test_labels
+        """
+        self.local_getter = lambda x: f"{prefix}{x}"
+        result = {}
+
+        def not_compare(cur_adata, label):
+            indices = cur_adata.obs[self.label_col] == label
+            importances: np.ndarray = cur_adata.obsm[self.local_getter(label)]
+            importances = importances[indices]
+            dist: np.ndarray = sd.pdist(importances, metric=metric)
+            if square:
+                result[label] = pd.DataFrame(
+                    sd.squareform(dist),
+                    index=cur_adata.obs.index[indices],
+                    columns=cur_adata.obs.index[indices],
+                )
+            else:
+                result[label] = dist
+
+        def compare(label):
+            key = self.local_getter(label)
+            if key in self.train_vals.obsm and key in self.test_vals.obsm:
+                train_indices = self.train_vals.obs[self.label_col] == label
+                test_indices = self.test_vals.obs[self.label_col] == label
+                train_imp = self.train_vals.obsm[key][train_indices]
+                test_imp = self.test_vals.obsm[key][test_indices]
+                train_names = self.train_vals.obs.index[train_indices]
+                test_names = self.test_vals.obs.index[test_indices]
+                dist = sd.cdist(train_imp, test_imp)
+                result[label] = pd.DataFrame(
+                    dist, index=train_names, columns=test_names
+                )
+
+        adata = None
+        if dataset != "compare":
+            label_set = self.labels_test if dataset == "test" else self.labels
+            adata = self.test_vals if dataset == "test" else self.train_vals
+        else:
+            label_set = self.labels
+        for label in label_set:
+            if subset is not None and label in subset:
+                continue
+            if dataset != "compare":
+                not_compare(adata, label)
+            else:
+                compare(label)
+        self.local_getter = None
+        return result
+
+    def label_distances(
+        self,
+        prefix: str,
+        dataset: str = "test",
         metric: str = "euclidean",
         agg_fn: Callable = lambda x: np.median(x, axis=0),
         square: bool = True,
     ) -> pd.DataFrame | np.ndarray:
+        """Compute distances between labels on the basis of their local feature
+        importance. For each label, the function aggregates feature importances across
+        instances, and computes distance between labels.
+
+        Intended to show the variation in feature importances between labels
+            e.g. predictions for class A might rely on different features than class B
+
+        Parameters
+        ----------
+        agg_fn : function to aggregate feature importance across instances
+        target : one of test|train|compare
+            When `test` or `train`, the function computes pairwise distances within
+            the train or test set
+            If `compare`, the function computes pairwise distances between train and test,
+               returning an array of train_labels x test_labels
+
+        Returns
+        -------
+        If dataset == test|train, a square dataframe containing distances if `square`, else a condensed distance
+        matrix
+        if compare, a dataframe with shape train_labels x test_labels
+        """
         self.local_getter = lambda x: f"{prefix}{x}"
-        adata = self.test_vals if target == "test" else self.train_vals
-        tmp = [
-            pd.DataFrame(
-                {label: agg_fn(adata.obsm[self.local_getter(label)])},
-                index=adata.var.index,
-            )
-            for label in self.labels
-        ]
-        df = np.transpose(pd.concat(tmp, axis=1))
-        dist: np.ndarray = sd.pdist(df, metric=metric)
-        if square:
-            return pd.DataFrame(
-                sd.squareform(dist), index=self.labels, columns=self.labels
-            )
+
+        def collect(cur_adata, label_set):
+            tmp = [
+                pd.DataFrame(
+                    {label: agg_fn(cur_adata.obsm[self.local_getter(label)])},
+                    index=cur_adata.var.index,
+                )
+                for label in label_set
+            ]
+            df = np.transpose(pd.concat(tmp, axis=1))
+            return df
+
+        if dataset == "compare":
+            v_train = collect(self.train_vals, self.labels)
+            v_test = collect(self.test_vals, self.labels_test)
+            dist: np.ndarray = sd.cdist(v_train, v_test, metric=metric)
+            return pd.DataFrame(dist, index=self.labels, columns=self.labels_test)
+        else:
+            adata = self.test_vals if dataset == "test" else self.train_vals
+            label_set = self.labels_test if dataset == "test" else self.labels
+            df = collect(adata, label_set)
+            dist: np.ndarray = sd.pdist(df, metric=metric)
+            if square:
+                return pd.DataFrame(
+                    sd.squareform(dist), index=label_set, columns=label_set
+                )
         self.local_getter = None
         return dist
 
@@ -259,7 +370,6 @@ class Exp:
     def __init__(
         self,
         model: PredBase,
-        adata: ad.AnnData,
         label_col: str = "tumor_type",
         feature_col: str = "GENEID",
     ) -> None:
@@ -273,9 +383,8 @@ class Exp:
         self.class2index = dict(
             zip(self.model.classes_, range(len(self.model.classes_)))
         )
-        self.new_adata(adata)
 
-    def new_adata(self, adata: ad.AnnData):
+    def fit(self, adata: ad.AnnData):
         self.adata = adata
         self.features = adata.var[self.feature_col].astype(str)
         self.y_true = adata.obs[self.label_col]
@@ -309,7 +418,7 @@ class Exp:
         fit_kwargs: dict | None = None,
     ) -> tuple[ad.AnnData, pd.DataFrame]:
         if adata is not None:
-            self.new_adata(adata)
+            self.fit(adata)
         if not explain_kwargs:
             explain_kwargs = {
                 "threshold": 0.90,
