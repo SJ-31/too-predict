@@ -16,7 +16,7 @@ from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
 from too_predict.evaluation import get_all_metrics, write_cross_val, write_metrics
 from too_predict.filter import Filter
 from too_predict.model import PredBase
-from too_predict.plotting import plot_diagonal_matrix
+from too_predict.plotting import plot_diagonal_matrix, plot_instance_dist
 from too_predict.utils import (
     RNG,
     split_and_sample,
@@ -45,6 +45,7 @@ def parse_args():
 
 
 def anchor_helper(
+    out: str,
     model: PredBase,
     train: ad.AnnData,
     test: ad.AnnData,
@@ -54,7 +55,7 @@ def anchor_helper(
 ):
     # [2025-04-01 Tue] Use anchors to identify which features are responsible
     # for causing consistent misclassifications
-    outdir = OUTDIR.joinpath("anchor")
+    outdir = OUTDIR.joinpath(out)
     exp = ex.Exp(model, adata=test, feature_col="GENEID", label_col=label_col)
     s_test, test_metrics = exp.anchor()
     outfile = here(outdir.joinpath(f"anchor-{set_name}.h5ad"))
@@ -74,6 +75,7 @@ def anchor_helper(
 
 
 def shap_helper(
+    out: str,
     model: PredBase,
     train: ad.AnnData,
     test: ad.AnnData,
@@ -81,37 +83,46 @@ def shap_helper(
     set_name: str,
     n: int = 10,
 ):
-    outdir = OUTDIR.joinpath("shapley")
-    exp_fn = shap.TreeExplainer(model.get_model())
-    exp = ex.Exp(model, adata=test, feature_col="GENEID", label_col=label_col)
-    s_test, s_vals = exp.shap(
+    outdir = OUTDIR.joinpath(out)
+    exp_fn = lambda x: shap.TreeExplainer(x)
+    exp = ex.Exp(model, feature_col="GENEID", label_col=label_col)
+    exp.fit(test)
+    shap_test, s_vals = exp.shap(
         explain_fn=exp_fn,
         summary_plot=True,
         plot_feature_col="GENENAME",
         plot_directory=here(outdir.joinpath(f"{set_name}_plots")),
     )
-    s_test.obs.loc[:, "dataset"] = set_name
+    shap_test.obs.loc[:, "dataset"] = set_name
     # write_pickle(s_vals, here(outdir.joinpath(f"shapley_explanation-{set_name}.pkl")))
-    exp.new_adata(train)
-    s_train, _ = exp.shap(
+    exp.fit(train)
+    shap_train, _ = exp.shap(
         explain_fn=exp_fn,
         summary_plot=False,
         plot_directory=None,
     )
     outfile = here(outdir.joinpath(f"shapley-{set_name}.h5ad"))
     if not outfile.exists():
-        s_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}.h5ad")))
-    ff = ex.ExpInterpreter(s_train, s_test, label_col=label_col)
+        shap_test.write_h5ad(here(outdir.joinpath(f"shapley-{set_name}_test.h5ad")))
+    ff = ex.ExpInterpreter(shap_train, shap_test, label_col=label_col)
     neg_contrib, per_label = ff.neg_contributions("shap_", n=n)
-    train_mat = ff.shap_distance(target="train", square=True)
+    train_mat = ff.label_distances("shap_", dataset="train", square=True)
+    plotdir = outdir.joinpath(set_name)
+    plotdir.mkdir(exist_ok=True, parents=True)
     fig, ax = plt.subplots()
     plot_diagonal_matrix(train_mat, ax, cmap="coolwarm")
-    fig.savefig(outdir.joinpath(f"train_dist-{set_name}.png"))
+    fig.savefig(plotdir.joinpath("train_dist.png"))
 
-    test_mat = ff.shap_distance(target="test", square=True)
+    test_mat = ff.label_distances("shap_", dataset="test", square=True)
     fig, ax = plt.subplots()
     plot_diagonal_matrix(test_mat, ax, cmap="coolwarm")
-    fig.savefig(outdir.joinpath(f"test_dist-{set_name}.png"))
+    fig.savefig(plotdir.joinpath("test_dist.png"))
+    compare_mats = ff.instance_distances("shap_", dataset="compare")
+    for label, m in compare_mats.items():
+        fig, ax = plt.subplots()
+        plot_instance_dist(m, ax)
+        ax.set(title=f"{label_col}: {label}")
+        fig.savefig(plotdir.joinpath(f"{label}_train_test.png"))
 
     return neg_contrib
 
@@ -162,6 +173,7 @@ def main(args):
                 n_outdir = OUTDIR.joinpath(method).joinpath(str(n))
                 n_outdir.mkdir(exist_ok=True)
                 neg_contrib = fn(
+                    out=method,
                     model=M,
                     train=train,
                     test=test,
