@@ -181,7 +181,7 @@ class ExpInterpreter:
 
     def neg_contributions(self, prefix: str, n: int = -1) -> tuple[set[str], dict]:
         print("Will retrieve data from the following: ")
-        obs_names = [k for k in self.adata.obsm.keys() if k.startswith(prefix)]
+        obs_names = [k for k in self.test_vals.obsm.keys() if k.startswith(prefix)]
         print(obs_names)
         self.local_getter = lambda x: f"{prefix}{x}"
         result = self._negative_contributions(n)
@@ -234,7 +234,7 @@ class ExpInterpreter:
         tmp = []
         for adata in (self.train_vals, self.test_vals):
             for label in self.labels:
-                if subset is not None and label in subset:
+                if subset is not None and label not in subset:
                     continue
                 mask = adata.obs[self.label_col] == label
                 cur = adata[mask, :]
@@ -317,6 +317,8 @@ class ExpInterpreter:
 
         def compare(label):
             key = self.local_getter(label)
+            if not (self.test_vals.obs[self.label_col] == label).any():
+                return
             if key in self.train_vals.obsm and key in self.test_vals.obsm:
                 train_indices = self.train_vals.obs[self.label_col] == label
                 test_indices = self.test_vals.obs[self.label_col] == label
