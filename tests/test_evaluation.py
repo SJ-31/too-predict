@@ -2,8 +2,10 @@
 from typing import Callable
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import shap
 import too_predict.evaluation as te
 import too_predict.explanation as ee
@@ -15,8 +17,10 @@ from too_predict.imputer import Imputer
 from too_predict.model import (
     PredBase,
 )
+from too_predict.plotting import plot_diagonal_matrix
 from too_predict.transformer import Transformer
 
+# #  --- CODE BLOCK ---
 ADATA = ut.training_data_internal_test()
 
 
@@ -44,13 +48,6 @@ rshap, rv, tshap, tv = test_shapley()
 # #  --- CODE BLOCK ---
 label_col = "tumor_type"
 current = "DLBC"
-
-n = 50
-
-# [2025-03-28 Fri] safety review says that we shouldn't place anything blocking the fire extinguisher
-
+vals = rshap.obsm[f"shap_{current}"]
 ff = ee.Explain(rshap, tshap)
-all_neg, specific = ff.shap_neg_contributions()
-for k, v in specific.items():
-    print(k, len(v))
-print(len(all_neg) / rshap.shape[1])
+cons, stats = ff.shap_consistency(summary="range")
