@@ -213,3 +213,129 @@ def get_redundant_features(
     )
     removed = list(set(adata.var.index) - set(most_cells))
     return most_cells, removed, adata.var.copy()
+
+
+class CompareSplits:
+    """Compare the feature distribution of train vs test instances
+        To help identify which features are responsible for misclassifications
+    Parameters
+    ----------
+    y : column of adata.obs that we are trying to predict
+
+    Notes
+    -----
+    For LFC methods, the idea is that instances that are difficult to classify will
+    have high absolute lfc between train and test sets WITHIN a given label of `y`
+
+    We can compare this lfc to the lfc of the `y` label against all other labels
+    """
+
+    def __init__(
+        self, train: ad.AnnData, test: ad.AnnData, y: str = "tumor_type"
+    ) -> None:
+        self.adata = ad.concat([train, test], merge="first")
+        self.adata.obs["usage"] = ["train"] * train.shape[0] + ["test"] * test.shape[0]
+        self.lfcs: dict[str, pd.DataFrame] | None = None
+        self.y = y  # Attribute of obs we want to predict
+
+    def scanpy_lfc(self, threshold: float = 0.05) -> None:
+        key = "usage"
+        lfcs = {}
+        train = self.adata[self.adata.obs["usage"] == "train", :]
+        sc.tl.rank_genes_groups(train, groupby=self.y)
+        ri = ut.RankInterpreter(train)
+        all_lfc = ri.feature_stat("logfoldchanges")
+
+        for label in self.adata.obs[self.y].unique():
+            cur = self.adata[self.adata.obs[self.y] == label]
+            batch_counts = cur.obs[key].value_counts()
+            if len(batch_counts) == 1 or (batch_counts == 1).any():
+                continue
+            cur = self.adata[self.adata.obs[self.y] == label, :]
+            sc.tl.rank_genes_groups(
+                cur, groupby=key, method="wilcoxon", pts=True, reference="train"
+            )
+            ri = ut.RankInterpreter(cur)
+            names = {"logfoldchanges": "test_vs_train", label: "vs_all"}
+            lfc = (
+                ri.feature_stat("logfoldchanges", threshold=threshold)
+                .join(all_lfc.filter(items=[label], axis=1), on="names", how="inner")
+                .rename(names, axis=1)
+            )
+            lfc.loc[:, "abs_ratio"] = np.abs(lfc["vs_all"]) - np.abs(
+                lfc["test_vs_train"]
+            )
+            lfcs[label] = lfc
+        self.lfcs = lfcs
+
+    def get_plots(self, subset=None, **kwargs) -> Figure:
+        if self.lfcs is None:
+            raise ValueError("An lfc method has not been run yet!")
+        keys = self.lfcs.keys() if subset is None else subset
+        fig, axes = plt.subplots(ncols=len(keys), sharey=True, sharex=True)
+        multiple = len(keys) > 1
+        for i, k in enumerate(keys):
+            df = self.lfcs[k].loc[:, ["test_vs_train", "vs_all"]]
+            ax = axes if not multiple else axes[i]
+            x, y = df.iloc[:, 0], df.iloc[:, 1]
+            sns.scatterplot(y=y, x=x, ax=ax, **kwargs)
+            ax.set_xlabel(f"{k} vs. all")
+            ax.set_ylabel(None)
+            if i == 0:
+                ax.set_ylabel("lfc test vs. train")
+        if multiple:
+            fig.align_labels()
+        return fig
+
+    def lfc_get_noisy(
+        self, quantile: float = 0.10, subset=None, agg_method: str = "any"
+    ) -> list[str]:
+        """Identify noisy features from lfc ratios
+
+        Parameters
+        ----------
+        quantile : if a feature has a vs_all / test_vs_train lfc
+            ratio less than this quantile (calculated within each label
+            if agg_method is not mean or median), it is considered noisy
+
+        agg_method : one of any|all|median|mean
+            for median|mean, aggregate the ratio with the chosen method and filter with
+            the summarized value.
+        subset : only use these labels when determining noisy features
+
+        Returns
+        -------
+        List of noisy features
+
+        """
+        if self.lfcs is None:
+            raise ValueError("An lfc method has not been run yet!")
+        combined = pd.concat(
+            [
+                v.assign(label=k).reset_index()
+                for k, v in self.lfcs.items()
+                if subset is None or k in subset
+            ]
+        ).reset_index(drop=True)
+        if agg_method in {"mean", "median"}:
+            if agg_method == "mean":
+                agg = combined.groupby("names")["abs_ratio"].mean()
+            else:
+                agg = combined.groupby("names")["abs_ratio"].median()
+            cutoff = np.nanquantile(agg, quantile)
+            return agg.index[agg < cutoff].to_list()
+        grouped = (
+            combined.groupby("label")
+            .apply(
+                lambda x: x.assign(
+                    passed=x["abs_ratio"] < np.nanquantile(x["abs_ratio"], quantile)
+                ),
+                include_groups=False,
+            )
+            .groupby("names")
+        )
+        if agg_method == "all":
+            mask = grouped["passed"].all()
+        else:
+            mask = grouped["passed"].any()
+        return mask.index[mask].to_list()
