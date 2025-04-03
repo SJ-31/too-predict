@@ -869,3 +869,67 @@ def split_and_sample(
     train = train[~train_index.isin(indices)]
     test = ad.concat([test, from_train], axis="obs", merge="same")
     return train, test
+
+
+class RankInterpreter:
+    """A class with methods to ease data access and interpretation of the results
+    produced by scanpy.tl.rank_genes_groups
+    """
+
+    def __init__(self, adata: ad.AnnData, group=None, **kwargs) -> None:
+        self.features = adata.var.index
+        data = adata.uns["rank_genes_groups"]
+        # Each group column is ordered independently of the others
+        for k, v in data.items():
+            if k != "params":
+                self.__setattr__(k, pd.DataFrame(v))
+            else:
+                self.__setattr__(k, v)
+        self.groups = self.names.columns
+        self.data = sc.get.rank_genes_groups_df(adata, group=group, **kwargs)
+        # attrs include 'params', 'pts' (optional), 'pts_rest' (optional),
+        # 'names',
+        # 'scores',
+        # 'pvals',
+        # 'pvals_adj',
+        # 'logfoldchanges'
+
+    def feature_stat(
+        self,
+        stat: str,
+        feature_list=None,
+        threshold: float = None,
+        threshold_requirement: str = "any",
+    ) -> pd.DataFrame:
+        """Get a dataframe of features x group
+        showing the values of each feature in `gene_list` for the given statistic.
+
+        Parameters
+        ----------
+        threshold : float for adjusted p-value threshold
+        """
+        feature_list = self.features if feature_list is None else feature_list
+
+        def helper(cur_stat):
+            if len(self.groups) > 1:
+                reshaped = (
+                    self.data.filter(items=["group", "names", cur_stat], axis=1)
+                    .loc[self.data["names"].isin(feature_list), :]
+                    .pivot(columns="group", index="names", values=cur_stat)
+                )
+            else:
+                reshaped = self.data.filter(items=["names", cur_stat], axis=1).loc[
+                    self.data["names"].isin(feature_list), :
+                ]
+                reshaped = reshaped.set_index(reshaped["names"]).drop("names", axis=1)
+                return reshaped
+
+        requested = helper(stat)
+        if threshold is not None:
+            pvals = helper("pvals_adj")
+            if threshold_requirement == "any":
+                mask = (pvals <= threshold).any(axis=1)
+            else:
+                mask = (pvals <= threshold).all(axis=1)
+            requested = requested.loc[mask, :]
+        return requested
