@@ -16,7 +16,7 @@ suppressMessages({
 ## * Setup
 OUTDIR <- here("data", "output", "explanations")
 DDIR <- here("data", "output")
-SDIR <- here(OUTDIR, "chula_misses", "shapley")
+SDIR <- here(OUTDIR, "chula_misses", "shap_")
 LABEL_COL <- "tumor_type"
 ad <- import("anndata")
 ex <- import("too_predict.explanation")

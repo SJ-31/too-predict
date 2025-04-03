@@ -5,8 +5,8 @@ suppressMessages({
   library(edgeR)
   library(here)
   library(ggridges)
-  Sys.setenv("RETICULATE_PYTHON" = here(".venv", "bin", "python"))
   library(reticulate)
+  use_condaenv("too-predict")
   source(here("src", "R", "utils.R"))
 })
 
@@ -39,11 +39,12 @@ compare_misses <- function(dirs, label_col = "tumor_type",
         select(all_of(c(wanted_meta, label_col))) |>
         mutate(model = x)
     }
-  }) |> bind_rows()
+  }) |>
+    bind_rows()
 }
 
-test <- read_csv("/home/shannc/Bio_SDD/too-predict/data/output/cross_validation/clr_xgboost_variance_GO/additional_splits/tumor_type-cm_cm-CHULA.csv")
-
+#' Get the total count for each class for each test set from the confusion matrix
+#'
 get_totals <- function(tb, model, test_set, label_col = "tumor_type") {
   cm_file <- here(CV, model, CV_PREFIX, glue("{label_col}-cm_cm-{test_set}.csv"))
   if (file.exists(cm_file)) {
@@ -80,7 +81,7 @@ comparison_plot <- bresults %>%
   facet_wrap(~classifier) +
   ylab(OBJECTIVE_NAME)
 comparison_plot
-ggsave(here(OUTDIR, glue("{OBJECTIVE}_comparison.png")), comparison_plot)
+ggsave(here(OUTDIR, glue("{OBJECTIVE_NAME}_comparison.png")), comparison_plot)
 
 compare_strategies(
   "RandomUnderSampler", "objective_value-kappa",
@@ -107,7 +108,6 @@ tt_miss_counts <- tt_misses |>
     ) |> mutate(model = x$model, test_set = x$test_set, freq = round(count / total, 2))
   }) |>
   bind_rows()
-
 
 tt_miss_plot <- tt_miss_counts |>
   filter(test_set == "CHULA") |>

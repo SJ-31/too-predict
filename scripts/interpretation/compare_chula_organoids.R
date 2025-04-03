@@ -25,7 +25,7 @@ sce_file <- here(
 )
 sce <- readH5AD(sce_file)
 
-wanted_tumor_type <- c("LIHC", "COAD_READ", "CHOL", "COAD-READ", "PAAD", "ESCA", "TCGCT")
+wanted_tumor_type <- c("LIHC", "COAD_READ", "CHOL", "COAD-READ", "PAAD")
 
 sce <- sce[, colData(sce)$tumor_type %in% wanted_tumor_type]
 
@@ -33,8 +33,25 @@ adata <- ad$read_h5ad(sce_file)
 adata <- adata[adata$obs$tumor_type %in% wanted_tumor_type, ]
 adata$obs$from_chula <- grepl("CHULA", adata$obs$Project_ID)
 
-sc$pl$umap(adata, color = c("tumor_type", "Sample_Type", "from_chula"))
-sc$pl$pca(adata, color = c("tumor_type", "Sample_Type", "from_chula"))
+
+if (!"pca" %in% adata$uns) {
+  sc$pp$pca(adata)
+  sc$pp$neighbors(adata)
+  sc$tl$umap(adata)
+  adata$write_h5ad(sce_file)
+}
+
+for (ttype in wanted_tumor_type) {
+  cur <- adata[adata$obs$tumor_type == ttype, ]
+  sc$pl$umap(cur,
+    color = c("Sample_Type", "from_chula"),
+    save = here(outdir, glue("umap-{ttype}.png"))
+  )
+  sc$pl$pca(cur,
+    color = c("Sample_Type", "from_chula"),
+    save = here(outdir, glue("pca-{ttype}.png"))
+  )
+}
 
 pheatmap_helper(
   sce = sce,
@@ -50,6 +67,7 @@ pheatmap_helper(
 )
 
 ## * Compare within-label variances
+# On lr-transformed data
 
 unique_types <- unique(colData(sce)$tumor_type)
 chula_only <- sce[, grepl("CHULA", colData(sce)$Project_ID)]
@@ -61,8 +79,7 @@ var_tb <- lapply(unique_types, \(x) {
   tmp[[as.character(x)]] <- vars
   as_tibble(tmp)
 }) |>
-  purrr::reduce(\(x, y) inner_join(x, y, by = join_by(feature))) |>
-  select(-PAAD, -ESCA)
+  purrr::reduce(\(x, y) inner_join(x, y, by = join_by(feature)))
 
 # See if overall within-label variance has statistically significant differences
 # between the tumor types
