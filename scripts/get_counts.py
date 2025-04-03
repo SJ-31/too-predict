@@ -106,7 +106,6 @@ sitemap = {
     "PAAD": "pancreas",
 }
 
-# TODO: [2025-03-21 Fri] need to do this
 in_house_salmon: dict[str, list[Path]] = {
     "PAAD": [
         Path("/data/project/stemcell/PDAC/processed/RNAseq"),

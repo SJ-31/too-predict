@@ -57,9 +57,6 @@ LABEL_CLASSES = ["tumor_type", "primary_site"]
 GROUP_CLASSES = ["Project_ID"]
 USE_CACHED: bool = True
 
-# Dictionary of model_name -> [model, transformation, imputation, feature_set]
-# TODO: should you test on every available combination?
-
 ADATA: ad.AnnData
 
 
