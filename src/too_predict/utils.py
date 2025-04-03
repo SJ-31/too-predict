@@ -623,16 +623,20 @@ def hugo_ref_internal() -> pd.DataFrame:
 ZEROS_FILE = "edgeR_median_lfc_feature_list_3000.txt"
 
 
-def get_zeros_internal(name: str = "edgeR_median_lfc_feature_list_3000.txt") -> list:
-    file = get_data(f"output/feature_selection/zeros/{name}")
+def get_blacklist_internal(
+    name: str = "edgeR_median_lfc_feature_list_3000_ZERO.txt",
+) -> list:
+    file = get_data(f"output/feature_selection/blacklists/{name}")
     if file.exists():
         with open(file, "r") as z:
             zeros = z.read().strip().splitlines()
         return zeros
-    raise ValueError(f"Zeros file {name} not found!")
+    raise ValueError(f"Blacklist {name} not found!")
 
 
-def ref_feature_lists_internal(add_all: bool = True) -> tuple[dict, dict]:
+def ref_feature_lists_internal(
+    add_all: bool = True, remove_zeros: bool = False
+) -> tuple[dict, dict]:
     features, refs = {}, {}
     fs_dir = here("data", "output", "feature_selection")
     for i, (fname, add_to) in enumerate(
@@ -647,7 +651,7 @@ def ref_feature_lists_internal(add_all: bool = True) -> tuple[dict, dict]:
             with open(file, "r") as f:
                 items = f.read().strip().splitlines()
             try:
-                if i == 0 and (zeros := get_zeros_internal()):
+                if i == 0 and (zeros := get_blacklist_internal()) and remove_zeros:
                     # Remove zero-importance features
                     items = list(set(items) - set(zeros))
             except ValueError:
