@@ -226,3 +226,25 @@ find_prop_cutoff <- function(N, alpha, D, one_tailed = TRUE) {
   z_cutoff <- sd * z_alpha
   tanh(z_cutoff)
 }
+
+
+#' Helper function for identifying DE genes between train vs. test splits
+#' for the `CompareLFC` class
+#'
+#' @description
+#' The form is an additive model, made to compare the effect of the split between
+#' samples of the same label e.g. tumor type
+#' The fewer DE genes between splits, the better because it indicates that the split
+#' variable/method does not induce variation between samples within the label
+edgeR_lfc_train_test <- function(counts, obs_meta, var_meta, label) {
+  library(edgeR)
+  dge <- DGEList(counts = counts, samples = obs_meta, genes = var_meta)
+  dge$samples[[label]] <- as.factor(dge$samples[[label]])
+  mm <- model.matrix(as.formula(paste("~", label, "+usage")), data = dge$samples)
+  dge <- normLibSizes(dge)
+  dge <- estimateDisp(dge, design = mm, robust = TRUE)
+  fit <- glmQLFit(dge, mm, robust = TRUE)
+  test <- glmQLFTest(fit)
+  topTags(test, n = nrow(dge), sort.by = "PValue") |>
+    as.data.frame()
+}

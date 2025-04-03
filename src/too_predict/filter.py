@@ -6,6 +6,7 @@ import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import rpy2.robjects as ro
 import scanpy as sc
 import scipy.cluster.hierarchy as sch
 import scipy.spatial.distance as spd
@@ -13,7 +14,6 @@ import seaborn as sns
 import sklearn.neighbors as sn
 from matplotlib.figure import Figure
 from scipy import sparse
-from sklearn.preprocessing import StandardScaler
 
 import too_predict._rust_helpers as rh
 import too_predict.utils as ut
@@ -246,6 +246,22 @@ class CompareSplits:
         self.adata.obs["usage"] = ["train"] * train.shape[0] + ["test"] * test.shape[0]
         self.lfcs: dict[str, pd.DataFrame] | None = None
         self.y = y  # Attribute of obs we want to predict
+
+    @ut.r_cleanup
+    def edgeR_lfc(self) -> pd.DataFrame:
+        i_name = self.adata.var.index.name
+        ut.source("utils.R", in_r=True)
+        ut.df_to_r(self.adata.obs, r_symbol="obs")
+        ut.df_to_r(self.adata.var.reset_index(), r_symbol="var")
+        counts = (
+            self.adata.X.toarray() if sparse.isspmatrix(self.adata.X) else self.adata.X
+        )
+        ut.np_to_r(np.transpose(counts), r_symbol="counts")
+        ro.globalenv["label"] = self.y
+        ro.r("result <- edgeR_lfc_train_test(counts, obs, var, label)")
+        df = ut.df_from_r(ro.globalenv["result"])
+        df.index = df[i_name]
+        return df.drop(i_name, axis=1)
 
     def scanpy_lfc(self, threshold: float = 0.05) -> None:
         key = "usage"
