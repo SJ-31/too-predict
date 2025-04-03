@@ -3,6 +3,7 @@ from typing import Callable
 
 from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 
 import too_predict.model as tm
 from too_predict.filter import Filter
@@ -10,7 +11,12 @@ from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestClassifier
 from too_predict.transformer import Transformer
-from too_predict.utils import RNG, recode_to_go, ref_feature_lists_internal
+from too_predict.utils import (
+    RNG,
+    get_blacklist_internal,
+    recode_to_go,
+    ref_feature_lists_internal,
+)
 
 REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 
@@ -23,6 +29,7 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 # r : reference set
 # e : encoding (only "GO" and None) are supported [2025-04-01 Tue]
 # k : kwargs to transformer
+# b : feature blacklist
 
 MODELS: dict = {
     "clr_random_forest_minfo": {
@@ -89,6 +96,13 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
     },
+    "clr_xgboost_edger_1000_organoid_edger_blacklist": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
+        "l": "edgeR_median_lfc_feature_list_3000-high_organoid_lfc.txt",
+    },
     "clr_xgboost_edger": {
         "m": tm.PredBase(model=tm.XGBEstimator(), make_dense=True),
         "t": "clr",
@@ -108,14 +122,15 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-03-27 Thu] Want to try this out badly, but it's so slow
     },
-    # "clr_dt_edger": {  # A surrogate model
-    #     "model": tm.PredBase(model=DecisionTreeClassifier()),
-    #     "t": "clr",
-    #     "i": "plus_one",
-    #     "f": "edgeR_median_lfc_feature_list_1000",
-    # },
+    "clr_dt_edger": {  # A surrogate model
+        "model": tm.PredBase(model=DecisionTreeClassifier()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
+        "s": True,
+    },
     "clr_random_forest_edger": {
-        "m": tm.RandomForestPred(),
+        "m": tm.PredBase(model=RandomForestClassifier()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -129,6 +144,7 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "r": "variance_feature_list_lowest_20",
+        "s": True,
     },
     "alr_xgboost_low_variance_1000": {
         "m": tm.AlrBase(
@@ -137,6 +153,26 @@ MODELS: dict = {
         ),
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
+        "r": "variance_feature_list_lowest_20",
+        "s": True,
+    },
+    "alr_xgboost_edger_lowest_1000": {
+        "m": tm.AlrBase(
+            tm.XGBEstimator(),
+            references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
+        ),
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_lowest_20",
+        "r": "variance_feature_list_lowest_20",
+    },
+    "alr_xgboost_edger_lowest_1000_only_5": {
+        "m": tm.AlrBase(
+            tm.XGBEstimator(),
+            references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
+            n_refs=5,
+        ),
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_lowest_20",
         "r": "variance_feature_list_lowest_20",
     },
     "alr_random_forest_low_variance": {
@@ -221,10 +257,11 @@ ADDITIONAL_SPLITS: dict = {
 def read_model_spec(
     spec: dict,
 ) -> tuple[Filter, PredBase, Transformer, Balancer | None, Callable]:
-    M: PredBase = spec.get("model")
+    M: PredBase = spec.get("m")
     references = spec.get("r")
     features = spec.get("f")
     encoding = spec.get("e")
+    blacklist = spec.get("l")
 
     if encoding == "GO":
         encode_fn = lambda x: recode_to_go(x)
@@ -232,15 +269,21 @@ def read_model_spec(
     else:
         encode_fn = lambda x: x
         fcol = "GENEID"
+    b_list = None
+    if blacklist is not None:
+        b_list = get_blacklist_internal(b_list)
+    f_list = FEATURE_LISTS[features]
+    r_list = REF_LISTS.get(references)
     F = Filter(
-        features if references is None else features + REF_LISTS[references],
+        f_list if references is None else f_list + r_list,
         feature_col=fcol,
+        blacklist=b_list,
     )
     B: Balancer = spec.get("b")
     transformation_name = spec.get("t")
     kwargs: dict = spec.get("k", {})
     if transformation_name == "clr" and references is not None:
-        kwargs.update({"features": REF_LISTS[references], "feature_col": "GENEID"})
+        kwargs.update({"features": r_list, "feature_col": "GENEID"})
     T = Transformer(
         transformation_name, impute_fn=Imputer(spec.get("i")), inplace=False, **kwargs
     )
