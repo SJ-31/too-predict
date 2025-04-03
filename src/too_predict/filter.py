@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import scipy.cluster.hierarchy as sch
 import scipy.spatial.distance as spd
+import seaborn as sns
 import sklearn.neighbors as sn
+from matplotlib.figure import Figure
 from scipy import sparse
+from sklearn.preprocessing import StandardScaler
 
 import too_predict._rust_helpers as rh
+import too_predict.utils as ut
 from too_predict.model import PredBase
 
 
@@ -36,6 +42,9 @@ class Filter:
         return Filter(
             features=self.features, feature_col=self.feature_col, inplace=self.inplace
         )
+
+    def blacklist(self, blacklist):
+        self.features = [f for f in self.features if f not in blacklist]
 
     def from_feature_importance(self, model: PredBase) -> None:
         underlying = model.get_model()
