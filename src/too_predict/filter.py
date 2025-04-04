@@ -78,7 +78,7 @@ class Filter:
         return self.transform()
 
     def transform(self, _=None) -> ad.AnnData:
-        to_fill = np.zeros((self.adata.shape[0], len(self.features)))
+        new_shape = (self.adata.shape[0], len(self.features))
         new_var = pd.DataFrame(index=self.features).merge(
             self.adata.var, how="left", left_index=True, right_on=self.feature_col
         )
@@ -87,24 +87,29 @@ class Filter:
         missing = []
         is_array = isinstance(self.adata.X, np.ndarray)
         counts: np.ndarray = self.adata.X.toarray() if not is_array else self.adata.X
-        indices: list = []
-        for i, f in enumerate(self.features):
-            try:
-                index = lookup.get_loc(f)
-                to_fill[:, i] = counts[:, index]
-                indices.append(index)
-            except KeyError:
-                missing.append(f)
-                continue
         transformed = ad.AnnData(
-            X=sparse.csc_matrix(to_fill) if not is_array else to_fill,
+            X=np.zeros(new_shape),
             var=new_var,
             obs=self.adata.obs,
             uns=self.adata.uns,
             obsm=self.adata.obsm,
         )
-        for k, v in self.adata.layers.items():
-            transformed.layers[k] = v[:, indices]
+        converted_layers = {}
+        for n in self.adata.layers:
+            transformed.layers[n] = np.zeros(new_shape)
+            cur = self.adata.layers[n]
+            converted_layers[n] = cur if not sparse.issparse(cur) else cur.toarray()
+        for i, f in enumerate(self.features):
+            try:
+                index = lookup.get_loc(f)
+                transformed.X[:, i] = counts[:, index]
+                for k, v in converted_layers.items():
+                    transformed.layers[k][:, i] = v[:, index]
+            except KeyError:
+                missing.append(f)
+                continue
+        if not is_array:
+            transformed.X = sparse.csr_array(transformed.X)
         self.missing_features = missing
         if len(missing) > 0:
             print(f"--- WARNING: {len(missing)} missing features!")
@@ -262,7 +267,7 @@ class CompareSplits:
         ut.df_to_r(self.adata.obs, r_symbol="obs")
         ut.df_to_r(self.adata.var.reset_index(), r_symbol="var")
         counts = (
-            self.adata.X.toarray() if sparse.isspmatrix(self.adata.X) else self.adata.X
+            self.adata.X.toarray() if sparse.issparse(self.adata.X) else self.adata.X
         )
         ut.np_to_r(np.transpose(counts), r_symbol="counts")
         ro.globalenv["label"] = self.y
