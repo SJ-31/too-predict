@@ -87,9 +87,12 @@ class Filter:
         missing = []
         is_array = isinstance(self.adata.X, np.ndarray)
         counts: np.ndarray = self.adata.X.toarray() if not is_array else self.adata.X
+        indices: list = []
         for i, f in enumerate(self.features):
             try:
-                to_fill[:, i] = counts[:, lookup.get_loc(f)]
+                index = lookup.get_loc(f)
+                to_fill[:, i] = counts[:, index]
+                indices.append(index)
             except KeyError:
                 missing.append(f)
                 continue
@@ -100,6 +103,8 @@ class Filter:
             uns=self.adata.uns,
             obsm=self.adata.obsm,
         )
+        for k, v in self.adata.layers.items():
+            transformed.layers[k] = v[:, indices]
         self.missing_features = missing
         if len(missing) > 0:
             print(f"--- WARNING: {len(missing)} missing features!")
