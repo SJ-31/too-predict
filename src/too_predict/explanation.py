@@ -445,7 +445,7 @@ class Exp:
         if adata is None:
             adata = self.adata
         return pd.DataFrame(
-            adata.X if not sparse.isspmatrix(adata.X) else adata.X.toarray(),
+            adata.X if not sparse.issparse(adata.X) else adata.X.toarray(),
             columns=self.features,
         )
 

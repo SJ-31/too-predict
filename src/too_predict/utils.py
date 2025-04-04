@@ -802,7 +802,7 @@ def recode_to_go(adata: ad.AnnData, id_col: str = "GENEID", summarize_method="su
     ].first()
     with_gos_grouped["count"] = group_tmp.count().loc[:, "index"]
     with_gos_grouped["GO accession"] = with_gos_grouped.index
-    was_sparse: bool = sparse.isspmatrix(adata.X)
+    was_sparse: bool = sparse.issparse(adata.X)
     arr: np.ndarray = adata.X.toarray() if was_sparse else adata.X
     chunks = group_tmp["index"].apply(list)
 

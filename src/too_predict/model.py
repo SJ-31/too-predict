@@ -59,7 +59,7 @@ class PredBase:
         return self.model
 
     def _check_inf(self, X: np.ndarray) -> np.ndarray | sparse.csr_matrix:
-        was_sparse = sparse.isspmatrix(X)
+        was_sparse = sparse.issparse(X)
         X = X.toarray() if was_sparse else X
         is_inf = np.isinf(X)
         count = is_inf.sum()
@@ -90,9 +90,9 @@ class PredBase:
         self.model.fit(self._validate(X.X), X.obs[y].astype(str))
 
     def _check_dense(self, X):
-        if not self.make_dense or not sparse.isspmatrix(X):
+        if not self.make_dense or not sparse.issparse(X):
             return X
-        elif self.make_dense and sparse.isspmatrix(X):
+        elif self.make_dense and sparse.issparse(X):
             return X.toarray()
 
     def _validate(self, X):
@@ -471,7 +471,7 @@ class AlrEstimator:
 
         Notes
         -----
-        Imputation for `ref` should be handled before passing X to this model
+        Ideally, imputation for `ref` should be handled before passing X to this model
         """
         if ref not in X.columns:
             return None, None, False
