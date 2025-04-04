@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,6 +14,7 @@ import scipy.cluster.hierarchy as sch
 import scipy.spatial.distance as spd
 import seaborn as sns
 import sklearn.neighbors as sn
+from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from scipy import sparse
 
@@ -246,6 +249,7 @@ class CompareSplits:
         self.adata.obs["usage"] = ["train"] * train.shape[0] + ["test"] * test.shape[0]
         self.lfcs: dict[str, pd.DataFrame] | None = None
         self.y = y  # Attribute of obs we want to predict
+        self.train_y: Iterable = train.obs[y].unique()
 
     @ut.r_cleanup
     def edgeR_lfc(self) -> pd.DataFrame:
@@ -293,6 +297,39 @@ class CompareSplits:
             lfcs[label] = lfc
         self.lfcs = lfcs
 
+    def plot_pca(
+        self, subset: Iterable = None, style: str | None = None, **kwargs
+    ) -> Figure:
+        if "pca" not in self.adata.uns:
+            sc.pp.pca(self.adata)
+        fig, axes = plt.subplots(ncols=len(subset), sharey=True, sharex=True)
+        keys = self.train_y if subset is None else subset
+        multiple = len(subset) > 1
+        pcs: np.ndarray = self.adata.obsm["X_pca"]
+        var_ratio = self.adata.uns["pca"]["variance_ratio"]
+        pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
+        for i, label in enumerate(keys):
+            ax: Axes = axes if not multiple else axes[i]
+            mask = self.adata.obs[self.y] == label
+            pc1 = pcs[mask, 0]
+            pc2 = pcs[mask, 1]
+            sns.scatterplot(
+                data=self.adata.obs.loc[mask, :],
+                x=pc1,
+                y=pc2,
+                ax=ax,
+                hue="usage",
+                style=style,
+                **kwargs,
+            )
+            ax.set_xlabel("PC1")
+            ax.set_ylabel("PC2")
+            ax.set_title(label)
+            if i != len(keys) - 1:
+                ax.get_legend().remove()
+        fig.suptitle(f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}")
+        return fig
+
     def get_plots(self, subset=None, **kwargs) -> Figure:
         if self.lfcs is None:
             raise ValueError("An lfc method has not been run yet!")
@@ -312,7 +349,11 @@ class CompareSplits:
             fig.align_labels()
         return fig
 
-    def lfc_get_noisy(
+    def edgeR_get_noisy(self, threshold: float = 0.05) -> list[str]:
+        df = self.edgeR_lfc()
+        return df.loc[df["PValue"] < threshold, :].index.to_list()
+
+    def sc_get_noisy(
         self, quantile: float = 0.10, subset=None, agg_method: str = "any"
     ) -> list[str]:
         """Identify noisy features from lfc ratios
