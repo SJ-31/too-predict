@@ -298,7 +298,7 @@ def cross_validate(
         else:
             raise AttributeError("Model has no way of getting scores!")
 
-        if model.had_inf:
+        if model.had_inf and record_dir is not None:
             record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
 
         res: dict = get_all_metrics(y_true, score, model.classes_)
@@ -438,6 +438,13 @@ def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
         elif name == "cm":
             for lab, cm in item.items():
                 cm.to_csv(outdir.joinpath(f"{prefix}-cm{cm_prefix}{lab}.csv"))
+
+
+def write_metrics(
+    path: Path, metrics: dict, selection=("acc", "balanced_acc", "kappa")
+):
+    txt = [f"{m}: {metrics.get(m)}" for m in selection]
+    path.write_text("\n".join(txt))
 
 
 def summarize_studies(study: optuna.Study, objective_name: str) -> pd.DataFrame:

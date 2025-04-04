@@ -863,6 +863,8 @@ def split_and_sample(
     examples from train and add to test
     """
     train, test = split_fn(adata)
+    if train.obs.index.isin(test.obs.index).any():
+        raise ValueError("The samples in train, test overlap!")
     train_index = pd.Series(range(len(train)))
     indices = adata_sample_by(train, label_spec, rng, replace)
     from_train = train[indices, :]
@@ -910,7 +912,7 @@ class RankInterpreter:
         """
         feature_list = self.features if feature_list is None else feature_list
 
-        def helper(cur_stat):
+        def helper(cur_stat) -> pd.DataFrame:
             if len(self.groups) > 1:
                 reshaped = (
                     self.data.filter(items=["group", "names", cur_stat], axis=1)
@@ -922,7 +924,7 @@ class RankInterpreter:
                     self.data["names"].isin(feature_list), :
                 ]
                 reshaped = reshaped.set_index(reshaped["names"]).drop("names", axis=1)
-                return reshaped
+            return reshaped
 
         requested = helper(stat)
         if threshold is not None:

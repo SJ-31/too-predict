@@ -64,7 +64,6 @@ class Filter:
                 if imp[i] == 0:
                     self.discarded_features.append(f)
                 else:
-                    print(f)
                     new_features.append(f)
             self.features = new_features
         else:
@@ -339,8 +338,7 @@ class CompareSplits:
         for i, k in enumerate(keys):
             df = self.lfcs[k].loc[:, ["test_vs_train", "vs_all"]]
             ax = axes if not multiple else axes[i]
-            x, y = df.iloc[:, 0], df.iloc[:, 1]
-            sns.scatterplot(y=y, x=x, ax=ax, **kwargs)
+            sns.scatterplot(x=df.iloc[:, 1], y=df.iloc[:, 0], ax=ax, **kwargs)
             ax.set_xlabel(f"{k} vs. all")
             ax.set_ylabel(None)
             if i == 0:
