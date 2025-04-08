@@ -195,6 +195,8 @@ class ExpInterpreter:
         for label in self.labels:
             tmp_inner = []
             for i, adata in enumerate([self.test_vals, self.train_vals]):
+                if self.local_getter(label) not in adata.obsm:
+                    continue
                 right, wrong = self._local_right_wrong(
                     adata, label, lambda x: np.nanmean(np.abs(x), axis=1)
                 )
@@ -202,8 +204,9 @@ class ExpInterpreter:
                 if not correct_only:
                     vals = (vals + wrong.loc[:, "agg"]) / 2
                 tmp_inner.append(pd.DataFrame({i: vals}, index=vals.index))
-            mean = pd.concat(tmp_inner, axis=1).mean(axis=1)
-            tmp.append(pd.DataFrame({label: mean}, index=mean.index))
+            if tmp_inner:
+                mean = pd.concat(tmp_inner, axis=1).mean(axis=1)
+                tmp.append(pd.DataFrame({label: mean}, index=mean.index))
         self.local_getter = None
         df = pd.concat(tmp, axis=1)
         return df
