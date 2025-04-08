@@ -2,15 +2,17 @@
 
 #!/usr/bin/env python
 import json
-import sys
 from collections import ChainMap
 from pathlib import Path
 
+import anndata as ad
 import networkx as nx
+import numpy as np
 import obonet
 import pandas as pd
 import polars as pl
 import requests
+import scipy.sparse as sparse
 
 import too_predict.utils as ut
 
@@ -46,7 +48,8 @@ class SubsetGO:
                 if is_a:
                     self.G.add_edges_from(is_a)
         nd = self._get_node_data()
-        self.metadata = pd.merge(nd, metadata, on="accession")
+        self.metadata: pd.DataFrame = pd.merge(nd, metadata, on="accession")
+        self.metadata.index = self.metadata["accession"]
 
     def _get_node_data(self):
         self.successors: dict = {}  # Map of GO_IDs to list of child terms
@@ -123,47 +126,85 @@ class SubsetGO:
                     id2group[member] = group
         return id2group
 
-    def get_parents(self, domain: str, n: int = 18, show=True, min_depth=2, pre=""):
-        """Select higher-level parent GO terms from the specified domain that partition the domain into `n` bins.
-        Goal is to map all child terms to some higher-level term to make for more concise summarization
-        higher-level terms are selected by the number of children they have, as well as the specified depth. They can also be pre-specified with the `pre` argument
 
-        :return: A dictionary of the following
-        `map`: Map of GO terms in the specified sub-ontology to their assigned higher-level terms
-        `parents`: Map of chosen parents to their terms
-        `unassigned`: GO terms in the sub-ontology graph that are not children of any of the chosen parents. Happens when chosen parents have few children
-        `pre`: path to a json file containing pre-defined groups (mapping a GO id or group name to specific terms) that will override other mappings
+# * Recoder
+
+
+class RecodeGO:
+    def __init__(self, id_col: str = "GENEID") -> None:
+        self.adata: ad.AnnData | None = None
+        self.id_col: str = id_col
+        self.go_map = get_go_data()
+
+    def fit(self, adata: ad.AnnData):
+        self.adata = adata.copy()
+
+    def _group_genes(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Helper for joining adata.var with the GO metadata
+        Returns a tuple of [joined adata.var, adata.var grouped by GO]
         """
-        children_per_cat = self.metadata.shape[0] / n
-        filtered = self.metadata.filter(
-            (
-                (pl.col("domain") == domain)
-                & (pl.col("n_children") <= children_per_cat)
-                & (pl.col("level") >= min_depth)
-            )
-        ).sort("n_children", descending=True)
-        parents: list = []
-        for go_id, *_ in filtered.iter_rows():
-            if self._check_parent(go_id, parents):
-                parents.append(go_id)
-            if len(parents) == n:
-                break
-        parent_df = filtered.filter(pl.col("accession").is_in(parents))
-        if show:
-            print(parent_df)
-        child_to_parent: dict = self.get_predefined(pre, domain) if pre else {}
-        unassigned: set = set(filtered["accession"])
-        for parent in parents:
-            for child in self.successors[parent]:
-                if child not in child_to_parent:
-                    child_to_parent[child] = parent
-            child_to_parent[parent] = parent
-        unassigned = unassigned - child_to_parent.keys()
-        return {
-            "map": child_to_parent,
-            "parents": dict(zip(parent_df["accession"], parent_df["term"])),
-            "unassigned": unassigned,
+        mask = self.adata.var[self.id_col].isin(self.go_map["Gene stable ID"])
+        self.adata = self.adata[:, mask]
+        with_gos = (
+            self.adata.var.reset_index(drop=True)
+            .reset_index(names="index")
+            .merge(self.go_map, left_on=self.id_col, right_on="Gene stable ID")
+        )
+        name_map = {
+            "GO domain": "domain",
+            "GO term name": "term",
+            "GO term evidence code": "evidence_code",
+            "evidence rating": "evidence_rating",
         }
+        with_gos_grouped: pd.DataFrame = (
+            with_gos.groupby("GO term accession")[list(name_map.keys())]
+            .first()
+            .rename(name_map, axis=1)
+        )
+        with_gos_grouped["accession"] = with_gos_grouped.index
+        return with_gos, with_gos_grouped
+
+    def transform(self, method="sum", level: int | None = None) -> ad.AnnData:
+        """Collapse gene expression data into GO
+
+        Parameters
+        ----------
+        param : adata
+        param : summarize_method how to aggregate the gene expression values for a given
+            GO term. Options are mean or sum
+
+
+        Returns
+        -------
+        An adata object where variables are GO terms
+        """
+        was_sparse: bool = sparse.issparse(self.adata.X)
+        with_gos, with_gos_grouped = self._group_genes()
+        go_mm: np.ndarray = (
+            with_gos.loc[:, [self.id_col, "GO term accession"]]
+            .assign(value=1)
+            .pivot(index=self.id_col, columns="GO term accession", values="value")
+            .values
+        )
+        go_mm[np.isnan(go_mm)] = 0
+        if was_sparse:
+            go_matrix = self.adata.X @ sparse.csr_array(go_mm)
+        else:
+            go_matrix = np.matmul(self.adata.X, go_mm)
+
+        counts = np.sum(go_mm, axis=0)
+        with_gos_grouped.loc[:, "counts"] = counts
+        if method == "mean":
+            go_matrix = go_matrix / counts
+        recoded = ad.AnnData(X=go_matrix, var=with_gos_grouped, obs=self.adata.obs)
+
+        if level is not None:
+            sgo: SubsetGO = SubsetGO(subset=list(recoded.var.index))
+            recoded = sgo.aggregate_to_level(level, recoded, summarize_method=method)
+        return recoded
+
+
+# * Helper functions
 
 
 def relation_path(paths: list[tuple], relation: str) -> list:
@@ -213,181 +254,7 @@ def get_level_map(G: nx.DiGraph, root=None) -> dict:
     return level_map
 
 
-def to_json(
-    go_path: str,
-    sample_path: str,
-    go_info_path: str,
-    outdir: str,
-    n_groups: int,
-    predefined: str = None,
-):
-    data = {"CC": None, "BP": None, "MF": None}
-    S = SubsetGO(go_path, sample_path, go_info_path)
-    for sub in data.keys():
-        rep = S.get_parents(sub, n=n_groups, pre=predefined)
-        data[sub] = {
-            "map": rep["map"],
-            "unassigned": list(rep["unassigned"]),
-        }
-    with open(f"{outdir}/go_parents.json", "w") as j:
-        json.dump(data, j)
-
-
-def into_domain(gos: list, mapping: dict) -> dict:
-    partitioned: dict = {"CC": [], "BP": [], "MF": []}
-    for go in gos:
-        lookup: str = mapping[go]
-        if lookup != "NA":  # Check if term is obsolete
-            partitioned[lookup].append(go)
-    return partitioned
-
-
-def get_parents(
-    source: str,
-    go_terms: list,
-    rep_map: dict,
-    term_map: dict,
-    domain_map: dict,
-    priority: list = None,
-) -> tuple[dict, dict]:
-    """Obtain higher level parent GO terms from a term list (i.e. terms of a protein)
-
-    Args:
-        source (string): where do these ids come from?
-        go_terms (list): list of GO ids to get higher-level terms from
-        rep_map (dict): mapping of GO ids to their representative parent terms
-        domain_map (dict): map of GO ids to their sub-ontology
-        domain_map (dict): map of GO ids to their English terms
-    """
-    grouped = into_domain(go_terms, domain_map)
-    terms = pl.DataFrame()
-    missing = {"CC": 0, "BP": 0, "MF": 0}
-    found_special = False
-    for o in missing.keys():
-        cur_group = grouped[o]
-        reduced = {}
-        cur_map = rep_map[o]
-        for id in cur_group:
-            found = cur_map["map"].get(id)
-            if found and priority and found in priority:
-                reduced[found] = sys.maxsize
-                found_special = True
-            elif found:
-                reduced[found] = reduced.get(found, 0) + 1
-            else:
-                reduced[id] = 1
-        if not reduced:
-            continue
-        temp = (
-            pl.DataFrame(reduced)
-            .melt()
-            .rename({"variable": "accession", "value": "count"})
-            .with_columns(domain=pl.lit(o))
-            .sample(n=len(reduced), shuffle=True)
-            .sort("count", descending=True)
-        )
-        # Shuffling (using sample) is just a precaution in case all the entries have the same "count"
-        terms = pl.concat([terms, temp], how="vertical")
-    if terms.is_empty():
-        # print(f"Warning: obsolete terms {list(go_terms)}")
-        return {"CC": "unknown", "BP": "unknown", "MF": "unknown"}, missing
-    aggregated = terms.group_by("domain", maintain_order=True).agg(
-        pl.col("accession").first()
-    )
-    result = dict(zip(aggregated["domain"], aggregated["accession"]))
-    if found_special:
-        print(result)
-    for k in missing.keys():
-        v = result.get(k)
-        if not v:
-            result[k] = "unknown"
-            missing[k] = 1
-            continue
-        cur_map = rep_map[k]
-        if (v not in cur_map["map"] or v in cur_map["unassigned"]) and (
-            not priority or v not in priority
-        ):
-            result[k] = "other"
-        else:
-            if ":" in v:  # Check that the key is actually a GO id, and
-                # not one of the user-defined groups
-                result[k] = term_map[v]
-            else:
-                print(f"from end loop {v}")
-                result[k] = v
-    return result, missing
-
-
-def find_go_parents(
-    combined_results: str, go_info_path: str, parents_path: str, priority_path: str = ""
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Find higher-level GO terms of identified proteins in a results file
-
-    Args:
-        combined_results (str): path to results file
-        go_info_path (str): path to file containing GO term metadata
-        parents_path (str): path to json file mapping GO ids to their assigned parent terms
-        output (str): output file name
-    """
-    info: pl.DataFrame = pl.read_csv(go_info_path, separator="\t")
-    id2domain = dict(zip(info["accession"], info["domain"]))
-    id2term = dict(zip(info["accession"], info["term"]))
-    data = pl.read_csv(combined_results, separator="\t", null_values="NA")
-    shape_before: tuple = data.shape
-    has_go = data.filter(pl.col("accession").is_not_null())
-    no_go = data.filter(pl.col("accession").is_null())
-    if priority_path:
-        with open(priority_path, "r") as j:
-            priority = list(json.load(j).keys())
-    else:
-        priority = []
-    with open(parents_path, "r") as j:
-        rmap: dict = json.load(j)
-    id_go: pl.DataFrame = (
-        has_go.select("ProteinId", "accession", "GO_counts")
-        .with_columns(
-            accession=pl.col("accession").map_elements(
-                lambda x: x.split(";"), return_dtype=pl.List(pl.Utf8)
-            )
-        )
-        .sort("GO_counts", descending=True)
-    )
-    cc, bp, mf = [], [], []
-    missing_counts = {"CC": 0, "BP": 0, "MF": 0}
-    for id, gos in zip(id_go["ProteinId"], id_go["accession"]):
-        parents, missing = get_parents(
-            id, gos, rmap, id2term, id2domain, priority=priority
-        )
-        cc.append(parents["CC"])
-        bp.append(parents["BP"])
-        mf.append(parents["MF"])
-        for k, v in missing.items():
-            missing_counts[k] += v
-    added = has_go.with_columns(
-        GO_category_CC=pl.Series(cc),
-        GO_category_MF=pl.Series(mf),
-        GO_category_BP=pl.Series(bp),
-    )
-    no_go = no_go.with_columns(
-        GO_category_CC=pl.lit("unknown"),
-        GO_category_MF=pl.lit("unknown"),
-        GO_category_BP=pl.lit("unknown"),
-    )
-    result = pl.concat([added, no_go], how="vertical")
-    missing_df = (
-        pl.DataFrame(missing_counts)
-        .melt()
-        .rename({"variable": "domain", "value": "n_missing"})
-    )
-    if not result.shape[0] == shape_before[0]:
-        raise ValueError(
-            f"""
-                        nrows before and after do not match!\n
-                        rows before: {shape_before[0]}\n
-                        rows current: {result.shape[0]}\n
-                         """
-        )
-    return result.to_pandas(), missing_df.to_pandas()
+# * Misc utilities
 
 
 def go_from_ebi(terms: list[str]) -> dict:
@@ -421,3 +288,50 @@ def fill_missing(path: Path) -> None:
     if not filtered.is_empty():
         filtered.write_csv(still_missing_path)
     pl.concat([complete, found]).write_csv(path)
+
+
+def get_go_data() -> pd.DataFrame:
+    go_evidence_codes = {
+        "EXP": ("Inferred from Experiment", 1),
+        "IDA": ("Inferred from Direct Assay", 1),
+        "IPI": ("Inferred from Physical Interaction", 1),
+        "IMP": ("Inferred from Mutant Phenotype", 1),
+        "IGI": ("Inferred from Genetic Interaction", 1),
+        "IEP": ("Inferred from Expression Pattern", 1),
+        "HTP": ("Inferred from High Throughput Experiment", 1),
+        "HDA": ("Inferred from High Throughput Direct Assay", 1),
+        "HMP": ("Inferred from High Throughput Mutant Phenotype", 1),
+        "HGI": ("Inferred from High Throughput Genetic Interaction", 1),
+        "HEP": ("Inferred from High Throughput Expression Pattern", 1),
+        "ISS": ("Inferred from Sequence or Structural Similarity", 3),
+        "ISO": ("Inferred from Sequence Orthology", 3),
+        "ISA": ("Inferred from Sequence Alignment", 3),
+        "ISM": ("Inferred from Sequence Model", 3),
+        "IGC": ("Inferred from Genomic Context", 3),
+        "IBA": ("Inferred from Biological aspect of Ancestor", 3),
+        "IBD": ("Inferred from Biological aspect of Descendant", 3),
+        "IKR": ("Inferred from Key Residues", 3),
+        "IRD": ("Inferred from Rapid Divergence", 3),
+        "RCA": ("Inferred from Reviewed Computational Analysis", 2),
+        "TAS": ("Traceable Author Statement", 2),
+        "NAS": ("Non-traceable Author Statement", 3),
+        "IC": ("Inferred by Curator", 2),
+        "ND": ("No biological Data available", 4),
+        "IEA": ("Inferred from Electronic Annotation", 3),
+    }
+    go_evidence_df = pd.DataFrame(
+        {
+            "GO term evidence code": list(go_evidence_codes.keys()),
+            "evidence rating": [i[1] for i in go_evidence_codes.values()],
+        }
+    )
+    go_map = pd.read_csv(ut.get_data("ensembl_go_map_2025-3-20.tsv"), sep="\t")
+    go_map = go_map.loc[~go_map["GO term accession"].isna(), :]
+    go_map = (
+        go_map.merge(go_evidence_df, on="GO term evidence code", how="left")
+        .sort_values("evidence rating")
+        .groupby(["Gene stable ID", "GO term accession"])
+        .first()
+        .reset_index()
+    )
+    return go_map
