@@ -77,7 +77,7 @@ class SubsetGO:
 
     def aggregate_to_level(
         self,
-        level: int,
+        level: int,  # The lower the level, closer the term is to its root
         adata: ad.AnnData,
         summarize_method: str = "sum",
         only_in_data: bool = False,
@@ -89,7 +89,7 @@ class SubsetGO:
             meta_tmp = self.metadata.loc[self.metadata.index.isin(adata.var.index), :]
         else:
             meta_tmp = self.metadata
-        mask = meta_tmp["level"] > level
+        mask = meta_tmp["level"] <= level
         agg_to = meta_tmp.loc[mask, :]["accession"]
         index = meta_tmp.index
         adata = adata[:, adata.var.index.isin(index)]
