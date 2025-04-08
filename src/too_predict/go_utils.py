@@ -30,7 +30,7 @@ class SubsetGO:
             else ut.get_data("go_meta_2025-4-8.csv")
         )
         gpath = go_path if go_path is not None else ut.get_data("go.obo")
-        metadata = pl.read_csv(mpath)
+        metadata = pd.read_csv(mpath)
         self.roots = {"BP": "GO:0008150", "CC": "GO:0005575", "MF": "GO:0003674"}
         self.sample_gos = subset
         GO: nx.MultiDiGraph = obonet.read_obo(gpath)
@@ -45,46 +45,34 @@ class SubsetGO:
                 is_a = relation_path(paths, "is_a")
                 if is_a:
                     self.G.add_edges_from(is_a)
-        self.metadata = self.__get_node_data().join(
-            metadata.select("accession", "term", "domain"), on="accession"
-        )
+        nd = self._get_node_data()
+        self.metadata = pd.merge(nd, metadata, on="accession")
 
-    def __get_node_data(self):
+    def _get_node_data(self):
         self.successors: dict = {}  # Map of GO_IDs to list of child terms
         level_map: dict = {}
-        from_sample: dict = {}
         # GO_IDs found in the sample are True, others (used to link GO terms back to their roots) are False
         # Produces a data frame that maps GO terms to the number of children they have
-        for node in self.G.nodes():
-            if node in self.sample_gos:
-                from_sample[node] = True
-            else:
-                from_sample[node] = False
+        node_series = pd.Series(list(self.G.nodes))
+        in_sample = node_series.isin(self.sample_gos)
+        in_sample.index = node_series
+        from_sample = in_sample.to_dict()
+
         nx.set_node_attributes(self.G, {"from_sample": from_sample})
         for root in self.roots.values():
             current = nx.bfs_tree(self.G, root)
             current.graph["root"] = root
             self.successors = ChainMap(self.successors, all_successors(current))
-            level_map = ChainMap(level_map, level_map(current))
+            level_map = ChainMap(level_map, get_level_map(current))
 
-        return (
-            (
-                pl.DataFrame(from_sample)
-                .melt()
-                .rename({"variable": "accession", "value": "in_sample"})
-            )
-            .with_columns(
-                n_children=pl.col("accession").map_elements(
-                    lambda x: len(self.successors[x]), return_dtype=pl.Int16
-                ),
-                level=pl.col("accession").map_elements(
-                    lambda x: level_map[x], return_dtype=pl.Int16
-                ),
-            )
-            .sort("n_children", descending=True)
+        df = pd.DataFrame({"accession": in_sample.index, "in_sample": in_sample})
+        df.loc[:, "n_children"] = df["accession"].apply(
+            lambda x: len(self.successors[x])
         )
+        df.loc[:, "level"] = df["accession"].apply(lambda x: level_map[x])
+        return df
 
-    def __check_parent(self, to_check: str, ancestors: list):
+    def _check_parent(self, to_check: str, ancestors: list):
         """Make sure the parent terms do not contain each other"""
         return all([to_check not in self.successors[e] for e in ancestors])
 
@@ -120,7 +108,7 @@ class SubsetGO:
         ).sort("n_children", descending=True)
         parents: list = []
         for go_id, *_ in filtered.iter_rows():
-            if self.__check_parent(go_id, parents):
+            if self._check_parent(go_id, parents):
                 parents.append(go_id)
             if len(parents) == n:
                 break
@@ -178,7 +166,7 @@ def all_successors(G: nx.DiGraph) -> dict:
     return successors
 
 
-def level_map(G: nx.DiGraph, root=None) -> dict:
+def get_level_map(G: nx.DiGraph, root=None) -> dict:
     """Return a dictionary mapping the nodes of G to their levels in G"""
     level_map: dict = {}
     if not (root := G.graph.get("root", root)):
