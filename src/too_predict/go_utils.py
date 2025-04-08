@@ -72,6 +72,42 @@ class SubsetGO:
         df.loc[:, "level"] = df["accession"].apply(lambda x: level_map[x])
         return df
 
+    def aggregate_to_level(
+        self,
+        level: int,
+        adata: ad.AnnData,
+        summarize_method: str = "sum",
+        only_in_data: bool = False,
+    ) -> ad.AnnData:
+        if only_in_data:
+            # Requires that terms aggregated to are explicitly observed in adata
+            # Might not be necessary since summing the children of a term can
+            # give counts to a term that is considered zero
+            meta_tmp = self.metadata.loc[self.metadata.index.isin(adata.var.index), :]
+        else:
+            meta_tmp = self.metadata
+        mask = meta_tmp["level"] > level
+        agg_to = meta_tmp.loc[mask, :]["accession"]
+        index = meta_tmp.index
+        adata = adata[:, adata.var.index.isin(index)]
+        index = index[index.isin(adata.var.index)]
+        mm = np.transpose(
+            np.array([index.isin(self.successors[a] + [a]) for a in agg_to])
+        ).astype(int)
+
+        was_sparse = sparse.issparse(adata.X)
+        unique_cols = list(set(adata.var.columns) - set(meta_tmp.columns))
+
+        new_var = meta_tmp.loc[mask, :].join(adata.var.loc[:, unique_cols])
+        counts = np.sum(mm, axis=0)
+        if was_sparse:
+            matrix = adata.X @ sparse.csr_array(mm)
+        else:
+            matrix = np.matmul(adata.X, mm)
+        if summarize_method == "mean":
+            matrix = matrix / counts
+        return ad.AnnData(X=matrix, var=new_var, obs=adata.obs)
+
     def _check_parent(self, to_check: str, ancestors: list):
         """Make sure the parent terms do not contain each other"""
         return all([to_check not in self.successors[e] for e in ancestors])
