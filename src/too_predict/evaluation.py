@@ -197,7 +197,7 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
         prec_recall_df = None
     return {
         "cm": cm,
-        "pred": pred_vals,
+        "pred": list(pred_vals),
         "balanced_acc": me.balanced_accuracy_score(true, pred_vals),
         "acc": acc,
         "kappa": me.cohen_kappa_score(true, pred_vals),

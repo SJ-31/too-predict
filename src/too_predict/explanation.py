@@ -613,7 +613,7 @@ class Exp:
         if len(self.class2index) > 3:
             class2shap = {c: svals[:, :, i] for (c, i) in self.class2index.items()}
         else:
-            class2shap = {"True": svals}
+            class2shap = {"1": svals}
         if plot_directory is not None:
             plot_directory.mkdir(parents=True, exist_ok=True)
             for c, vals in class2shap.items():
