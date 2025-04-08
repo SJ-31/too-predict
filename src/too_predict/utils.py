@@ -769,45 +769,45 @@ def recode_to_go(adata: ad.AnnData, id_col: str = "GENEID", summarize_method="su
     ----------
     param : adata
     param : summarize_method how to aggregate the gene expression values for a given
-        GO term. Options are mean, sum or median
+        GO term. Options are mean or sum
 
 
     Returns
     -------
     An adata object where variables are
 
-    Notes
-    -----
-
     """
-    match summarize_method:
-        case "sum":
-            agg_fn = lambda x: x.sum(axis=1)
-        case "median":
-            agg_fn = lambda x: x.median(axis=1)
-        case "mean":
-            agg_fn = lambda x: x.mean(axis=1)
-        case _:
-            raise ValueError(f"Summarize method {summarize_method} not supported!")
+    was_sparse: bool = sparse.issparse(adata.X)
     go_map = get_go_data()
+    mask = adata.var[id_col].isin(go_map["Gene stable ID"])
+    adata = adata[:, mask]
     with_gos = (
         adata.var.reset_index(drop=True)
         .reset_index(names="index")
         .merge(go_map, left_on=id_col, right_on="Gene stable ID")
-        .sort_values("evidence rating")
     )
-    group_tmp = with_gos.groupby("GO term accession")
-    with_gos_grouped = group_tmp[
+    go_mm: np.ndarray = (
+        with_gos.loc[:, [id_col, "GO term accession"]]
+        .assign(value=1)
+        .pivot(index=id_col, columns="GO term accession", values="value")
+        .values
+    )
+
+    go_mm[np.isnan(go_mm)] = 0
+    with_gos_grouped = with_gos.groupby("GO term accession")[
         ["evidence rating", "GO domain", "GO term name", "GO term evidence code"]
     ].first()
-    with_gos_grouped["count"] = group_tmp.count().loc[:, "index"]
     with_gos_grouped["GO accession"] = with_gos_grouped.index
-    was_sparse: bool = sparse.issparse(adata.X)
-    arr: np.ndarray = adata.X.toarray() if was_sparse else adata.X
-    chunks = group_tmp["index"].apply(list)
 
-    go_matrix = np.transpose([agg_fn(arr[:, c]) for c in chunks])
-    go_matrix = sparse.csr_matrix(go_matrix) if was_sparse else go_matrix
+    if was_sparse:
+        go_matrix = adata.X @ sparse.csr_array(go_mm)
+    else:
+        go_matrix = np.matmul(adata.X, go_mm)
+
+    if summarize_method == "mean":
+        counts = np.sum(go_mm, axis=0)
+        go_matrix = go_matrix / counts
+
     return ad.AnnData(X=go_matrix, var=with_gos_grouped, obs=adata.obs)
 
 
