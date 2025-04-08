@@ -607,7 +607,10 @@ class Exp:
             counts.columns = p_features
         if interaction_matrix and isinstance(explainer, shap.TreeExplainer):
             imatrix = explainer.shap_interaction_values(counts)
-        class2shap = {c: svals[:, :, i] for (c, i) in self.class2index.items()}
+        if len(self.class2index) > 3:
+            class2shap = {c: svals[:, :, i] for (c, i) in self.class2index.items()}
+        else:
+            class2shap = {"True": svals}
         if plot_directory is not None:
             plot_directory.mkdir(parents=True, exist_ok=True)
             for c, vals in class2shap.items():
