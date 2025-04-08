@@ -130,6 +130,7 @@ class ExpInterpreter:
         right = np.transpose(vals.loc[right_mask, :])
         wrong.loc[:, "agg"] = agg_fn(wrong)
         right.loc[:, "agg"] = agg_fn(right)
+        # These dfs have shape n_features x n_samples + 1
 
         return right, wrong
 
@@ -178,6 +179,34 @@ class ExpInterpreter:
             combined_neg -= combined_pos  # Will discard features that are considered
             # positive in the context of classifying other labels
         return combined_neg, label_specific
+
+    def global_importance(
+        self, prefix: str, correct_only: bool = False
+    ) -> pd.DataFrame:
+        """Average the feature importance across every instance,
+
+        Returns
+        -------
+        A df of shape n_features x n_labels, where each entry is the average
+        absolute feature importance of that feature for that label
+        """
+        self.local_getter = lambda x: f"{prefix}{x}"
+        tmp = []
+        for label in self.labels:
+            tmp_inner = []
+            for i, adata in enumerate([self.test_vals, self.train_vals]):
+                right, wrong = self._local_right_wrong(
+                    adata, label, lambda x: np.nanmean(np.abs(x), axis=1)
+                )
+                vals = right.loc[:, "agg"]
+                if not correct_only:
+                    vals = (vals + wrong.loc[:, "agg"]) / 2
+                tmp_inner.append(pd.DataFrame({i: vals}, index=vals.index))
+            mean = pd.concat(tmp_inner, axis=1).mean(axis=1)
+            tmp.append(pd.DataFrame({label: mean}, index=mean.index))
+        self.local_getter = None
+        df = pd.concat(tmp, axis=1)
+        return df
 
     def neg_contributions(self, prefix: str, n: int = -1) -> tuple[set[str], dict]:
         print("Will retrieve data from the following: ")
@@ -553,7 +582,7 @@ class Exp:
         Parameters
         ----------
         classifier : pre-fitted classifier
-        explainer : shap.Explainer pre-fitted on `classifier`
+        explain_fn : function receiving a model as input and returns a shap.Explainer
         summary_plot : path to directory to save summary plots. A summary plot
             will be made for each available class
 
