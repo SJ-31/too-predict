@@ -131,9 +131,18 @@ class SubsetGO:
 
 
 class RecodeGO:
-    def __init__(self, id_col: str = "GENEID") -> None:
+    def __init__(
+        self,
+        id_col: str = "GENEID",
+        level: int | None = None,
+        agg_method: str = "sum",
+        level_agg: str = "sum",
+    ) -> None:
         self.adata: ad.AnnData | None = None
         self.id_col: str = id_col
+        self.level: int | None = level
+        self.agg: str = agg_method
+        self.level_agg: str = level_agg
         self.go_map = get_go_data()
 
     def fit(self, adata: ad.AnnData):
@@ -164,7 +173,11 @@ class RecodeGO:
         with_gos_grouped["accession"] = with_gos_grouped.index
         return with_gos, with_gos_grouped
 
-    def transform(self, method="sum", level: int | None = None) -> ad.AnnData:
+    def fit_transform(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
+        self.fit(adata)
+        return self.transform(**kwargs)
+
+    def transform(self) -> ad.AnnData:
         """Collapse gene expression data into GO
 
         Parameters
@@ -194,13 +207,15 @@ class RecodeGO:
 
         counts = np.sum(go_mm, axis=0)
         with_gos_grouped.loc[:, "counts"] = counts
-        if method == "mean":
+        if self.agg == "mean":
             go_matrix = go_matrix / counts
         recoded = ad.AnnData(X=go_matrix, var=with_gos_grouped, obs=self.adata.obs)
 
-        if level is not None:
+        if self.level is not None:
             sgo: SubsetGO = SubsetGO(subset=list(recoded.var.index))
-            recoded = sgo.aggregate_to_level(level, recoded, summarize_method=method)
+            recoded = sgo.aggregate_to_level(
+                self.level, recoded, summarize_method=self.level_agg
+            )
         return recoded
 
 
