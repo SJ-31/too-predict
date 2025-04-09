@@ -7,32 +7,33 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scanpy as sc
+import scipy.optimize as opt
 import seaborn as sns
 import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
+import too_predict.go_utils as gu
+import too_predict.utils as ut
 from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
 from too_predict.evaluation import cross_validate, write_cross_val
 from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import (
-    read_existing,
-    recode_to_go,
     ref_feature_lists_internal,
     training_data_internal,
     training_data_internal_test,
 )
-from xgboost import XGBClassifier
 
-outdir = here("data", "output", "feature_selection")
+OUTDIR = here("data", "output", "feature_selection")
 adata: ad.AnnData
 
 RECODE_GO: bool = False
 
-# * Output files
 
 # * Identify stable features for ALR
 
@@ -51,7 +52,7 @@ def variance_threshold(f):
         variance = variance.reset_index()
     else:
         name = "sklearn_variance.png"
-    plt.savefig(here(outdir, name))
+    plt.savefig(here(OUTDIR, name))
     variance.to_csv(f, index=False)
 
 
@@ -104,27 +105,6 @@ def mutual_info(f):
     # The higher the better here
 
 
-# ** Recursive
-#
-def recursive_selection(adata):
-    _, feat = ref_feature_lists_internal()
-    first_filter = Filter(
-        feature_col="GENEID",
-        features=feat["edgeR_median_lfc_feature_list_3000"],
-        inplace=False,
-    )
-    transformer = Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False)
-    x: ad.AnnData = first_filter.fit_transform(adata)
-    x = transformer.fit_transform(x)
-    model = XGBClassifier()
-    encoder = LabelEncoder()
-    # est = PredBase(model=)
-    rfecv = fs.RFECV(estimator=RandomForestClassifier(), verbose=1)
-    rfecv.fit(n_counts, y=labels)
-    results = rfecv.cv_results_
-    kept_features = adata.var.loc[rfecv.get_support(), :]
-
-
 # ** Checking feature importances
 # Will do this with Rfs and the xgbestimator
 def tree_importance(adata, classifier: PredBase, outdir):
@@ -160,7 +140,7 @@ def tree_importance(adata, classifier: PredBase, outdir):
 def remove_redundant(adata):
     _, features = ref_feature_lists_internal()
     original = features["edgeR_median_lfc_feature_list_3000"]
-    r_outdir: Path = outdir.joinpath("redundant_features")
+    r_outdir: Path = OUTDIR.joinpath("redundant_features")
     r_outdir.mkdir(exist_ok=True, parents=True)
     hrange = [0.4, 0.6, 0.8]
     method_spec = ["correlation", "rho_prop"]
@@ -186,6 +166,51 @@ def remove_redundant(adata):
             write_cross_val(results, cur_outdir, prefix=f"height_{height}")
 
 
+# ** With optimization
+
+
+def milp_optimize(batch_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
+    """Use scipy's milp function to minimize the ratio
+
+    batch_vals, y_vals are a 2d array of shape n_labels x n_features
+    """
+    c = np.nanmean(batch_vals, axis=0) / np.nanmean(y_vals, axis=0)
+    c[np.isnan(c)] = 0
+    c[np.isinf(c)] = 0
+
+    solve = opt.milp(c, integrality=1, bounds=opt.Bounds(lb=0, ub=1))
+    return solve.x
+
+
+def optimization_scanpy(adata):
+    spc = MODELS["clr_random_forest_edger"]
+
+    F, M, T, B, E = read_model_spec(spc)
+    # filtered = F.fit_transform(adata)
+    # transformed = T.fit_transform(filtered)
+
+    transformed = T.fit_transform(adata)
+    split_fn = ADDITIONAL_SPLITS["CHULA"]
+    # train, test = split_fn(transformed)
+    sc.tl.rank_genes_groups(transformed, groupby="Sample_Type")
+    ri = ut.RankInterpreter(transformed)
+    batch_df = ri.feature_stat("logfoldchanges")
+    sc.tl.rank_genes_groups(transformed, groupby="tumor_type")
+    ri = ut.RankInterpreter(transformed)
+    y_df = ri.feature_stat("logfoldchanges")
+
+    batch_df, y_df = batch_df.align(y_df, join="inner", axis=0)
+    batch_vals, y_vals = np.transpose(batch_df.values), np.transpose(y_df.values)
+    solution = milp_optimize(batch_vals, y_vals)
+    adata.var["GENEID"][solution == 1].to_csv(
+        OUTDIR.joinpath("feature_lists").joinpath("milp_scanpy_minimized_lfc_ratio.txt")
+    )
+
+
+# def optimization_edgeR
+
+# TODO:
+
 # * Run
 
 
@@ -207,16 +232,17 @@ if __name__ == "__main__":
     if args.test:
         print("Using test subset")
         adata = training_data_internal_test()
-        outdir = outdir.joinpath("test")
-        outdir.mkdir(exist_ok=True, parents=True)
+        OUTDIR = OUTDIR.joinpath("test")
+        OUTDIR.mkdir(exist_ok=True, parents=True)
     else:
         adata = training_data_internal()
 
     RECODE_GO = args.recode_go
     suffix = ""
     if RECODE_GO:
+        rc = gu.RecodeGO(level=4)
         print("Recoding adata to GO...")
-        adata = recode_to_go(adata)
+        adata = rc.fit_transform(adata)
         suffix = "GO"
 
     normalized = Transformer("clr", Imputer("plus_one"), inplace=False).fit_transform(
@@ -226,12 +252,12 @@ if __name__ == "__main__":
     labels = adata.obs["primary_site"]
     # Need to normalize first to move out of simplex
 
-    variance_file = here(outdir, f"sklearn_variance_{suffix}.csv")
-    proportionality_file = here(outdir, f"proportionality_matrix_{suffix}.csv")
-    mutual_info_file = here(outdir, f"mutual_info_{suffix}.csv")
+    variance_file = here(OUTDIR, f"sklearn_variance_{suffix}.csv")
+    proportionality_file = here(OUTDIR, f"proportionality_matrix_{suffix}.csv")
+    mutual_info_file = here(OUTDIR, f"mutual_info_{suffix}.csv")
 
     with joblib.parallel_backend("loky", n_jobs=args.cores):
-        remove_redundant(adata)
+        # remove_redundant(adata)
         # variance = read_existing(variance_file, variance_threshold, pd.read_csv)
         # mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
         # prop = read_existing(
@@ -241,7 +267,4 @@ if __name__ == "__main__":
         #     adata, PredBase(model=XGBEstimator(importance_type="gain")), outdir
         # )
         # importance score with gain are the average gain across all trees
-
-        # TODO: add in recursive selection
-        # rfecv = fs.RFECV(estimator=RandomForestPred("clr", "plus_one"), verbose=1)
-        # rfecv.fit(adata, y=labels)
+        optimization_scanpy(adata)
