@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Callable
 
+import alibi.api.interfaces as aai
 import alibi.api.interfaces as interfaces
 import alibi.explainers as ae
 import anndata as ad
@@ -10,6 +11,10 @@ import numpy as np
 import pandas as pd
 import scipy.spatial.distance as sd
 import shap
+import sklearn.preprocessing as sp
+from alibi.prototypes import ProtoSelect
+from alibi.prototypes.protoselect import cv_protoselect_euclidean
+from alibi.utils.kernel import EuclideanDistance
 from matplotlib.figure import Figure
 from scipy import sparse
 from sklearn.decomposition import PCA
@@ -660,3 +665,28 @@ def get_most_important(
         vals = vals.abs().sort_values(ascending=False).iloc[:n]
         tmp.append(pd.DataFrame({label: vals.index}))
     return pd.concat(tmp, axis=1)
+
+
+def prototype_helper(
+    adata: ad.AnnData,
+    y: str = "tumor_type",
+    eps: float | None = None,
+    n_prototypes: int = 3,
+) -> aai.Explanation:
+    x = adata.X if not sparse.issparse(adata.X) else adata.X.toarray()
+    encoder = sp.LabelEncoder()
+    labels = adata.obs[y]
+    encoded = encoder.fit_transform(labels)
+    if eps is None:
+        cv = cv_protoselect_euclidean(
+            trainset=(x, encoded), num_prototypes=n_prototypes
+        )
+        eps = cv["best_eps"]
+    proto = ProtoSelect(kernel_distance=EuclideanDistance(), eps=eps)
+    proto.fit(X=x, y=encoded)
+    exp = proto.summarise(num_prototypes=n_prototypes)
+    exp.data["prototype_labels"] = encoder.inverse_transform(
+        exp.data["prototype_labels"]
+    )
+    exp.prototype_labels = encoder.inverse_transform(exp.prototype_labels)
+    return exp
