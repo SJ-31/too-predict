@@ -189,11 +189,13 @@ MODELS: dict = {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": RecodeGO(id_col="GENEID", level=4),
+        "s": True,  # [2025-04-09 Wed]
     },
     "clr_xgboost_go_level_3_sum": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": RecodeGO(id_col="GENEID", level=3),
+        "s": True,  #  [2025-04-09 Wed]
     },
     "clr_xgboost_go_level_2_sum": {
         "m": PredBase(XGBEstimator(max_depth=3)),
