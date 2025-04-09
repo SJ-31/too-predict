@@ -49,6 +49,13 @@ class PredBase:
         else:
             self.score_fn = None
 
+    def __sklearn_clone__(self):
+        return PredBase(
+            model=clone(self.model),
+            make_dense=self.make_dense,
+            balancer=self.balancer,
+        )
+
     def get_model(self):
         if isinstance(self.model, XGBEstimator):
             return self.model.model
@@ -87,7 +94,10 @@ class PredBase:
             raise ValueError(f"The column '{y}' is not present in X.obs")
         self.var = X.var
         self._is_fitted = True
-        self.model.fit(self._validate(X.X), X.obs[y].astype(str))
+        y_vals = X.obs[y]
+        if y_vals.dtype == "category":
+            y_vals = y_vals.astype(str)
+        self.model.fit(self._validate(X.X), y_vals)
 
     def _check_dense(self, X):
         if not self.make_dense or not sparse.issparse(X):
@@ -158,12 +168,7 @@ class PredBase:
             **kwargs,
         )
 
-    def rfecv(
-        self,
-        X: ad.AnnData,
-        label_col="tumor_type",
-        rfecv_params: dict = None,
-    ) -> RFECV:
+    def rfecv(self, X: ad.AnnData, y="tumor_type", rfecv_params: dict = None) -> RFECV:
         """Perform recursive feature elimination with cross validation
 
         Parameters
@@ -175,9 +180,12 @@ class PredBase:
         -------
         Fitted RFECV object
         """
+        encoder: LabelEncoder = LabelEncoder()
+        labels = encoder.fit_transform(X.obs[y])
         params = rfecv_params if rfecv_params else {}
-        rfecv = RFECV(self.model, **params)
-        rfecv.fit(X.X, X.obs[label_col].astype(str))
+        rfecv = RFECV(self.get_model(), **params)
+        rfecv.fit(X.X, labels)
+        rfecv.ranking_ = X.var.index[rfecv.ranking_]
         return rfecv
 
 
@@ -325,7 +333,10 @@ class BatchBase(PredBase):
     @override
     def fit(self, X: ad.AnnData, y: str = "tumor_type") -> None:
         counts = self._add_pred(X, fit=True)
-        self.model.fit(counts, X.obs[y].astype(str))
+        y_vals = X.obs[y]
+        if y_vals.dtype == "category":
+            y_vals = y_vals.astype(str)
+        self.model.fit(counts, y_vals)
         self._is_fitted = True
 
     @property
@@ -627,6 +638,7 @@ class XGBEstimator:
     """
 
     def __init__(self, early_stop=False, **kwargs) -> None:
+        self.encoder: LabelEncoder | None = None
         if early_stop:
             self.model: XGBClassifier = XGBClassifier(
                 early_stopping_rounds=10, eval_metric=sm.log_loss, **kwargs
@@ -638,6 +650,10 @@ class XGBEstimator:
         self.encoder = LabelEncoder()
         recoded = self.encoder.fit_transform(y)
         self.model.fit(X, recoded)
+
+    def __sklearn_clone__(self):
+        est = XGBEstimator(model=clone(self.model))
+        return est
 
     @property
     def feature_importances_(self):
