@@ -112,9 +112,9 @@ get_report <- function(label) {
 
 
 roc <- get_rocs(LABEL)
-pr <- get_prec_recall(LABEL)
+pr <- get_prec_recall(LABEL) |> mutate(class = str_replace_all(class, "-", "_"))
 misc <- get_misc(LABEL)
-report <- get_report(LABEL)
+report <- get_report(LABEL) |> mutate(class = str_replace_all(class, "-", "_"))
 if (!is.null(pr)) {
   pr_auc <- pr |>
     group_by(class, model, !!as.symbol(VAR)) |>
@@ -136,39 +136,47 @@ if (!is.null(pr)) {
 # - F1 score
 metrics <- list(
   kappa = misc, mcc = misc,
-  `f1-score` = mutate(report, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+  `f1-score` = filter(report, !grepl("avg", class)) |> mutate(
+    !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))
+  )
 )
 if (!is.null(pr_auc)) {
   metrics[["prc_auc"]] <- mutate(pr_auc, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
 }
 
-friedman_tt <- lapply(names(metrics), \(x) {
-  friedman_test_wrapper(metrics[[x]], x, var = VAR) |>
-    tidy() |>
-    mutate(metric = x)
-}) |>
-  bind_rows()
 
-write_csv(friedman_tt, here(OUTDIR, glue("friedman_test_{LABEL}.csv")))
+get_tests <- function() {
+  friedman_tt <- lapply(names(metrics), \(x) {
+    result <- friedman_test_wrapper(metrics[[x]], x, var = VAR) |>
+      tidy() |>
+      mutate(metric = x)
+    print(glue("{x} test success"))
+    result
+  }) |>
+    bind_rows()
 
-significant_tt <- friedman_tt |>
-  filter(p.value <= 0.01) |>
-  pluck("metric")
+  write_csv(friedman_tt, here(OUTDIR, glue("friedman_test_{LABEL}.csv")))
 
-wilcox_tt <- lapply(significant_tt, \(m) {
-  tb <- metrics[[m]]
-  tidy_pairwise(tb$model, tb[[m]], \(x, y) {
-    wilcox.test(x, y)
-  }, \(x) p.adjust(x, method = "bonferroni")) |> mutate(metric = m)
-}) |> bind_rows()
-# TODO: is there a better post-hoc test to use?
-write_csv(wilcox_tt, here(OUTDIR, glue("wilcox_{LABEL}.csv")))
+  significant_tt <- friedman_tt |>
+    filter(p.value <= 0.01) |>
+    pluck("metric")
+
+  wilcox_tt <- lapply(significant_tt, \(m) {
+    tb <- metrics[[m]]
+    tidy_pairwise(tb$model, tb[[m]], \(x, y) {
+      wilcox.test(x, y)
+    }, \(x) p.adjust(x, method = "bonferroni")) |> mutate(metric = m)
+  }) |>
+    bind_rows()
+  # TODO: is there a better post-hoc test to use?
+  write_csv(wilcox_tt, here(OUTDIR, glue("wilcox_{LABEL}.csv")))
+}
+
+get_tests()
 
 ## --- CODE BLOCK ---
 
 # [2025-03-10 Mon] We probably want to maximize TPR
-
-
 # should do this with weights
 
 # List mapping desired metrics to logicals which are TRUE if higher values are better for the
@@ -186,7 +194,8 @@ combined <- local({
     summarise(across(where(is.numeric), mean)) |>
     select(`f1-score`, !!as.symbol(VAR), model) |>
     ungroup()
-  to_reduce <- list(rep, misc)
+  to_reduce <-
+    list(rep, misc)
   if (!is.null(pr_auc)) {
     prc <- pr_auc |>
       group_by(model, !!as.symbol(VAR)) |>
