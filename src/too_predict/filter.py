@@ -277,6 +277,12 @@ class CompareSplits:
         return df.drop(i_name, axis=1)
 
     def scanpy_lfc(self, threshold: float = 0.05) -> None:
+        """Estimate log fold changes with scanpy's rank_genes_groups
+        For each label, produces a df of three columns
+        - test_vs_train : the lfc of the label in the train vs test set
+        - vs_all : the lfc of the label against all other labels
+        - abs_ratio : ratio of abs(vs_all) / abs(test_vs_train)
+        """
         key = "usage"
         lfcs = {}
         train = self.adata[self.adata.obs["usage"] == "train", :]
@@ -307,35 +313,56 @@ class CompareSplits:
         self.lfcs = lfcs
 
     def plot_pca(
-        self, subset: Iterable = None, style: str | None = None, **kwargs
+        self,
+        subset: Iterable = (),
+        style: str | None = None,
+        all: bool = False,
+        **kwargs,
     ) -> Figure:
         if "pca" not in self.adata.uns:
             sc.pp.pca(self.adata)
-        fig, axes = plt.subplots(ncols=len(subset), sharey=True, sharex=True)
-        keys = self.train_y if subset is None else subset
+        if all:
+            subset = ()
+        fig, axes = plt.subplots(
+            ncols=len(subset) if subset else 1, sharey=True, sharex=True
+        )
+        keys = self.train_y if not subset else subset
         multiple = len(subset) > 1
         pcs: np.ndarray = self.adata.obsm["X_pca"]
         var_ratio = self.adata.uns["pca"]["variance_ratio"]
         pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
-        for i, label in enumerate(keys):
-            ax: Axes = axes if not multiple else axes[i]
-            mask = self.adata.obs[self.y] == label
-            pc1 = pcs[mask, 0]
-            pc2 = pcs[mask, 1]
+        if not all:
+            for i, label in enumerate(keys):
+                ax: Axes = axes if not multiple else axes[i]
+                mask = self.adata.obs[self.y] == label
+                pc1 = pcs[mask, 0]
+                pc2 = pcs[mask, 1]
+                sns.scatterplot(
+                    data=self.adata.obs.loc[mask, :],
+                    x=pc1,
+                    y=pc2,
+                    ax=ax,
+                    hue="usage",
+                    style=style,
+                    **kwargs,
+                )
+                ax.set_xlabel("PC1")
+                ax.set_ylabel("PC2")
+                ax.set_title(label)
+                if i != len(keys) - 1:
+                    ax.get_legend().remove()
+        else:
+            pc1 = pcs[:, 0]
+            pc2 = pcs[:, 1]
             sns.scatterplot(
-                data=self.adata.obs.loc[mask, :],
+                data=self.adata.obs,
                 x=pc1,
                 y=pc2,
-                ax=ax,
-                hue="usage",
+                ax=axes,
+                hue=self.y,
                 style=style,
                 **kwargs,
             )
-            ax.set_xlabel("PC1")
-            ax.set_ylabel("PC2")
-            ax.set_title(label)
-            if i != len(keys) - 1:
-                ax.get_legend().remove()
         fig.suptitle(f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}")
         return fig
 
