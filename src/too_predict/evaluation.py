@@ -10,6 +10,7 @@ import sklearn.metrics as me
 import sklearn.model_selection as ms
 
 from too_predict.imbalance import Balancer
+from too_predict.model import PredBase
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, find_confounded
 
@@ -438,6 +439,23 @@ def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
         elif name == "cm":
             for lab, cm in item.items():
                 cm.to_csv(outdir.joinpath(f"{prefix}-cm{cm_prefix}{lab}.csv"))
+
+
+def fit_train_write(
+    model: PredBase,
+    train: ad.AnnData,
+    test: ad.AnnData,
+    outdir: Path,
+    name: str,
+    y: str = "tumor_type",
+) -> None:
+    model.fit(train, y)
+    proba = model.predict_proba(test)
+    perf = get_all_metrics(test.obs[y], proba, model.classes_)
+    test.obs.assign(prediction=perf["pred"]).to_csv(
+        outdir.joinpath(f"{name}.csv"), index=False
+    )
+    write_metrics(outdir.joinpath(f"{name}.txt"), perf)
 
 
 def write_metrics(
