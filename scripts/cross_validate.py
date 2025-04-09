@@ -11,17 +11,11 @@ from pyhere import here
 from scanpy import read_h5ad
 from too_predict._train_utils import (
     ADDITIONAL_SPLITS,
-    FEATURE_LISTS,
     MODELS,
-    REF_LISTS,
     read_model_spec,
 )
-from too_predict.filter import Filter
-from too_predict.imputer import Imputer
-from too_predict.transformer import Transformer
 from too_predict.utils import (
     RANDOM_STATE,
-    recode_to_go,
     training_data_internal,
     training_data_internal_test,
     write_pickle,
@@ -80,14 +74,19 @@ def cross_validate_helper(
         else:
             result_dir: Path = here(OUTDIR, result_dir_str)
         result_dir.mkdir(exist_ok=True, parents=True)
-        dir = STORAGE_DIR.joinpath(feature_set)
+        if feature_set is not None:
+            dir = STORAGE_DIR.joinpath(feature_set)
+        else:
+            dir = STORAGE_DIR
         output = here(dir, f"{trans}-{impute}.h5ad")
 
         if USE_CACHED:
             adata = read_h5ad(output)
         else:
-            adata = encoder(adata)
-            adata = filter.fit_transform(adata)
+            if encoder is not None:
+                adata = encoder.fit_transform(adata)
+            if filter is not None:
+                adata = filter.fit_transform(adata)
         if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
             track_meta = result_dir.joinpath(".metadata")
             track_meta.mkdir(exist_ok=True)
@@ -147,7 +146,7 @@ if __name__ == "__main__":
 
     with joblib.parallel_backend(backend):
         for name, data in MODELS.items():
-            t, i, skip = data.get("t"), data.get("i"), data.get("s")
+            t, i, skip, f = data.get("t"), data.get("i"), data.get("s"), data.get("f")
             cross_validate_helper(
                 lc=label_class,
                 gc=None,
@@ -155,5 +154,6 @@ if __name__ == "__main__":
                 result_dir_str=name,
                 trans=t,
                 impute=i,
+                feature_set=f,
                 skip=skip,
             )
