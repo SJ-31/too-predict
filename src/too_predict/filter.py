@@ -19,6 +19,7 @@ from matplotlib.figure import Figure
 from scipy import sparse
 
 import too_predict._rust_helpers as rh
+import too_predict.explanation as te
 import too_predict.utils as ut
 from too_predict.model import PredBase
 
@@ -259,6 +260,7 @@ class CompareSplits:
         self.lfcs: dict[str, pd.DataFrame] | None = None
         self.y = y  # Attribute of obs we want to predict
         self.train_y: Iterable = train.obs[y].unique()
+        self.prototypes: dict[str, dict] = {}
 
     @ut.r_cleanup
     def edgeR_lfc(self) -> pd.DataFrame:
@@ -312,26 +314,73 @@ class CompareSplits:
             lfcs[label] = lfc
         self.lfcs = lfcs
 
+    def get_prototypes(
+        self,
+        all_types_together: bool = False,
+        **kwargs,
+    ) -> None:
+        self.prototypes["train_test_dist"] = {}
+
+        def add_prototype_to_obs(sink: ad.AnnData, source: ad.AnnData, expl) -> None:
+            indices = expl.prototype_indices
+            index_vals = source.obs.index[indices]
+            new_mask = sink.obs.index.isin(index_vals)
+            if "is_prototype" not in sink.obs.columns:
+                sink.obs["is_protoype"] = new_mask
+            else:
+                previous = sink.obs["is_prototype"]
+                sink.obs["is_prototype"] = previous | new_mask
+
+        def train_test_protos_dist(adata: ad.AnnData, label: str):
+            tr_mask = adata.obs["usage"] == "train"
+            lmask = adata.obs[self.y] == label
+            is_proto = adata.obs["is_prototype"]
+            # [2025-04-09 Wed] Prototypes don't appear in the train set
+            train_p = adata[(tr_mask & lmask & is_proto).values, :]
+            test_p = adata[((~tr_mask) & lmask & is_proto).values, :]
+            if (train_p.shape[0] > 0) and (test_p.shape[0] > 0):
+                dist = spd.cdist(train_p, test_p, metric="euclidean").mean()
+                self.prototypes["train_test_dist"][label] = dist
+
+        if all_types_together:
+            protos = te.prototype_helper(self.adata, y=self.y, **kwargs)
+            self.prototypes["all"] = protos
+            add_prototype_to_obs(self.adata, self.adata, protos)
+        else:
+            self.prototypes["by_label"] = {}
+            for label in self.train_y:
+                current = self.adata[self.adata.obs[self.y] == label, :]
+                cur_protos = te.prototype_helper(current, y=self.y, **kwargs)
+                self.prototypes["by_label"][label] = cur_protos
+                add_prototype_to_obs(self.adata, current, cur_protos)
+
+        [train_test_protos_dist(self.adata, label) for label in self.train_y]
+
+    def plot_prototypes(self, **kwargs) -> Figure:
+        if not self.prototypes:
+            raise ValueError("Prototypes haven't been calculated yet!")
+        return self.plot_pca(style="is_prototype", **kwargs)
+
     def plot_pca(
         self,
-        subset: Iterable = (),
+        subset: Iterable | None = None,
         style: str | None = None,
-        all: bool = False,
+        plot_together: bool = False,
         **kwargs,
     ) -> Figure:
         if "pca" not in self.adata.uns:
             sc.pp.pca(self.adata)
-        if all:
-            subset = ()
-        fig, axes = plt.subplots(
-            ncols=len(subset) if subset else 1, sharey=True, sharex=True
-        )
-        keys = self.train_y if not subset else subset
-        multiple = len(subset) > 1
+        keys = self.train_y if subset is None else subset
+        ncols = 1 if plot_together else len(keys)
+        fig, axes = plt.subplots(ncols=ncols, sharey=True, sharex=True)
+        multiple = ncols > 1
         pcs: np.ndarray = self.adata.obsm["X_pca"]
+        if subset is not None and plot_together:
+            mask = self.adata.obs[self.y].isin(subset)
+            pcs = pcs[mask, :]
         var_ratio = self.adata.uns["pca"]["variance_ratio"]
         pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
-        if not all:
+        if not plot_together:
             for i, label in enumerate(keys):
                 ax: Axes = axes if not multiple else axes[i]
                 mask = self.adata.obs[self.y] == label
