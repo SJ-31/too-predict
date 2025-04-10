@@ -364,7 +364,7 @@ class CompareSplits:
     def plot_pca(
         self,
         subset: Iterable | None = None,
-        style: str | None = None,
+        style: str | None | list[str] = None,
         plot_together: bool = False,
         **kwargs,
     ) -> Figure:
@@ -372,6 +372,16 @@ class CompareSplits:
             sc.pp.pca(self.adata)
         keys = self.train_y if subset is None else subset
         ncols = 1 if plot_together else len(keys)
+
+        if style is not None and plot_together:
+            ncols = len(style)
+        elif style is None and plot_together:
+            style = [None]
+        elif plot_together and isinstance(style, str):
+            style = [style]
+        elif style is not None and not plot_together and not isinstance(style, str):
+            raise ValueError("Multiple styles not supported when !`plot_together`")
+
         fig, axes = plt.subplots(ncols=ncols, sharey=True, sharex=True)
         multiple = ncols > 1
         pcs: np.ndarray = self.adata.obsm["X_pca"]
@@ -380,7 +390,8 @@ class CompareSplits:
             mask = self.adata.obs[self.y].isin(subset)
             type_map = {self.y: str}
             if style is not None:
-                type_map[style] = str
+                for s in style:
+                    type_map[s] = str
             data = data.loc[mask, :].astype(type_map)
             pcs = pcs[mask, :]
         var_ratio = self.adata.uns["pca"]["variance_ratio"]
@@ -406,17 +417,19 @@ class CompareSplits:
                 if i != len(keys) - 1:
                     ax.get_legend().remove()
         else:
-            pc1 = pcs[:, 0]
-            pc2 = pcs[:, 1]
-            sns.scatterplot(
-                data=data,
-                x=pc1,
-                y=pc2,
-                ax=axes,
-                hue=self.y,
-                style=style,
-                **kwargs,
-            )
+            for i, s in enumerate(style):
+                ax: Axes = axes if not multiple else axes[i]
+                pc1 = pcs[:, 0]
+                pc2 = pcs[:, 1]
+                sns.scatterplot(
+                    data=data,
+                    x=pc1,
+                    y=pc2,
+                    ax=ax,
+                    hue=self.y,
+                    style=s,
+                    **kwargs,
+                )
         fig.suptitle(f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}")
         return fig
 
