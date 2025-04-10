@@ -80,29 +80,30 @@ transformed.obs["foo"] = "foo"
 train, test = ut.train_test_split_ad(transformed)
 
 ccs = fil.CompareSplits(train, test)
-ccs.get_prototypes()
+fig = ccs.plot_pca(
+    plot_together=True,
+    subset=("BRCA", "COAD_READ", "DLBC"),
+    style=["Sample_Type", "usage"],
+)
+fig.show()
 
-fig = ccs.plot_prototypes(plot_together=True)
+# ccs.get_prototypes()
+# fig = ccs.plot_prototypes(plot_together=True)
 # fig.savefig(Path.home().joinpath("test.png"))
 #
 
-##  --- CODE BLOCK ---
-import pulp as pu
-
-vals = transformed.X.toarray()
-
-
-# Could also use this for lfcs...
-
-prob = pu.LpProblem("Organoid_distance", pu.LpMinimize)
-features = [pu.LpVariable(g, cat="Binary") for g in transformed.var.index]
-x = vals[5, :]
-y = vals[29, :]
-comps = np.abs(x - y) ** 2
-
-n = 1000
-
-# Distance minimization
-
 
 # #  --- CODE BLOCK ---
+
+obs = pl.read_csv("/home/shannc/Bio_SDD/too-predict/data/training_data_obs.csv")
+wanted = ["tumor_type", "primary_site", "Sample_Type"]
+obs.select(
+    pl.col("Project_ID"),
+    pl.col("tumor_type"),
+    pl.col("primary_site"),
+    pl.col("Sample_Type"),
+).group_by("Project_ID").agg(n=pl.count(), *[pl.col(w).first() for w in wanted]).sort(
+    "Sample_Type"
+).filter(~pl.col("Project_ID").str.contains("CHULA")).write_csv(
+    Path.home().joinpath("Downloads").joinpath("external_sources_2025-4-10.csv")
+)

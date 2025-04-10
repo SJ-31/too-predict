@@ -250,6 +250,18 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
+    "clr_xgb3_pulp_lfc": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "pulp_scanpy_minimized_lfc_ratio",
+    },
+    "clr_xgb3_pulp_euclidean": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "pulp_euclidean_edgeR_3000_subset",
+    },
 }
 
 # * Additional splits
