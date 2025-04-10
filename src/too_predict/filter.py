@@ -326,7 +326,7 @@ class CompareSplits:
             index_vals = source.obs.index[indices]
             new_mask = sink.obs.index.isin(index_vals)
             if "is_prototype" not in sink.obs.columns:
-                sink.obs["is_protoype"] = new_mask
+                sink.obs["is_prototype"] = new_mask
             else:
                 previous = sink.obs["is_prototype"]
                 sink.obs["is_prototype"] = previous | new_mask
