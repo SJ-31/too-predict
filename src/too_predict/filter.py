@@ -375,8 +375,13 @@ class CompareSplits:
         fig, axes = plt.subplots(ncols=ncols, sharey=True, sharex=True)
         multiple = ncols > 1
         pcs: np.ndarray = self.adata.obsm["X_pca"]
+        data = self.adata.obs
         if subset is not None and plot_together:
             mask = self.adata.obs[self.y].isin(subset)
+            type_map = {self.y: str}
+            if style is not None:
+                type_map[style] = str
+            data = data.loc[mask, :].astype(type_map)
             pcs = pcs[mask, :]
         var_ratio = self.adata.uns["pca"]["variance_ratio"]
         pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
@@ -387,7 +392,7 @@ class CompareSplits:
                 pc1 = pcs[mask, 0]
                 pc2 = pcs[mask, 1]
                 sns.scatterplot(
-                    data=self.adata.obs.loc[mask, :],
+                    data=data.loc[mask, :],
                     x=pc1,
                     y=pc2,
                     ax=ax,
@@ -404,7 +409,7 @@ class CompareSplits:
             pc1 = pcs[:, 0]
             pc2 = pcs[:, 1]
             sns.scatterplot(
-                data=self.adata.obs,
+                data=data,
                 x=pc1,
                 y=pc2,
                 ax=axes,
