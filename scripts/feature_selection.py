@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+from collections.abc import Iterable
 from pathlib import Path
 
 import anndata as ad
@@ -7,6 +8,7 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pulp as pu
 import scanpy as sc
 import scipy.optimize as opt
 import seaborn as sns
@@ -14,7 +16,10 @@ import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
 import too_predict.go_utils as gu
 import too_predict.utils as ut
+from joblib import Parallel, delayed
 from pyhere import here
+from scipy import sparse
+from scipy.stats import mode
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
 from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
@@ -168,6 +173,8 @@ def remove_redundant(adata):
 
 # ** With optimization
 
+# *** Fns
+
 
 def milp_optimize(batch_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
     """Use scipy's milp function to minimize the ratio
@@ -182,16 +189,82 @@ def milp_optimize(batch_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
     return solve.x
 
 
+def dist_optimize(
+    x: ad.AnnData,
+    y: ad.AnnData,
+    rng: np.random.Generator | None = None,
+    n: int = 1000,
+    n_iter: int = 1000,
+    parallel: bool = False,
+    n_jobs: int = 8,
+) -> list[str]:
+    """
+    Find the optimal set of n features that
+    minimizes the euclidean distance between the
+    samples in x and those in y with random sampling
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+    if x.shape[1] != y.shape[1]:
+        raise ValueError("x and y must have the same number of features!")
+    x_x: np.ndarray = x.X.toarray() if sparse.issparse(x.X) else x.X
+    y_x: np.ndarray = y.X.toarray() if sparse.issparse(y.X) else y.X
+
+    def helper() -> list:
+        x_draw, y_draw = rng.integers(0, x.shape[0]), rng.integers(0, y.shape[0])
+        x_vals, y_vals = x_x[x_draw, :], y_x[y_draw, :]
+        comps = np.abs(x_vals - y_vals) ** 2
+        prob = pu.LpProblem("distance", pu.LpMinimize)
+        fvars = [pu.LpVariable(str(g), cat="Binary") for g in range(len(comps))]
+        prob += pu.lpSum([f * comps[i] for i, f in enumerate(fvars)])
+        # No square root, but effect is the same
+        prob += pu.lpSum(fvars) == n
+        prob.solve()
+        result = [
+            (int(v.name), v.varValue) for v in prob.variables() if "_" not in v.name
+        ]
+        result = sorted(result, key=lambda x: x[0])
+        return [r[1] for r in result]
+
+    if not parallel:
+        iterations = np.array([helper() for _ in range(n_iter)])
+    else:
+        iterations = np.array(
+            Parallel(n_jobs=n_jobs, prefer="threads")(
+                delayed(helper)() for _ in range(n_iter)
+            )
+        )
+    vote = mode(iterations, axis=0)
+    kept = [f for i, f in enumerate(x.var.index) if vote.mode[i] == 1]
+    return kept
+
+
+def lfc_optimize(
+    features: Iterable, batch_vals: np.ndarray, y_vals: np.ndarray, n: int = 1000
+) -> list[str]:
+    prob = pu.LpProblem("LFC", pu.LpMinimize)
+    fvars = [pu.LpVariable(g, cat="Binary") for g in features]
+    c = np.nanmean(batch_vals, axis=0) / np.nanmean(y_vals, axis=0)
+    c[np.isnan(c)] = 0
+    c[np.isinf(c)] = 0
+
+    prob += pu.lpSum([f * c[i] for i, f in enumerate(features)])
+    prob += pu.lpSum(fvars) == n
+    prob.solve()
+    print(pu.LpStatus[prob.status])
+    return [v.name for v in prob.variables() if v.varValue == 1]
+
+
+# *** Use functions
+
+
 def optimization_scanpy(adata):
     spc = MODELS["clr_random_forest_edger"]
 
     F, M, T, B, E = read_model_spec(spc)
-    # filtered = F.fit_transform(adata)
-    # transformed = T.fit_transform(filtered)
 
     transformed = T.fit_transform(adata)
     split_fn = ADDITIONAL_SPLITS["CHULA"]
-    # train, test = split_fn(transformed)
     sc.tl.rank_genes_groups(transformed, groupby="Sample_Type")
     ri = ut.RankInterpreter(transformed)
     batch_df = ri.feature_stat("logfoldchanges")
@@ -201,15 +274,29 @@ def optimization_scanpy(adata):
 
     batch_df, y_df = batch_df.align(y_df, join="inner", axis=0)
     batch_vals, y_vals = np.transpose(batch_df.values), np.transpose(y_df.values)
-    solution = milp_optimize(batch_vals, y_vals)
+    solution = lfc_optimize(transformed.var.index, batch_vals, y_vals, n=3000)
     adata.var["GENEID"][solution == 1].to_csv(
-        OUTDIR.joinpath("feature_lists").joinpath("milp_scanpy_minimized_lfc_ratio.txt")
+        OUTDIR.joinpath("feature_lists").joinpath(
+            "pulp_scanpy_minimized_lfc_ratio.txt"
+        ),
+        index=False,
     )
+    filtered = F.fit_transform(adata)
+    transformed2 = T.fit_transform(filtered)
+    train, test = split_fn(transformed2)
+
+    dist_solution = dist_optimize(train, test, n=1500, n_iter=3000, parallel=True)
+    dist_file: Path = OUTDIR.joinpath("feature_lists").joinpath(
+        "pulp_euclidean_edgeR_3000_subset.txt"
+    )
+    dist_file.write_text("\n".join(dist_solution))
 
 
-# def optimization_edgeR
+# [2025-04-10 Thu] Strategy 2:
+# Find the n-sized subset of genes that minimizes euclidean distance between
+# an organoid vs. primary sample.
+# Randomly sample from
 
-# TODO:
 
 # * Run
 
