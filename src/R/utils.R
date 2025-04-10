@@ -142,6 +142,15 @@ distinct_orderings <- function(tb, cols) {
     select(-tmp)
 }
 
+adata2dge <- function(adata, layer = NULL) {
+  if (!is.null(layer)) {
+    counts <- t(as.matrix(adata$layers[[layer]]))
+  } else {
+    counts <- t(as.matrix(adata$X))
+  }
+  DGEList(counts = counts, samples = adata$obs, genes = adata$var)
+}
+
 sce2dge <- function(sce, count_assay = "X", as_integer = FALSE) {
   counts <- assays(sce)[[count_assay]] |> as.matrix()
   if (as_integer) {
@@ -247,4 +256,41 @@ edgeR_lfc_train_test <- function(counts, obs_meta, var_meta, label) {
   test <- glmQLFTest(fit)
   topTags(test, n = nrow(dge), sort.by = "PValue") |>
     as.data.frame()
+}
+
+#' Helper function to run DE with edgeR
+#'
+#' @description
+#' The form of the analysis is to compare a given level
+#' of factor `group` against the mean expression of all other levels in `group`
+edgeR_mean_all <- function(dge, group, id_col = "GENEID") {
+  normLibSizes(dge)
+  var_ids <- dge$genes[[id_col]]
+  var_cols <- colnames(dge$genes)
+  mm <- model.matrix(as.formula(paste("~0+", group)), data = dge$samples)
+  dge <- estimateDisp(dge, design = mm, robust = TRUE)
+  fit <- glmQLFit(dge, mm, robust = TRUE)
+  group_vec <- colnames(mm) |> keep(\(x) str_detect(x, group))
+  group_levels <- unique(dge$samples[[group]])
+
+  mean_val <- 1 / (length(group_vec) - 1)
+  contrast_str <- map_chr(group_vec, \(x) {
+    mean_others <- paste(mean_val, "*", group_vec[group_vec != x], collapse = "+")
+    paste0(x, "-", "(", mean_others, ")")
+  })
+  ccs <- makeContrasts(contrasts = contrast_str, levels = mm)
+
+  lapply(seq_along(contrast_str), \(i) {
+    test <- glmQLFTest(fit, contrast = ccs[i, ])
+    g <- group_vec[i]
+    top <- topTags(test, n = nrow(dge), sort.by = "PValue") |>
+      as.data.frame() |>
+      as_tibble() |>
+      select(-all_of(var_cols)) |>
+      mutate(id = var_ids) |>
+      relocate(id, .before = everything())
+    top
+    ## rename(!!as.symbol(glue("logFC_{g}")) := contrast_str[i])
+  }) |>
+    `names<-`(group_levels)
 }
