@@ -6,6 +6,7 @@ from os import replace
 from pathlib import Path
 from typing import override
 
+import alibi.api.interfaces as aai
 import anndata as ad
 import h5py
 import interpret.blackbox as ib
@@ -17,6 +18,7 @@ import rpy2.robjects as ro
 import scanpy as sc
 import scipy.cluster as cluster
 import scipy.cluster.hierarchy as sch
+import scipy.optimize as opt
 import scipy.spatial.distance as spd
 import seaborn as sns
 import seaborn.objects as so
@@ -28,24 +30,17 @@ import sklearn.neighbors as sn
 import sklearn.preprocessing as sp
 import too_predict._rust_helpers as rh
 import too_predict.evaluation as te
+import too_predict.explanation as te
+import too_predict.filter as fil
+import too_predict.go_utils as gu
 import too_predict.model as tm
 import too_predict.utils as ut
-from imblearn.under_sampling import TomekLinks
+from joblib import Parallel, delayed
 from pyhere import here
-from rpy2.rinterface import SexpVector
-from rpy2.robjects import default_converter, numpy2ri
 from rpy2.robjects.packages import importr
-from scipy import sparse, spatial, stats
-from scipy.cluster.hierarchy import cut_tree
-from sklearn.cluster import AgglomerativeClustering, FeatureAgglomeration, KMeans
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression, SGDClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.svm import LinearSVC
+from scipy import sparse
+from scipy.stats import mode
 from too_predict._train_utils import MODELS, read_model_spec
-from too_predict.filter import CompareSplits, Filter, count_tomek_links
-from too_predict.imputer import Imputer
-from too_predict.plotting import plot_diagonal_matrix
 
 # #  --- CODE BLOCK ---
 #
@@ -74,15 +69,40 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
 
 
 # #  --- CODE BLOCK ---
+
 spc = MODELS["clr_random_forest_edger"]
 
 F, M, T, B, E = read_model_spec(spc)
-filtered = T.fit_transform(adata)
-transformed = F.fit_transform(filtered)
+filtered = F.fit_transform(adata)
+transformed = T.fit_transform(filtered)
 
-train, test = ut.train_test_split_ad(adata[:, :50])
+transformed.obs["foo"] = "foo"
+train, test = ut.train_test_split_ad(transformed)
 
-cc = CompareSplits(train, test)
-df = cc.edgeR_lfc()
+ccs = fil.CompareSplits(train, test)
+ccs.get_prototypes()
+
+fig = ccs.plot_prototypes(plot_together=True)
+# fig.savefig(Path.home().joinpath("test.png"))
+#
+
+##  --- CODE BLOCK ---
+import pulp as pu
+
+vals = transformed.X.toarray()
+
+
+# Could also use this for lfcs...
+
+prob = pu.LpProblem("Organoid_distance", pu.LpMinimize)
+features = [pu.LpVariable(g, cat="Binary") for g in transformed.var.index]
+x = vals[5, :]
+y = vals[29, :]
+comps = np.abs(x - y) ** 2
+
+n = 1000
+
+# Distance minimization
+
 
 # #  --- CODE BLOCK ---

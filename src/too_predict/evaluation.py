@@ -10,7 +10,6 @@ import sklearn.metrics as me
 import sklearn.model_selection as ms
 
 from too_predict.imbalance import Balancer
-from too_predict.model import PredBase
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, find_confounded
 
@@ -442,7 +441,7 @@ def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
 
 
 def fit_train_write(
-    model: PredBase,
+    model,
     train: ad.AnnData,
     test: ad.AnnData,
     outdir: Path,

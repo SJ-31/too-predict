@@ -240,10 +240,10 @@ edgeR_lfc_train_test <- function(counts, obs_meta, var_meta, label) {
   library(edgeR)
   dge <- DGEList(counts = counts, samples = obs_meta, genes = var_meta)
   dge$samples[[label]] <- as.factor(dge$samples[[label]])
-  mm <- model.matrix(as.formula(paste("~", label, "+usage")), data = dge$samples)
+  mm <- model.matrix(as.formula(paste("~0+", label, "+usage")), data = dge$samples)
   dge <- normLibSizes(dge)
-  dge <- estimateDisp(dge, design = mm, robust = TRUE)
-  fit <- glmQLFit(dge, mm, robust = TRUE)
+  dge <- estimateDisp(dge, design = mm)
+  fit <- glmQLFit(dge, design = mm)
   test <- glmQLFTest(fit)
   topTags(test, n = nrow(dge), sort.by = "PValue") |>
     as.data.frame()

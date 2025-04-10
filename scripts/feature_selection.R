@@ -116,7 +116,6 @@ get_edgeR <- function(f) {
   curious <- dge[, !(colnames(dge) %in% rownames(mm))]
   dge <- estimateDisp(dge, design = mm, robust = TRUE)
   fit <- glmQLFit(dge, mm, robust = TRUE)
-  # Fit glm to account for batch effect specified above
 
   # Make contrasts to get fold changes in one class vs mean of other classes
   group_vec <- colnames(mm) |> keep(\(x) str_detect(x, group))

@@ -48,7 +48,7 @@ for (ttype in wanted_tumor_type) {
     save = here(outdir, glue("umap-{ttype}.png"))
   )
   sc$pl$pca(cur,
-    color = c("Sample_Type", "from_chula"),
+    color = c("tumor_type", "from_chula"),
     save = here(outdir, glue("pca-{ttype}.png"))
   )
 }

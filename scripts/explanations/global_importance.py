@@ -27,7 +27,7 @@ def parse_args():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-m", "--memory", default="30")
-    parser.add_argument("-c", "--cores", default=8)
+    parser.add_argument("-c", "--cores", default=8, type=int)
     parser.add_argument("-t", "--test", default=False, action="store_true")
     parser.add_argument("-i", "--ignore", default="")
     parser.add_argument("-r", "--n_removed", default=200, type=int)
@@ -169,7 +169,9 @@ def main(args):
         y=label_col,
     )
 
-    comparison = compare_best(model, targets, fns, adatas=adatas)
+    comparison = compare_best(
+        model=model, y_array=targets, importance_fns=fns, adatas=adatas
+    )
 
     # Try to remove noisy features found above
     for method, result in comparison.items():
