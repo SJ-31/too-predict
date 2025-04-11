@@ -294,3 +294,24 @@ edgeR_mean_all <- function(dge, group, id_col = "GENEID") {
   }) |>
     `names<-`(group_levels)
 }
+
+#' Return a named list mapping items in `name_col` to list of items in `elem_col`
+#'
+#' @description
+#' @param name_col column to group on that will become the keys
+group_by_into_list <- function(tb, name_col, elem_col) {
+  tb <- group_by(tb, !!as.symbol(name_col)) |> summarize(items = list(!!as.symbol(elem_col)))
+  tb$items |> `names<-`(tb[[name_col]])
+}
+
+show_reticulate_error <- function(expr) {
+  captured <- substitute(expr)
+  result <- tryCatch(
+    expr = eval(captured, envir = parent.frame()),
+    error = \(cnd) {
+      last_error <- reticulate::py_last_error()
+      message("Python error: ", last_error$type, "\n", last_error$value, "\n", last_error$traceback)
+    }
+  )
+  result
+}
