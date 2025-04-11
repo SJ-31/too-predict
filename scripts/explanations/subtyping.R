@@ -13,8 +13,8 @@ suppressMessages({
 
 ut <- import("too_predict.utils")
 tu <- import("too_predict._train_utils")
+plotting <- import("too_predict.plotting")
 sc <- import("scanpy")
-ad <- import("anndata")
 skc <- import("sklearn.cluster")
 
 GO_ANNOTATIONS <- evoGO::loadGOAnnotation(species = "hsapiens", path = as.character(ut$get_data("")))
@@ -47,11 +47,10 @@ if (path.expand("~") != "/home/shannc") {
   }
 }
 
-main <- function(adata, transformer, target, outdir, label_col = "tumor_type") {
+main <- function(adata, target, outdir, label_col = "tumor_type") {
   target_outdir <- here(outdir, target)
   dir.create(target_outdir)
-  adata <- transformer$fit_transform(adata)
-  filtered <- adata[adata$obs[[label_col]] == target, ]
+  filtered <- filtered[filtered$obs[[label_col]] == target, ]
   counts <- filtered$X
   clusters <- get_clusters(counts, "HDBSCAN") %>% paste0("cls", .)
   if (length(unique(clusters)) < 2) {
@@ -61,6 +60,11 @@ main <- function(adata, transformer, target, outdir, label_col = "tumor_type") {
   # Get clusters
   filt$obs$cluster <- clusters
   unique_clusters <- unique(clusters)
+  pca_fig <- plotting$plot_adata(filt, y = "cluster", plot_mode = "pca")
+  pca_fig$save_fig(here(target_outdir, "cluster_pca.png"))
+
+  umap_fig <- plotting$plot_adata(filt, y = "cluster", plot_mode = "umap")
+  umap_fig$save_fig(here(target_outdir, "cluster_umap.png"))
 
   # Get genes that are DE in each cluster
   alpha <- 0.05
@@ -127,18 +131,21 @@ if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
   parser <- add_option(parser, c("-l", "--label_col"), type = "character", default = "tumor_type")
-  parser <- add_option(parser, c("-t", "--target"), type = "character", default = NULL)
+  parser <- add_option(parser, c("-t", "--targets"), type = "character", default = NULL)
   parser <- add_option(parser, c("-p", "--plot_only"), type = "character", default = FALSE, action = "store_true")
   args <- parse_args(parser)
   adata <- adata_fn()
+  adata$obs$tumor_type <- str_replace_all(adata$obs$tumor_type, "-", "_")
+
   SPEC <- tu$read_model_spec(tu$MODELS[["clr_xgb3_edger"]])
   transformer <- SPEC[[3]]
+  adata <- transformer$fit_transform(adata)
   outdir <- here("data", "output", "explanations", "subtypes")
   dir.create(outdir)
   if (!args$plot_only) {
-    main(adata,
-      transformer = transformer, target = args$target, outdir = outdir,
-      label_col = args$label_col
-    )
+    targets <- str_split_1(targets, ",")
+    for (t in targets) {
+      main(adata, target = t, outdir = outdir, label_col = args$label_col)
+    }
   }
 }
