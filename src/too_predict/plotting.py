@@ -58,16 +58,35 @@ def plot_local_consistency(cons: dict, label):
     go.Figure(plots)
 
 
-def plot_pca_adata(
+def plot_adata(
     adata: ad.AnnData,
     y: str,
     subset: Iterable | None = None,
     style: str | None | list[str] = None,
     plot_together: bool = False,
+    plot_mode: str = "pca",
     **kwargs,
 ) -> Figure:
-    if "pca" not in adata.uns:
+    if "pca" not in adata.uns and plot_mode == "pca":
         sc.pp.pca(adata)
+    elif "distances" not in adata.obsp and plot_mode == "umap":
+        sc.pp.neighbors(adata)
+        sc.tl.umap(adata)
+
+    match plot_mode:
+        case "pca":
+            obsm_key = "X_pca"
+            xlab, ylab = "PC1", "PC2"
+            var_ratio = adata.uns["pca"]["variance_ratio"]
+            pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
+            subtitle = f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}"
+        case "umap":
+            obsm_key = "X_umap"
+            xlab, ylab = "UMAP1", "UMAP2"
+            subtitle = "UMAP"
+        case _:
+            raise ValueError(f"Plotting mode {plot_mode} not supported!")
+
     keys = adata.obs[y] if subset is None else subset
     ncols = 1 if plot_together else len(keys)
 
@@ -82,7 +101,7 @@ def plot_pca_adata(
 
     fig, axes = plt.subplots(ncols=ncols, sharey=True, sharex=True)
     multiple = ncols > 1
-    pcs: np.ndarray = adata.obsm["X_pca"]
+    pts: np.ndarray = adata.obsm[obsm_key]
     data = adata.obs
     if subset is not None and plot_together:
         mask = adata.obs[y].isin(subset)
@@ -91,42 +110,42 @@ def plot_pca_adata(
             for s in style:
                 type_map[s] = str
         data = data.loc[mask, :].astype(type_map)
-        pcs = pcs[mask, :]
-    var_ratio = adata.uns["pca"]["variance_ratio"]
-    pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
+        pts = pts[mask, :]
     if not plot_together:
         for i, label in enumerate(keys):
             ax: Axes = axes if not multiple else axes[i]
             mask = adata.obs[y] == label
-            pc1 = pcs[mask, 0]
-            pc2 = pcs[mask, 1]
+            pt1 = pts[mask, 0]
+            pt2 = pts[mask, 1]
             sns.scatterplot(
                 data=data.loc[mask, :],
-                x=pc1,
-                y=pc2,
+                x=pt1,
+                y=pt2,
                 ax=ax,
                 hue="usage",
                 style=style,
                 **kwargs,
             )
-            ax.set_xlabel("PC1")
-            ax.set_ylabel("PC2")
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(ylab)
             ax.set_title(label)
             if i != len(keys) - 1:
                 ax.get_legend().remove()
     else:
         for i, s in enumerate(style):
             ax: Axes = axes if not multiple else axes[i]
-            pc1 = pcs[:, 0]
-            pc2 = pcs[:, 1]
+            pt1 = pts[:, 0]
+            pt2 = pts[:, 1]
             sns.scatterplot(
                 data=data,
-                x=pc1,
-                y=pc2,
+                x=pt1,
+                y=pt2,
                 ax=ax,
                 hue=y,
                 style=s,
                 **kwargs,
             )
-    fig.suptitle(f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}")
+            ax.set_xlabel(xlab)
+            ax.set_ylabel(ylab)
+    fig.suptitle(subtitle)
     return fig
