@@ -39,7 +39,10 @@ PATHWAYS <- local({
 
 
 if (path.expand("~") != "/home/shannc") {
-  adata_fn <- function() ut$training_data_internal()
+  adata_fn <- function() {
+    adata <- ut$training_data_internal()
+    adata[grepl("CHULA", adata$obs$Project_ID), ]
+  }
 } else {
   adata_fn <- function() {
     adata <- ut$training_data_internal_test()
@@ -47,15 +50,18 @@ if (path.expand("~") != "/home/shannc") {
   }
 }
 
-main <- function(adata, target, outdir, label_col = "tumor_type") {
+main <- function(adata, target, outdir, cluster_method, label_col = "tumor_type") {
   target_outdir <- here(outdir, target)
   dir.create(target_outdir)
-  filtered <- filtered[filtered$obs[[label_col]] == target, ]
-  counts <- filtered$X
-  clusters <- get_clusters(counts, "HDBSCAN") %>% paste0("cls", .)
+  filt <- adata[adata$obs[[label_col]] == target, ]
+  if (filt$shape[[1]] == 0) {
+    print(glue("Filtering for {target} left no samples"))
+    return()
+  }
+  clusters <- show_reticulate_error(paste0("cls", get_clusters(filt, cluster_method)))
   if (length(unique(clusters)) < 2) {
     print("No clusters detected")
-    q()
+    return()
   }
   # Get clusters
   filt$obs$cluster <- clusters
@@ -113,12 +119,14 @@ main <- function(adata, target, outdir, label_col = "tumor_type") {
 }
 
 
-get_clusters <- function(adata, method = "HDBSCAN", ...) {
+get_clusters <- function(adata, layer = NULL, method = "HDBSCAN", ...) {
   if (method == "HDBSCAN") {
     hdb <- skc$HDBSCAN(...)
     hdb$fit_predict(adata$X)
   } else if (method == "leiden") {
+    sc$pp$pca(adata)
     sc$pp$neighbors(adata)
+    sc$tl$umap(adata)
     sc$tl$leiden(adata, ...)
     adata$obs$leiden
   } else if (method == "test") {
@@ -131,8 +139,9 @@ if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
   parser <- add_option(parser, c("-l", "--label_col"), type = "character", default = "tumor_type")
-  parser <- add_option(parser, c("-t", "--targets"), type = "character", default = NULL)
-  parser <- add_option(parser, c("-p", "--plot_only"), type = "character", default = FALSE, action = "store_true")
+  parser <- add_option(parser, c("-g", "--targets"), type = "character", default = NULL)
+  parser <- add_option(parser, c("-p", "--plot_only"), type = "logical", default = FALSE, action = "store_true")
+  parser <- add_option(parser, c("-c", "--cluster_method"), type = "character", default = "HDBSCAN")
   args <- parse_args(parser)
   adata <- adata_fn()
   adata$obs$tumor_type <- str_replace_all(adata$obs$tumor_type, "-", "_")
@@ -143,9 +152,12 @@ if (sys.nframe() == 0) {
   outdir <- here("data", "output", "explanations", "subtypes")
   dir.create(outdir)
   if (!args$plot_only) {
-    targets <- str_split_1(targets, ",")
+    targets <- str_split_1(args$targets, ",")
     for (t in targets) {
-      main(adata, target = t, outdir = outdir, label_col = args$label_col)
+      main(adata,
+        target = t, outdir = outdir, label_col = args$label_col,
+        cluster_method = args$cluster_method
+      )
     }
   }
 }
