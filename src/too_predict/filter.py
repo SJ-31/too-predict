@@ -20,6 +20,7 @@ from scipy import sparse
 
 import too_predict._rust_helpers as rh
 import too_predict.explanation as te
+import too_predict.plotting as plotting
 import too_predict.utils as ut
 from too_predict.model import PredBase
 
@@ -368,70 +369,14 @@ class CompareSplits:
         plot_together: bool = False,
         **kwargs,
     ) -> Figure:
-        if "pca" not in self.adata.uns:
-            sc.pp.pca(self.adata)
-        keys = self.train_y if subset is None else subset
-        ncols = 1 if plot_together else len(keys)
-
-        if style is not None and plot_together:
-            ncols = len(style)
-        elif style is None and plot_together:
-            style = [None]
-        elif plot_together and isinstance(style, str):
-            style = [style]
-        elif style is not None and not plot_together and not isinstance(style, str):
-            raise ValueError("Multiple styles not supported when !`plot_together`")
-
-        fig, axes = plt.subplots(ncols=ncols, sharey=True, sharex=True)
-        multiple = ncols > 1
-        pcs: np.ndarray = self.adata.obsm["X_pca"]
-        data = self.adata.obs
-        if subset is not None and plot_together:
-            mask = self.adata.obs[self.y].isin(subset)
-            type_map = {self.y: str}
-            if style is not None:
-                for s in style:
-                    type_map[s] = str
-            data = data.loc[mask, :].astype(type_map)
-            pcs = pcs[mask, :]
-        var_ratio = self.adata.uns["pca"]["variance_ratio"]
-        pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
-        if not plot_together:
-            for i, label in enumerate(keys):
-                ax: Axes = axes if not multiple else axes[i]
-                mask = self.adata.obs[self.y] == label
-                pc1 = pcs[mask, 0]
-                pc2 = pcs[mask, 1]
-                sns.scatterplot(
-                    data=data.loc[mask, :],
-                    x=pc1,
-                    y=pc2,
-                    ax=ax,
-                    hue="usage",
-                    style=style,
-                    **kwargs,
-                )
-                ax.set_xlabel("PC1")
-                ax.set_ylabel("PC2")
-                ax.set_title(label)
-                if i != len(keys) - 1:
-                    ax.get_legend().remove()
-        else:
-            for i, s in enumerate(style):
-                ax: Axes = axes if not multiple else axes[i]
-                pc1 = pcs[:, 0]
-                pc2 = pcs[:, 1]
-                sns.scatterplot(
-                    data=data,
-                    x=pc1,
-                    y=pc2,
-                    ax=ax,
-                    hue=self.y,
-                    style=s,
-                    **kwargs,
-                )
-        fig.suptitle(f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}")
-        return fig
+        return plotting.plot_pca_adata(
+            self.adata,
+            self.y,
+            subset=subset,
+            style=style,
+            plot_together=plot_together,
+            **kwargs,
+        )
 
     def get_plots(self, subset=None, **kwargs) -> Figure:
         if self.lfcs is None:
