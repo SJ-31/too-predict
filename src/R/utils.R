@@ -258,6 +258,31 @@ edgeR_lfc_train_test <- function(counts, obs_meta, var_meta, label) {
     as.data.frame()
 }
 
+get_hallmark_set <- function() {
+  library(msigdb)
+  library(ExperimentHub)
+  library(GSEABase)
+  file <- as.character(ut$get_data("msigdb_hallmark-7.4.rds"))
+
+  eh <- ExperimentHub()
+  msigdb_hs <- getMsigdb(org = "hs", id = "SYM", version = "7.4")
+  hallmark_symbol <- subsetCollection(msigdb_hs, "h")
+  mapping <- read_tsv(as.character(ut$get_data("ensembl_113_id_mapping.tsv"))) |>
+    filter(!is.na(symbol))
+
+  symbol2ensembl <- setNames(mapping$ensembl, mapping$symbol)
+
+  hallmark <- sapply(names(hallmark_symbol), \(n) {
+    gene_set <- hallmark_symbol[[n]]
+    map_chr(gene_set, \(symbol) {
+      symbol2ensembl[symbol]
+    }) |> discard(is.na)
+  }, USE.NAMES = TRUE, simplify = FALSE)
+  saveRDS(hallmark, file)
+  hallmark
+}
+
+
 #' Helper function to run DE with edgeR
 #'
 #' @description
@@ -316,22 +341,39 @@ show_reticulate_error <- function(expr) {
   result
 }
 
-pathways_internal <- function() {
+pathways_internal <- function(sets = c("go", "reactome", "hallmark")) {
   ut <- import("too_predict.utils")
 
-  go_data <- as.character(ut$get_data("ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
-  bp_mapping <- local({
-    tb <- go_data |>
-      filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
-      mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_"))
-    group_by_into_list(tb, "GO term name", "Gene stable ID")
-  })
-  ensembl2reactome <- as.character(ut$get_data("ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
-  reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
-    read_tsv(col_names = c("Reactome ID", "name", "species"))
-  reactome_mapping <- ensembl2reactome |>
-    inner_join(reactome, by = join_by(`Reactome ID`)) |>
-    mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
-    group_by_into_list("name", "Gene stable ID")
-  c(bp_mapping, reactome_mapping)
+  sets <- str_to_lower(sets)
+  result <- c()
+  if ("go" %in% sets) {
+    go_data <- as.character(ut$get_data("ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
+    bp_mapping <- local({
+      tb <- go_data |>
+        filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
+        mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_"))
+      group_by_into_list(tb, "GO term name", "Gene stable ID")
+    })
+    result <- c(result, bp_mapping)
+  }
+  if ("reactome" %in% sets) {
+    ensembl2reactome <- as.character(ut$get_data("ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
+    reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
+      read_tsv(col_names = c("Reactome ID", "name", "species"))
+    reactome_mapping <- ensembl2reactome |>
+      inner_join(reactome, by = join_by(`Reactome ID`)) |>
+      mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
+      group_by_into_list("name", "Gene stable ID")
+    result <- c(result, reactome_mapping)
+  }
+  if ("hallmark" %in% sets) {
+    hfile <- as.character(ut$get_data("msigdb_hallmark-7.4.rds"))
+    if (!file.exists(hfile)) {
+      hallmark <- get_hallmark_set()
+    } else {
+      hallmark <- readRDS(hfile)
+    }
+    result <- c(result, hallmark)
+  }
+  result
 }
