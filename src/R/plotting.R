@@ -193,3 +193,55 @@ plot_confusion_matrix <- function(cm, x = "x", y = "y", v = "value",
   }
   plot + scale_fill_paletteer_c(palette = palette, na.value = na_color)
 }
+
+
+plot_lfc <- function(x, y, label_col, tag_tb, dge, cpm = NULL,
+                     p_value = 0.05, subset = NULL, subset_col = "tumor_type") {
+  gene_mask <- tag_tb$PValue <= p_value
+  tag_tb <- tag_tb[gene_mask, ]
+  if (!is.null(cpm)) {
+    stopifnot("Dimensions of cpm and dge must be equal" = dim(cpm) == dim(dge))
+  } else {
+    cpm <- edgeR::cpm(dge)
+  }
+  if (!is.null(subset)) {
+    dge <- dge[, dge$samples[[subset_col]] %in% subset]
+  }
+  dge <- dge[gene_mask, ]
+  cpm <- cpm[gene_mask, ]
+  x_vec <- cpm[, dge$samples[[label_col]] == x] |> rowMeans()
+  y_vec <- cpm[, dge$samples[[label_col]] == y] |> rowMeans()
+  count_tb <- tibble(
+    x = log(x_vec), y = log(y_vec), lfc = tag_tb$logFC,
+    pvalue = tag_tb$PValue
+  )
+  ggplot(count_tb, aes(x = x, y = y, color = lfc)) +
+    geom_point() +
+    xlab(glue("mean log cpm {x}")) +
+    ylab(glue("mean log cpm {y}")) +
+    geom_abline(slope = 1, intercept = 0, alpha = 0.5)
+}
+
+
+volcano_plot <- function(tag_tb, label_col = "GENENAME", fdr_cutoff = 0.001) {
+  tag_tb |>
+    mutate(
+      `Significant FDR` = case_when(
+        FDR < fdr_cutoff ~ "Yes",
+        .default = "No"
+      ),
+      !!as.symbol(label_col) := case_when(!is.na(!!as.symbol(label_col)) ~ !!as.symbol(label_col),
+        .default = ""
+      ),
+      delabel = case_when(FDR < fdr_cutoff ~ !!as.symbol(label_col),
+        .default = NA
+      )
+    ) |>
+    ggplot(aes(x = logFC, -log10(FDR), color = `Significant FDR`, label = delabel)) +
+    geom_point(size = 1) +
+    ggrepel::geom_text_repel(size = 1.5) +
+    labs(x = "log fold change", y = "-log10(adjusted p-value)") +
+    theme_bw() +
+    guides(color = "none") +
+    scale_color_manual(values = c("black", "red"))
+}
