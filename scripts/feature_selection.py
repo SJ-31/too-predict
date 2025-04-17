@@ -240,15 +240,21 @@ def dist_optimize(
 
 
 def lfc_optimize(
-    features: Iterable, batch_vals: np.ndarray, y_vals: np.ndarray, n: int = 1000
+    features: pd.Series | pd.Index,
+    batch_vals: np.ndarray,
+    y_vals: np.ndarray,
+    n: int = 1000,
 ) -> list[str]:
     prob = pu.LpProblem("LFC", pu.LpMinimize)
-    fvars = [pu.LpVariable(g, cat="Binary") for g in features]
     c = np.nanmean(batch_vals, axis=0) / np.nanmean(y_vals, axis=0)
-    c[np.isnan(c)] = 0
-    c[np.isinf(c)] = 0
+    to_discard = np.isnan(c) | np.isinf(c)
+    if to_discard.sum() > 0:
+        print(f"lfc_optimize: {to_discard.sum()} inf or nan features!")
+    features = features[~to_discard]
+    c = c[~to_discard]
+    fvars = [pu.LpVariable(g, cat="Binary") for g in features]
 
-    prob += pu.lpSum([f * c[i] for i, f in enumerate(features)])
+    prob += pu.lpSum([f * c[i] for i, f in enumerate(fvars)])
     prob += pu.lpSum(fvars) == n
     prob.solve()
     print(pu.LpStatus[prob.status])
@@ -263,7 +269,7 @@ def optimization_scanpy(adata):
 
     F, M, T, B, E = read_model_spec(spc)
 
-    transformed = T.fit_transform(adata)
+    transformed: ad.AnnData = T.fit_transform(adata)
     split_fn = ADDITIONAL_SPLITS["CHULA"]
     sc.tl.rank_genes_groups(transformed, groupby="Sample_Type")
     ri = ut.RankInterpreter(transformed)
@@ -275,12 +281,10 @@ def optimization_scanpy(adata):
     batch_df, y_df = batch_df.align(y_df, join="inner", axis=0)
     batch_vals, y_vals = np.transpose(batch_df.values), np.transpose(y_df.values)
     solution = lfc_optimize(transformed.var.index, batch_vals, y_vals, n=3000)
-    adata.var["GENEID"][solution == 1].to_csv(
-        OUTDIR.joinpath("feature_lists").joinpath(
-            "pulp_scanpy_minimized_lfc_ratio.txt"
-        ),
-        index=False,
-    )
+    OUTDIR.joinpath("feature_lists").joinpath(
+        "pulp_scanpy_minimized_lfc_ratio.txt"
+    ).write_text("\n".join(solution))
+
     filtered = F.fit_transform(adata)
     transformed2 = T.fit_transform(filtered)
     train, test = split_fn(transformed2)
