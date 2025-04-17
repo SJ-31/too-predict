@@ -369,7 +369,7 @@ class CompareSplits:
         plot_together: bool = False,
         **kwargs,
     ) -> Figure:
-        return plotting.plot_pca_adata(
+        return plotting.plot_adata(
             self.adata,
             self.y,
             subset=subset,
