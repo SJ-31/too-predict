@@ -18,24 +18,7 @@ sc <- import("scanpy")
 skc <- import("sklearn.cluster")
 
 GO_ANNOTATIONS <- evoGO::loadGOAnnotation(species = "hsapiens", path = as.character(ut$get_data("")))
-
-PATHWAYS <- local({
-  go_data <- as.character(ut$get_data("ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
-  bp_mapping <- local({
-    tb <- go_data |>
-      filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
-      mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_"))
-    group_by_into_list(tb, "GO term name", "Gene stable ID")
-  })
-  ensembl2reactome <- as.character(ut$get_data("ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
-  reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
-    read_tsv(col_names = c("Reactome ID", "name", "species"))
-  reactome_mapping <- ensembl2reactome |>
-    inner_join(reactome, by = join_by(`Reactome ID`)) |>
-    mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
-    group_by_into_list("name", "Gene stable ID")
-  c(bp_mapping, reactome_mapping)
-})
+PATHWAYS <- pathways_internal()
 
 
 if (path.expand("~") != "/home/shannc") {
@@ -105,7 +88,7 @@ main <- function(adata, target, outdir, cluster_method, label_col = "tumor_type"
   fgsea_alpha <- 0.05
   fgsea_results <- sapply(de_results, \(tb) {
     sorted <- tb |>
-      filter(PValue <= alpha) |>
+      filter(PValue <= fgsea_alpha) |>
       arrange(logFC)
     ranked <- setNames(sorted$logFC, sorted$id)
     fgsea(pathways = PATHWAYS, stats = ranked) |> filter(padj <= fgsea_alpha)
@@ -140,7 +123,6 @@ if (sys.nframe() == 0) {
   parser <- OptionParser()
   parser <- add_option(parser, c("-l", "--label_col"), type = "character", default = "tumor_type")
   parser <- add_option(parser, c("-g", "--targets"), type = "character", default = NULL)
-  parser <- add_option(parser, c("-p", "--plot_only"), type = "logical", default = FALSE, action = "store_true")
   parser <- add_option(parser, c("-c", "--cluster_method"), type = "character", default = "HDBSCAN")
   args <- parse_args(parser)
   adata <- adata_fn()
@@ -148,16 +130,17 @@ if (sys.nframe() == 0) {
 
   SPEC <- tu$read_model_spec(tu$MODELS[["clr_xgb3_edger"]])
   transformer <- SPEC[[3]]
-  adata <- transformer$fit_transform(adata)
+  transformed <- transformer$fit_transform(adata)
   outdir <- here("data", "output", "explanations", "subtypes")
   dir.create(outdir)
-  if (!args$plot_only) {
-    targets <- str_split_1(args$targets, ",")
-    for (t in targets) {
-      main(adata,
-        target = t, outdir = outdir, label_col = args$label_col,
-        cluster_method = args$cluster_method
-      )
-    }
+
+  targets <- str_split_1(args$targets, ",")
+  for (t in targets) {
+    filtered <- adata[adata$obs[[args$label_col]] == t, ]
+
+    main(transformed,
+      target = t, outdir = outdir, label_col = args$label_col,
+      cluster_method = args$cluster_method
+    )
   }
 }
