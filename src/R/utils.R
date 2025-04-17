@@ -315,3 +315,23 @@ show_reticulate_error <- function(expr) {
   )
   result
 }
+
+pathways_internal <- function() {
+  ut <- import("too_predict.utils")
+
+  go_data <- as.character(ut$get_data("ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
+  bp_mapping <- local({
+    tb <- go_data |>
+      filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
+      mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_"))
+    group_by_into_list(tb, "GO term name", "Gene stable ID")
+  })
+  ensembl2reactome <- as.character(ut$get_data("ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
+  reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
+    read_tsv(col_names = c("Reactome ID", "name", "species"))
+  reactome_mapping <- ensembl2reactome |>
+    inner_join(reactome, by = join_by(`Reactome ID`)) |>
+    mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
+    group_by_into_list("name", "Gene stable ID")
+  c(bp_mapping, reactome_mapping)
+}
