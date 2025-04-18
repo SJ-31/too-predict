@@ -11,7 +11,6 @@ import pandas as pd
 import scanpy as sc
 from pyhere import here
 from scipy import sparse
-from scipy.io import mmread
 from too_predict.utils import (
     add_gene_metadata,
     collect_gdc_counts,
@@ -28,7 +27,9 @@ logging.basicConfig(filename=here("get_counts.log"), level=logging.DEBUG)
 public_data = here("remote", "public_data")
 outdir: Path = here(public_data, "h5ad")
 metadata_dir = here(public_data, "metadata")
-id_mapping_file = here("data", "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv")
+id_mapping_file = here(
+    "data", "reference", "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv"
+)
 
 # * GDC downloads
 tcga_cases = here(metadata_dir, "TCGA-case_table.tsv")
