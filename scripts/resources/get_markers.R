@@ -4,6 +4,8 @@ library(glue)
 library(httr2)
 library(data.table)
 
+source(here("src", "R", "utils.R"))
+
 markers <- read_csv(here("data", "reference", "CellMarker2.csv"))
 wanted_cells <- c()
 
@@ -44,6 +46,8 @@ get_hpa_query <- function(query, ...) {
   paste0(base_url, string)
 }
 
+## ** Setup
+
 hpa_wanted_cols <- c(
   "eg", # Ensembl
   "evih", # HPA evidence
@@ -58,67 +62,78 @@ hpa_wanted_cols <- c(
 )
 
 hpa_tissues <- list(
-  Breast = c("Adipocytes (Breast)", "Endothelial cells", "Plasma cells"),
-  Colon = c("Colon enterocytes", "Colon enteroendocrine cells", "Enteric glia cells"),
-  Skin = c("Keratinocyte (other)", "Keratinocyte (granular)", "Sebaceous gland cells"),
-  `Heart muscle` = c("Cardiomyocytes", "Fibroblasts", "Endothelial cells"),
-  Kidney = c("Proximal tubular cells", "Podocytes", "Ascending Loop of Henle cells"),
-  Liver = c("Hepatocytes", "Hepatic stellate cells", "Erythroid cells"),
-  Lung = c("Respiratory ciliated cells", "Plasma cells", "Mitotic cells (Lung)"),
-  Pancreas = c("Alpha cells", "Beta cells", "Exocrine glandular cells"),
-  Prostate = c("Prostate glandular cells", "Smooth muscle cells", "Endothelial cells"),
-  `Skeletal muscle` = c("Skeletal myocytes", "Fibroblasts", "Macrophages"),
-  Testis = c("Early spermatids", "Late spermatids", "Spermatocytes"),
-  `Thyroid gland` = c("Thyroid glandular cells", "Parafollicular cells", "Plasma cells")
+  breast = c("Adipocytes (Breast)", "Endothelial cells", "Plasma cells"),
+  colon = c("Colon enterocytes", "Colon enteroendocrine cells", "Enteric glia cells"),
+  skin = c("Keratinocyte (other)", "Keratinocyte (granular)", "Sebaceous gland cells"),
+  `heart muscle` = c("Cardiomyocytes", "Fibroblasts", "Endothelial cells"),
+  kidney = c("Proximal tubular cells", "Podocytes", "Ascending Loop of Henle cells"),
+  liver = c("Hepatocytes", "Hepatic stellate cells", "Erythroid cells"),
+  lung = c("Respiratory ciliated cells", "Plasma cells", "Mitotic cells (Lung)"),
+  pancreas = c("Alpha cells", "Beta cells", "Exocrine glandular cells"),
+  prostate = c("Prostate glandular cells", "Smooth muscle cells", "Endothelial cells"),
+  `skeletal muscle` = c("Myocytes", "fibroblasts", "Macrophages"),
+  testis = c("Early spermatids", "Late spermatids", "Spermatocytes"),
+  `thyroid gland` = c("Glandular cells", "Parafollicular cells", "Plasma cells")
 )
-names(hpa_tissues) <- names(hpa_tissues) |> str_to_lower()
 
 hpa_specificity_map <- list(
   # "High" for heart because few "Very high"
-  `Heart muscle Cardiomyocytes` = "High",
-  `Heart muscle Fibroblasts` = "High",
-  `Heart muscle Endothelial cells` = "High",
-  `Kidney Ascending Loop of Henle cells` = "High",
-  `Skeletal muscle Macrophages` = "High"
+  `heart muscle Cardiomyocytes` = "High",
+  `heart muscle Fibroblasts` = "High",
+  `heart muscle Endothelial cells` = "High",
+  `kidney Ascending Loop of Henle cells` = "High",
+  `skeletal muscle Macrophages` = "High",
+  `skeletal muscle fibroblasts` = "High"
+)
+
+
+hpa_aliases <- list(
+  `skeletal muscle Myocytes` = "Skeletal myocytes_1,Skeletal myocytes_2,Skeletal myocytes_3",
+  `thyroid gland Glandular cells` = "Thyroid glandular cells_1,Thyroid glandular cells_2",
+  `kidney Proximal tubular cells` = "Proximal tubular cells_1,Proximal tubular cells_2",
+  `liver Hepatocytes` = "Hepatocyte_1,Hepatocyte_2"
 )
 
 ## TODO: you should check if the above cell types for each tissue make sense in the
 # context of TME
 
-hpa_all <- lapply(names(hpa_tissues), \(t) {
-  cell_list <- hpa_tissues[[t]]
-  lapply(cell_list, \(c) {
-    specificity_level <- lget(hpa_specificity_map, glue("{t} {c}"), "Very high")
-    url <- get_hpa_query(glue("ce_enriched:{t};{c};{specificity_level}"),
-      format = "tsv",
-      columns = hpa_wanted_cols,
-      compress = "no"
-    )
-    Sys.sleep()
-    resp <- request(url) |> req_perform()
-    tb <- resp_body_string(resp) |>
-      fread() |>
-      as_tibble() |>
-      mutate(
-        query_tissue = t,
-        cell_type = str_replace_all(glue("{t}_{c}"), "[() ]", "_")
+## ** Retrieve data
+
+hpa_all_file <- here("data", "reference", "hpa_tissue_cell_resource.csv")
+get_hpa <- function(file) {
+  hpa_all <- lapply(names(hpa_tissues), \(t) {
+    cell_list <- hpa_tissues[[t]]
+    lapply(cell_list, \(c) {
+      specificity_level <- lget(hpa_specificity_map, glue("{t} {c}"), "Very high")
+      cname <- lget(hpa_aliases, glue("{t} {c}"), c)
+      q <- glue("ce_enriched:{t};{cname};{specificity_level}")
+      url <- get_hpa_query(q, format = "tsv", columns = hpa_wanted_cols, compress = "no")
+      Sys.sleep(1)
+      resp <- request(url) |> req_perform()
+      tb <- as_tibble(fread(resp_body_string(resp))) |> mutate(query_tissue = t, cell_type = c)
+      tryCatch(
+        expr = {
+          stopifnot(nrow(tb) != 0)
+          tb
+        },
+        error = function(cnd) {
+          print(glue("Request for {t} {c} has an empty tibble"))
+          print(url)
+          tibble()
+        }
       )
-    tryCatch(
-      expr = {
-        stopifnot(nrow(tb) != 0)
-        tb
-      },
-      error = function(cnd) {
-        print(glue("Request for {t} {c} has an empty tibble"))
-        tibble()
-      }
-    )
+    }) |>
+      bind_rows()
   }) |>
     bind_rows()
-}) |>
-  bind_rows()
+  write_csv(hpa_all, file)
+  hpa_all
+}
+hpa_tb <- read_existing(hpa_all_file, get_hpa, read_csv)
 
-## debug <- "www.proteinatlas.org/api/search_download.php?search=ce_enriched%3Abreast%3BAdipocytes%20%28Breast%29%3BVery%20high&format=tsv&columns=eg,evih,rnats,rnatd,rnatss,rnatsm,rnacas,rnacad,rnacass,rnacasm&compress=no"
+# Reference transcripts used in authors' analysis
+hpa_custom_ref_transcripts <- read_csv(here("data", "reference", "hpa_ref_transcripts.csv"))
+
 
 ## --- CODE BLOCK ---
 
