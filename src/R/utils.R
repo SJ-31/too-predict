@@ -341,13 +341,22 @@ show_reticulate_error <- function(expr) {
   result
 }
 
-pathways_internal <- function(sets = c("go", "reactome", "hallmark")) {
+lget <- function(lst, key, default = NULL) {
+  val <- lst[[key]]
+  if (is.null(val)) {
+    default
+  } else {
+    val
+  }
+}
+
+gs_internal <- function(sets = c("go", "reactome", "hallmark")) {
   ut <- import("too_predict.utils")
 
   sets <- str_to_lower(sets)
   result <- c()
   if ("go" %in% sets) {
-    go_data <- as.character(ut$get_data("ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
+    go_data <- as.character(ut$get_data("mappings/ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
     bp_mapping <- local({
       tb <- go_data |>
         filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
@@ -357,7 +366,7 @@ pathways_internal <- function(sets = c("go", "reactome", "hallmark")) {
     result <- c(result, bp_mapping)
   }
   if ("reactome" %in% sets) {
-    ensembl2reactome <- as.character(ut$get_data("ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
+    ensembl2reactome <- as.character(ut$get_data("mappings/ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
     reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
       read_tsv(col_names = c("Reactome ID", "name", "species"))
     reactome_mapping <- ensembl2reactome |>
