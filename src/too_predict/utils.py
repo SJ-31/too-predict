@@ -255,7 +255,7 @@ def add_gene_metadata(
             print(f"WARNING: column {c} already exists in adata.var, removing...")
             adata.var = adata.var.drop(c, index="columns")
     if not ensdb_path:
-        ensdb_path = str(get_data("Homo_sapiens.GRCh38.113.sqlite"))
+        ensdb_path = str(get_data("reference/Homo_sapiens.GRCh38.113.sqlite"))
     ro.globalenv["db"] = ensembldb.EnsDb(ensdb_path)
     ro.globalenv["cols"] = ro.StrVector(columns)
     if keycol:
@@ -297,7 +297,7 @@ def rename_genes(
     if mapping_file:
         id_map = pd.read_csv(mapping_file, sep="\t")
     else:
-        id_map = pd.read_csv(get_data("ensembl_113_id_mapping.tsv"), sep="\t")
+        id_map = pd.read_csv(get_data("mappings/ensembl_113_id_mapping.tsv"), sep="\t")
 
     if isinstance(data, ad.AnnData):
         was_adata = True
@@ -839,3 +839,16 @@ class RankInterpreter:
                 mask = (pvals <= threshold).all(axis=1)
             requested = requested.loc[mask, :]
         return requested
+
+
+def write_tmp_toolkit(
+    adata: ad.AnnData, outfile: str | Path, symbol_col: str = "ENTREZ"
+) -> None:
+    adata = adata[:, ~adata.var[symbol_col].isna()]
+    counts = adata.X.toarray() if sparse.issparse(adata.X) else adata.X
+    sample_names = adata.obs["Project_ID"].combine(
+        adata.obs.index.to_series(), lambda x, y: f"{x}_{y}"
+    )
+    counts = np.transpose(counts)
+    df = pd.DataFrame(counts, columns=list(sample_names), index=adata.var[symbol_col])
+    df.to_csv(outfile, index_label="Entrez_Gene_Id", sep="\t")

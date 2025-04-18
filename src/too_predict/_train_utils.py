@@ -13,7 +13,7 @@ from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestClassifier, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import (
-    RNG,
+    RANDOM_STATE,
     get_blacklist_internal,
     ref_feature_lists_internal,
 )
@@ -107,12 +107,14 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "l": "edgeR_median_lfc_feature_list_3000-high_organoid_lfc.txt",
+        "s": True,
     },
     "clr_xgboost_edger": {
         "m": tm.PredBase(model=tm.XGBEstimator(), make_dense=True),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,
     },
     "batch_xgboost_lg_edger": {  # [2025-03-27 Thu] TODO: choose a fast m for `outer`
         "m": tm.BatchBase(
@@ -124,6 +126,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
+        "s": True,
     },
     "clr_ebm_edger": {
         "m": tm.PredBase(model=ExplainableBoostingClassifier(n_jobs=-2)),
@@ -201,10 +204,11 @@ MODELS: dict = {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": RecodeGO(id_col="GENEID", level=2),
+        "s": True,
     },
     "alr_random_forest_low_variance": {
         "m": tm.AlrBase(
-            RandomForestClassifier(random_state=RNG),
+            RandomForestClassifier(random_state=RANDOM_STATE),
             references=REF_LISTS["variance_feature_list_lowest_20"],
         ),
         "i": "plus_one",
@@ -214,7 +218,7 @@ MODELS: dict = {
     },
     "alr_random_forest_edger_lfc": {
         "m": tm.AlrBase(
-            RandomForestClassifier(random_state=RNG),
+            RandomForestClassifier(random_state=RANDOM_STATE),
             references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
         ),
         "i": "plus_one",
@@ -237,14 +241,16 @@ MODELS: dict = {
         "s": True,
     },
     "fpkm_random_forest_edger": {
-        "m": tm.RandomForestPred(),
+        "m": tm.PredBase(RandomForestClassifier(random_state=RANDOM_STATE)),
         "t": "fpkm",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": True,
+        # "s": True,
     },
     "dirichlet_random_forest_edger": {
-        "m": tm.SimPred(RandomForestClassifier(random_state=RNG), method="dirichlet"),
+        "m": tm.SimPred(
+            RandomForestClassifier(random_state=RANDOM_STATE), method="dirichlet"
+        ),
         "t": "none",
         "i": "none",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -255,12 +261,14 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "pulp_scanpy_minimized_lfc_ratio",
+        "s": True,
     },
     "clr_xgb3_pulp_euclidean": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "pulp_euclidean_edgeR_3000_subset",
+        "s": True,
     },
 }
 

@@ -192,7 +192,7 @@ get_edger_go <- function() {
   min_count <- 5 # For robustness to missing genes
   edger_go <- read_tsv(here(fs_dir, "edgeR_top_types_GO.tsv"))
   if (!"GO term accession" %in% colnames(edger_go)) {
-    go_map <- read_csv(here("data", "go_names2acc.csv"))
+    go_map <- read_csv(here("data", "mappings", "go_names2acc.csv"))
     edger_go <- edger_go |>
       distinct(GO.term.name, .keep_all = TRUE) |>
       inner_join(go_map, by = join_by(x$GO.term.name == y$`GO term name`)) |>
