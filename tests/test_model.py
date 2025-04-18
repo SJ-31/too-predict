@@ -1,11 +1,8 @@
 #!/usr/bin/env ipython
 
-import anndata as ad
 import pytest
-from pyhere import here
-from rpy2.robjects.packages import importr
 from sklearn.ensemble import RandomForestClassifier
-from too_predict.model import AlrBase, RandomForestPred
+from too_predict.model import AlrBase, RandomForestPred, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import ref_feature_lists_internal, training_data_internal_test
 
@@ -39,9 +36,8 @@ def test_holdout():
 
 
 def test_alr_estimator():
-
     model = AlrBase(
-        model=RandomForestClassifier(),
+        model=XGBEstimator(max_depth=3),
         references=refs["variance_feature_list_lowest_20"],
         imputation="plus_one",
         var_col="GENEID",
@@ -50,7 +46,7 @@ def test_alr_estimator():
     result = model.predict(adata[:30])
     print(model.model.n_fit)
     model = AlrBase(
-        model=RandomForestClassifier(),
+        model=XGBEstimator(max_depth=3),
         references=refs["variance_feature_list_lowest_20"],
         imputation="plus_one",
         var_col="GENEID",

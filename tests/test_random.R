@@ -30,47 +30,47 @@ counts <- adata$X %>%
 # but the contrast spec is worse here. Can't do what you did in edgeR which
 # was to compare one type against average of all other types
 
-dds <- DESeqDataSetFromMatrix(
-  countData = counts,
-  colData = adata$obs,
-  design = ~tumor_type
-)
-rownames(dds) <- rownames(adata$var)
+## dds <- DESeqDataSetFromMatrix(
+##   countData = counts,
+##   colData = adata$obs,
+##   design = ~tumor_type
+## )
+## rownames(dds) <- rownames(adata$var)
 
-mm <- model.matrix(~tumor_type, data = colData(dds))
+## mm <- model.matrix(~tumor_type, data = colData(dds))
 
-dds$Project_ID <- str_replace_all(dds$Project_ID, "-", "_") |> as.factor()
+## dds$Project_ID <- str_replace_all(dds$Project_ID, "-", "_") |> as.factor()
 
-group_vec <- colnames(mm) |> keep(\(x) str_detect(x, "tumor_type"))
-mean_val <- 1 / (length(group_vec) - 1)
-contrast_str <- map_chr(group_vec, \(x) {
-  mean_others <- paste(mean_val, "*", group_vec[group_vec != x], collapse = "+")
-  paste0(x, "-", "(", mean_others, ")")
-})
-ccs <- makeContrasts(contrasts = contrast_str, levels = mm)
+## group_vec <- colnames(mm) |> keep(\(x) str_detect(x, "tumor_type"))
+## mean_val <- 1 / (length(group_vec) - 1)
+## contrast_str <- map_chr(group_vec, \(x) {
+##   mean_others <- paste(mean_val, "*", group_vec[group_vec != x], collapse = "+")
+##   paste0(x, "-", "(", mean_others, ")")
+## })
+## ccs <- makeContrasts(contrasts = contrast_str, levels = mm)
 
-vals <- levels(dds$tumor_type)
+## vals <- levels(dds$tumor_type)
 
-coefs <- lapply(vals, \(x) {
-  colMeans(mm[dds$tumor_type == x, ])
-}) |> `names<-`(vals)
+## coefs <- lapply(vals, \(x) {
+##   colMeans(mm[dds$tumor_type == x, ])
+## }) |> `names<-`(vals)
 
-lst_remove <- function(lst, name) {
-  copy <- rlang::duplicate(lst, shallow = FALSE)
-  copy[[name]] <- NULL
-  copy
-}
+## lst_remove <- function(lst, name) {
+##   copy <- rlang::duplicate(lst, shallow = FALSE)
+##   copy[[name]] <- NULL
+##   copy
+## }
 
 
-get_contrast <- function(coefs, target) {
-  first <- coefs[[target]]
-  removed <- lst_remove(coefs, target)
-  mean_val <- 1 / (length(coefs) - 1)
-  applied <- lapply(removed, \(x) mean_val * x) |> purrr::reduce(\(x, y) x - y)
-  first - applied
-}
+## get_contrast <- function(coefs, target) {
+##   first <- coefs[[target]]
+##   removed <- lst_remove(coefs, target)
+##   mean_val <- 1 / (length(coefs) - 1)
+##   applied <- lapply(removed, \(x) mean_val * x) |> purrr::reduce(\(x, y) x - y)
+##   first - applied
+## }
 
-dds <- DESeq(dds, test = "LRT", reduced = ~1)
-results <- resultsNames(dds)
+## dds <- DESeq(dds, test = "LRT", reduced = ~1)
+## results <- resultsNames(dds)
 
-results(dds, contrast = get_contrast(coefs, "BRCA"))
+## results(dds, contrast = get_contrast(coefs, "BRCA"))

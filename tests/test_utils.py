@@ -41,6 +41,7 @@ from rpy2.robjects.packages import importr
 from scipy import sparse
 from scipy.stats import mode
 from too_predict._train_utils import MODELS, read_model_spec
+from too_predict.plotting import plot_adata
 
 # #  --- CODE BLOCK ---
 #
@@ -80,12 +81,13 @@ transformed.obs["foo"] = "foo"
 train, test = ut.train_test_split_ad(transformed)
 
 ccs = fil.CompareSplits(train, test)
-fig = ccs.plot_pca(
-    plot_together=True,
-    subset=("BRCA", "COAD_READ", "DLBC"),
-    style=["Sample_Type", "usage"],
-)
-fig.show()
+# fig = ccs.plot_pca(
+#     plot_together=True,
+#     subset=("BRCA", "COAD_READ", "DLBC"),
+#     style=["Sample_Type", "usage"],
+# )
+# fig.show()
+
 
 # ccs.get_prototypes()
 # fig = ccs.plot_prototypes(plot_together=True)
