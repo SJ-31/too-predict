@@ -67,7 +67,7 @@ def cross_validate_helper(
     if skip:
         return
     adata = ADATA.copy()
-    filter, model, transformer, balancer, encoder = read_model_spec(spec)
+    filter, model, transformer, balancer, encoder, corrector = read_model_spec(spec)
     try:
         if gc is not None:
             result_dir: Path = here(OUTDIR, f"{result_dir_str}_by_group_{gc}")
@@ -87,6 +87,9 @@ def cross_validate_helper(
                 adata = encoder.fit_transform(adata)
             if filter is not None:
                 adata = filter.fit_transform(adata)
+            if corrector is not None:
+                adata.obs["is_organoid"] = adata.obs["Sample_Type"] == "organoid"
+                adata = corrector.fit_transform(adata)
         if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
             track_meta = result_dir.joinpath(".metadata")
             track_meta.mkdir(exist_ok=True)
@@ -97,6 +100,7 @@ def cross_validate_helper(
                 random_state=RANDOM_STATE,
                 n_splits=K,
                 transformer=transformer,
+                corrector=corrector,
                 record_dir=track_meta,
             )
             write_results(results, result_dir, lc, cm_prefix="fold_")
@@ -104,11 +108,16 @@ def cross_validate_helper(
         result_dir2.mkdir(exist_ok=True, parents=True)
         if not here(result_dir2, f"{lc}-misc.csv").exists():
             results2 = model.holdout(
-                adata, ADDITIONAL_SPLITS, label_col=lc, balancer=balancer
+                adata,
+                ADDITIONAL_SPLITS,
+                label_col=lc,
+                balancer=balancer,
+                corrector=corrector,
             )
             write_results(results2, result_dir2, lc)
-    except ValueError:
+    except ValueError as e:
         print(f"ValueError encountered with params {spec}")
+        print(e)
         print("Writing pckl...")
         write_pickle(data, get_debug_file())
 

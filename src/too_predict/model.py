@@ -14,6 +14,7 @@ from sklearn.feature_selection import RFECV
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from xgboost import XGBClassifier
 
+from too_predict.corrector import Corrector
 from too_predict.evaluation import cross_validate, holdout
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
@@ -139,6 +140,7 @@ class PredBase:
         adata: ad.AnnData,
         split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
         balancer: Balancer | None = None,
+        corrector: Corrector | None = None,
         label_col="tumor_type",
     ) -> dict:
         return holdout(
@@ -146,6 +148,7 @@ class PredBase:
             adata=adata,
             split_fns=split_fns,
             balancer=balancer,
+            corrector=corrector,
             label_col=label_col,
         )
 

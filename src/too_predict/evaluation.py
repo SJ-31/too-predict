@@ -9,6 +9,7 @@ import pandas as pd
 import sklearn.metrics as me
 import sklearn.model_selection as ms
 
+from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE, find_confounded
@@ -230,6 +231,7 @@ def cross_validate(
     n_splits=5,
     random_state=RANDOM_STATE,
     balancer: Balancer | None = None,
+    corrector: Corrector | None = None,
     transformer: Transformer | None = None,
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
@@ -274,6 +276,8 @@ def cross_validate(
     misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
         x_train: ad.AnnData = N[train_i]
+        if corrector is not None:
+            x_train = corrector.fit_transform(x_train)
         if balancer is not None:  # Avoid data leakage
             x_train = balancer.fit_transform(x_train)  # Creates copy
         x_test: ad.AnnData = N[test_i]
@@ -349,6 +353,7 @@ def holdout(
     adata: ad.AnnData,
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
     balancer: Balancer | None = None,
+    corrector: Corrector | None = None,
     label_col="tumor_type",
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
@@ -383,6 +388,8 @@ def holdout(
             },
             index=[0],
         )
+        if corrector is not None:
+            x_train = corrector.fit_transform(x_train)
         if balancer is not None:
             x_train = balancer.fit_transform(x_train, y=label_col)
         model.fit(x_train, y=label_col)

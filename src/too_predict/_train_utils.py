@@ -6,6 +6,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 
 import too_predict.model as tm
+from too_predict.corrector import Corrector
 from too_predict.filter import Filter
 from too_predict.go_utils import RecodeGO
 from too_predict.imbalance import Balancer
@@ -271,6 +272,32 @@ MODELS: dict = {
         "f": "pulp_euclidean_edgeR_3000_subset",
         "s": True,
     },
+    # With correction
+    "clr_xgb3_edger_pycombat_seq": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "c": {"method": "pycombat_seq", "batch": "is_organoid", "group": "tumor_type"},
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+    },
+    "clr_xgb3_edger_rbe": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {
+            "method": "removeBatchEffect",
+            "batch": "is_organoid",
+            "group": "tumor_type",
+        },
+        "f": "edgeR_median_lfc_feature_list_3000",
+    },
+    "clr_xgb3_edger_combat_ref": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {"method": "combat_ref", "batch": "is_organoid", "group": "tumor_type"},
+        "f": "edgeR_median_lfc_feature_list_3000",
+    },
 }
 
 # * Additional splits
@@ -304,12 +331,25 @@ ADDITIONAL_SPLITS: dict = {
 # * Helper functions
 def read_model_spec(
     spec: dict,
-) -> tuple[Filter | None, PredBase, Transformer, Balancer | None, RecodeGO | None]:
+) -> tuple[
+    Filter | None,
+    PredBase,
+    Transformer,
+    Balancer | None,
+    RecodeGO | None,
+    Corrector | None,
+]:
     M: PredBase = spec.get("m")
     references = spec.get("r")
     features = spec.get("f")
     encoding = spec.get("e")
+    ckwargs = spec.get("c")
     blacklist = spec.get("l")
+
+    if ckwargs:
+        C = Corrector(**ckwargs)
+    else:
+        C = None
 
     if encoding is not None:
         fcol = "accession"
@@ -336,4 +376,4 @@ def read_model_spec(
     T = Transformer(
         transformation_name, impute_fn=Imputer(spec.get("i")), inplace=False, **kwargs
     )
-    return F, M, T, B, encoding
+    return F, M, T, B, encoding, C
