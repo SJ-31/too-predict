@@ -10,7 +10,7 @@ bp_param <- MulticoreParam(workers = multicoreWorkers())
 
 refdir <- here("data", "reference")
 
-# TODO: Final output of this script should be a list mapping cell types to vectors of
+# Final output of this script is a list mapping cell types to vectors of
 # ensembl gene ids
 # there should be an associated metadata tb with at least the following columns:
 # - ensembl_gene_id
@@ -80,21 +80,37 @@ wanted_cells <- here(refdir, "cellmarker2_wanted.yaml") |> yaml::read_yaml()
 
 ## * Markers from CellMarker2
 
+# It's not ideal that you have fold specific cell subsets into one another, but
+# this is for maximum compatibility with other sources
 markers <- read_csv(files$cellmarker2) |>
-  mutate(cell_name = case_match(cell_name,
-    "Regulatory T(Treg) cell" ~ "Regulatory T (Treg) cell",
-    "Natural killer T(NKT) cell" ~ "Natural killer T (NKT) cell",
-    "Fat cell (adipocyte)" ~ "Adipocyte",
-    "White adipocyte" ~ "Adipocyte",
-    "Brown adipocyte" ~ "Adipocyte",
-    "Beige adipocyte" ~ "Adipocyte",
-    "lymphatic endothelial cell" ~ "Lymphatic endothelial cell",
-    .default = cell_name
-  )) |>
+  mutate(
+    cell_name = case_match(cell_name,
+      "Regulatory T(Treg) cell" ~ "Regulatory T (Treg) cell",
+      "Natural killer T(NKT) cell" ~ "Natural killer T (NKT) cell",
+      "Fat cell (adipocyte)" ~ "Adipocyte",
+      "White adipocyte" ~ "Adipocyte",
+      "Brown adipocyte" ~ "Adipocyte",
+      "Beige adipocyte" ~ "Adipocyte",
+      "lymphatic endothelial cell" ~ "Lymphatic endothelial cell",
+      .default = cell_name
+    ),
+    tissue = str_replace(str_to_lower(tissue_class), " ", "_"),
+    from_tme = cancer_type != "Normal"
+  ) |>
   left_join(symbol2ensembl, by = join_by(x$marker == y$symbol))
 
 
-markers <- markers |> filter(cell_name %in% unlist(wanted_cells))
+
+source_tbs$cellmarker2 <- markers |>
+  filter(cell_name %in% wanted_cells$common | tissue_class %in% names(wanted_cells) | from_tme) |>
+  filter(!is.na(ensembl)) |>
+  mutate(
+    cell_type = cell_name,
+    tissue = case_when(cell_type %in% wanted_cells$common ~ "common",
+      .default = tissue
+    )
+  ) |>
+  select(all_of(wanted_cols))
 
 
 # Find tissue-specific
