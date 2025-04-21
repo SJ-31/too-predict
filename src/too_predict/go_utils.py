@@ -340,7 +340,7 @@ def get_go_data() -> pd.DataFrame:
             "evidence rating": [i[1] for i in go_evidence_codes.values()],
         }
     )
-    go_map = pd.read_csv(ut.get_data("ensembl_go_map_2025-3-20.tsv"), sep="\t")
+    go_map = pd.read_csv(ut.get_data("mappings/ensembl_go_map_2025-3-20.tsv"), sep="\t")
     go_map = go_map.loc[~go_map["GO term accession"].isna(), :]
     go_map = (
         go_map.merge(go_evidence_df, on="GO term evidence code", how="left")

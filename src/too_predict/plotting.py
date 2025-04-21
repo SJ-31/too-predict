@@ -103,7 +103,10 @@ def plot_adata(
     elif style is not None and not plot_together and not isinstance(style, str):
         raise ValueError("Multiple styles not supported when !`plot_together`")
 
-    fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharey=True, sharex=True)
+    if ncols == 1 and nrows > 1:
+        fig, axes = plt.subplots(ncols=nrows, sharey=True, sharex=True)
+    else:
+        fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharey=True, sharex=True)
 
     multiple = ncols > 1
     pts: np.ndarray = adata.obsm[obsm_key]
