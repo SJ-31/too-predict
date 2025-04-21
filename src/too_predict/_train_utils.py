@@ -29,6 +29,7 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 # r : reference set
 # e : encoding (only "GO" and None) are supported [2025-04-01 Tue]
 # b : balancer
+# c : correction to counts
 # k : kwargs to transformer
 # l : feature blacklist
 

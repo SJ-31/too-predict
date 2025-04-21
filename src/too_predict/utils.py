@@ -17,7 +17,6 @@ import rpy2.robjects as ro
 import scanpy as sc
 import yaml
 from pyhere import here
-from rpy2 import rinterface, rinterface_lib
 from rpy2.rinterface_lib.sexp import (
     NACharacterType,
     NAComplexType,
