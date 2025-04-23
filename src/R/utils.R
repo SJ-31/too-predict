@@ -324,10 +324,24 @@ edgeR_mean_all <- function(dge, group, id_col = "GENEID") {
 #'
 #' @description
 #' @param name_col column to group on that will become the keys
-group_by_into_list <- function(tb, name_col, elem_col) {
-  tb <- group_by(tb, !!as.symbol(name_col)) |> summarize(items = list(!!as.symbol(elem_col)))
-  tb$items |> `names<-`(tb[[name_col]])
+group_by_into_list <- function(tb, name_col, elem_col, min_size = NULL,
+                               with_counts = FALSE, count_col = "size", keep_first = NULL) {
+  grouped <- group_by(tb, !!as.symbol(name_col)) |>
+    summarize(
+      items = list(!!as.symbol(elem_col)), !!as.symbol(count_col) := n(),
+      across(any_of(keep_first), dplyr::first)
+    )
+  if (!is.null(min_size)) {
+    grouped <- grouped[grouped[[count_col]] >= min_size, ]
+  }
+  lst <- grouped$items |> `names<-`(grouped[[name_col]])
+  if (with_counts) {
+    list(lst = lst, counts = select(grouped, -items))
+  } else {
+    lst
+  }
 }
+
 
 show_reticulate_error <- function(expr) {
   captured <- substitute(expr)
@@ -355,9 +369,11 @@ markers_internal <- function() yaml::read_yaml(as.character(ut$get_data("referen
 gs_internal <- function(sets = c("go", "reactome", "hallmark")) {
   ut <- import("too_predict.utils")
 
+  min_size <- 10
   sets <- str_to_lower(sets)
   result <- c()
   meta <- empty_tibble(headers = c("id", "name", "source", "category", "size"))
+  mode(meta$size) <- "double"
   if ("go" %in% sets) {
     not_allowed_evidence <- c( # Exclude evidence that isn't manually reviewed
       "IEA", "ND", "NAS", "ISS", "ISO", "ISA", "ISM", "IGC"
@@ -371,39 +387,56 @@ gs_internal <- function(sets = c("go", "reactome", "hallmark")) {
       (!`GO term evidence code` %in% not_allowed_evidence) &
       (`GO term accession` %in% go_top_level$accession))
 
-    bp_mapping <- go_tb |>
-      mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_")) |>
-      group_by_into_list("GO term name", "Gene stable ID")
+    bp_grouped <- go_tb |>
+      mutate(set_name = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_")) |>
+      group_by_into_list("set_name", "Gene stable ID",
+        min_size = min_size, with_counts = TRUE,
+        keep_first = c("GO term accession", "GO term name")
+      )
 
-    go_meta <- tibble(
-      name = str_replace_all(str_remove(names(bp_mapping), "GO_BP:"), "_", " "),
-      size = map_dbl(bp_mapping, length),
-      source = "GO_BP"
-    ) |>
-      inner_join(select(go_tb, `GO term accession`, `GO term name`),
-        by = join_by(x$name == y$`GO term name`)
-      ) |>
-      rename(id = `GO term accession`) |>
+    go_meta <- bp_grouped$counts |>
+      dplyr::rename(id = `GO term accession`, name = `GO term name`) |>
+      select(id, name, size) |>
+      mutate(source = "GO_BP") |>
       inner_join(select(go_top_level, accession, top_level_name),
         by = join_by(x$id == y$accession)
       ) |>
-      rename(category = top_level_name)
+      dplyr::rename(category = top_level_name)
 
     meta <- bind_rows(meta, go_meta)
-    result <- c(result, bp_mapping)
+    result <- c(result, bp_grouped$lst)
   }
   if ("reactome" %in% sets) {
     ensembl2reactome <- as.character(ut$get_data("mappings/ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
+
     reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
       read_tsv(col_names = c("Reactome ID", "name", "species")) |>
-      filter(species == "Homo sapiens")
-    reactome_mapping <- ensembl2reactome |>
-      inner_join(reactome, by = join_by(`Reactome ID`)) |>
-      mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
-      group_by_into_list("name", "Gene stable ID")
+      filter(species == "Homo sapiens") |>
+      inner_join(ensembl2reactome, by = join_by(`Reactome ID`))
 
-    # TODO: include the top level reactome terms in the hierarchy
-    result <- c(result, reactome_mapping)
+    hierarchy <- as.character(ut$get_data("Reactome_Complex_2_Pathway_human-2025-4-23.txt")) |>
+      read_tsv() |>
+      inner_join(distinct(reactome, `Reactome ID`, .keep_all = TRUE),
+        by = join_by(x$top_level_pathway == y$`Reactome ID`)
+      ) |>
+      dplyr::rename(category = name) |>
+      distinct(pathway, .keep_all = TRUE)
+
+    reactome_grouped <- reactome |>
+      mutate(set_name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
+      group_by_into_list("set_name", "Gene stable ID",
+        with_counts = TRUE, min_size = min_size,
+        keep_first = c("name", "Reactome ID")
+      )
+
+    reactome_meta <- reactome_grouped$counts |>
+      dplyr::rename(id = `Reactome ID`) |>
+      select(size, name, id) |>
+      inner_join(select(hierarchy, pathway, category), by = join_by(x$id == y$pathway)) |>
+      mutate(source = "Reactome")
+
+    meta <- bind_rows(meta, reactome_meta)
+    result <- c(result, reactome_grouped$lst)
   }
   if ("hallmark" %in% sets) {
     hfile <- as.character(ut$get_data("msigdb_hallmark-7.4.rds"))
