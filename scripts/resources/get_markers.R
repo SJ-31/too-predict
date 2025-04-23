@@ -2,11 +2,9 @@ library(tidyverse)
 library(here)
 library(glue)
 library(httr2)
-library(BiocParallel)
 library(data.table)
 source(here("src", "R", "utils.R"))
-
-bp_param <- MulticoreParam(workers = multicoreWorkers())
+source(here("src", "R", "plotting.R"))
 
 refdir <- here("data", "reference")
 
@@ -33,39 +31,6 @@ symbol2ensembl <- local({
     distinct(symbol, .keep_all = TRUE)
 })
 
-# TODO: only do this at the end when unifying all source data
-singularize_cells <- function(cells) {
-  mapping <- list(
-    "neutrophils" = "neutrophil",
-    "hepatocytes" = "hepatocyte",
-    "myocytes" = "myocyte",
-    "podocytes" = "podocyte",
-    "spermatocytes" = "spermatocyte",
-    "myocytes" = "myocytes",
-    "cardiomyocytes" = "cardiomyocyte",
-    "fibroblasts" = "fibroblast",
-    "enterocytes" = "enterocyte",
-    "spermatids" = "spermatid",
-    "adipocytes" = "adipocyte",
-    "fibroblasts" = "fibroblast",
-    "macrophages" = "macrophage",
-    "cells" = "cell"
-  )
-  bplapply(cells, \(cell) {
-    for (n in names(mapping)) {
-      if (str_detect(cell, n)) {
-        return(str_replace(cell, n, mapping[[n]]))
-      }
-      title <- str_to_title(n)
-      if (str_detect(cell, title)) {
-        return(str_replace(cell, title, mapping[[n]]))
-      }
-    }
-    cell
-  }, BPPARAM = bp_param)
-}
-
-
 ## ** Files
 
 files <- list(
@@ -75,6 +40,9 @@ files <- list(
   hpa_all = here(refdir, "hpa_tissue_cell_resource_2025-4-18.csv"),
   hpa_ref = here(refdir, "hpa_ref_transcripts.csv")
 )
+final_file <- here(refdir, "cell_markers_custom.yaml")
+final_file_metrics <- here(refdir, "cell_markers_custom_metrics.tsv")
+final_file_meta <- here(refdir, "cell_markers_custom_meta.tsv")
 
 wanted_cells <- here(refdir, "cellmarker2_wanted.yaml") |> yaml::read_yaml()
 
@@ -86,7 +54,7 @@ wanted_cells <- here(refdir, "cellmarker2_wanted.yaml") |> yaml::read_yaml()
 markers <- read_csv(files$cellmarker2) |>
   mutate(
     cell_name = case_match(cell_name,
-      "Regulatory T(Treg) cell" ~ "Regulatory T (Treg) cell",
+      "Regulatory T(Treg) cell" ~ "Treg cell",
       "Natural killer T(NKT) cell" ~ "Natural killer T (NKT) cell",
       "Activated dendritic cell" ~ "Dendritic cell",
       "Plasmacytoid dendritic cell" ~ "Dendritic cell",
@@ -123,7 +91,7 @@ markers <- read_csv(files$cellmarker2) |>
       "Pre-exhausted CD8+ T cell" ~ "Exhausted CD8+ T cell",
       "Effector CD8 T cell" ~ "Effector CD8+ T cell",
       "Memory CD8 T Cell" ~ "Memory CD8+ T cell",
-      "Memory CD8 + T Cell" ~ "Memory CD8+ T cell",
+      "Memory CD8 + T cell" ~ "Memory CD8+ T cell",
       "Effector memory CD8+ T cell" ~ "Memory CD8+ T cell",
       "Central memory CD8+ T cell" ~ "Memory CD8+ T cell",
       "CD8 T cell" ~ "CD8+ T cell",
@@ -177,13 +145,15 @@ markers <- read_csv(files$cellmarker2) |>
       "IgA+ Regulatory B cell" ~ "Breg cell",
       "TIM-1+ Regulatory B cell" ~ "Breg cell",
       "PD-1hi Regulatory B cell" ~ "Breg cell",
-      # Misc.
+      # NOTE: Misc.
       "lymphatic endothelial cell" ~ "Lymphatic endothelial cell",
       "Pan-macrophage" ~ "Macrophage",
       "Tissue-resident macrophage" ~ "Macrophage",
       "Infiltrating macrophage" ~ "Macrophage",
       "Classical monocyte" ~ "Monocyte",
       "Malignant cell" ~ "Tumor cell",
+      "Foxp3+IL-17+ T cell" ~ "T cell",
+      "T-cell lineage" ~ "T cell",
       "Tumor-infiltrating lymphocyte(TIL)" ~ "Lymphocyte",
       "Lymphoid-primed multipotent progenitor cell(LMPP)" ~ "Multipotent progenitor cell",
       "Pro-tumor type-2 pericyte" ~ "Pericyte",
@@ -196,6 +166,7 @@ markers <- read_csv(files$cellmarker2) |>
       "Epithelial-mesenchymal transition cancer stem cell" ~ "EMT cancer stem cell",
       "Pan–T-cell" ~ "T cell",
       "Superpotent cancer stem cell" ~ "Cancer stem cell",
+      "pit mucous cell (PMC)" ~ "Pit mucous cell",
       "Proliferating T cell" ~ "T cell",
       "Non-malignant epithelial cell" ~ "Epithelial cell",
       "Tumor epithelial cell" ~ "Epithelial cell",
@@ -207,10 +178,9 @@ markers <- read_csv(files$cellmarker2) |>
   ) |>
   left_join(symbol2ensembl, by = join_by(x$marker == y$symbol))
 
-
-
 source_tbs$cellmarker2 <- markers |>
   filter(cell_name %in% wanted_cells$common | tissue_class %in% names(wanted_cells) | from_tme) |>
+  filter(!is.na(Genetype) & !is.na(ensembl) & !is.na(cellontology_id)) |>
   filter(!is.na(ensembl)) |>
   mutate(
     cell_type = cell_name,
@@ -219,7 +189,6 @@ source_tbs$cellmarker2 <- markers |>
     )
   ) |>
   select(all_of(wanted_cols))
-
 
 # Find tissue-specific
 tissues2cells <- sapply(unique(markers$tissue_class), \(t) {
@@ -269,12 +238,6 @@ source_tbs$panglaodb <- panglaodb |>
   select(all_of(wanted_cols))
 
 
-## * HTC atlas
-
-## These files are single-cell objects, which might be required for certain
-# deconvolution software.
-# Use AverageExpression with the group.by = "Cell_Type" to get cell type profiles for
-# each tissue
 
 ## * Enriched from hpa
 ## https://www.proteinatlas.org/humanproteome/single+cell/tissue+cell+type
@@ -416,10 +379,88 @@ bcscdb <- read_csv(files$bcscdb,
 
 ## * Collate resources
 
-## --- CODE BLOCK ---
+combined <- lmap(source_tbs, \(x) mutate(x[[1]], source = names(x))) |>
+  bind_rows() |>
+  mutate(
+    cell_type = str_replace_all(str_trim(str_remove(cell_type, "\\(.*\\)")), "  ", " "),
+    cell_type = str_replace_all(str_to_lower(cell_type), " ", "_"),
+    cell_type = str_replace(cell_type, "cells$", "cell"),
+    cell_type = case_match(
+      cell_type,
+      "myocytes" ~ "myocyte",
+      "adrenergic_neurons" ~ "adrenergic_neuron",
+      "adipocytes" ~ "adipocyte",
+      "colon_enterocytes" ~ "colon_enterocyte",
+      "cardiomyocytes" ~ "cardiomyocyte",
+      "fibroblasts" ~ "fibroblast",
+      "podocytes" ~ "podocyte",
+      "hepatocytes" ~ "hepatocyte",
+      "myocytes" ~ "myocyte",
+      "macrophages" ~ "macrophage",
+      "early_spermatids" ~ "early_spermatid",
+      "late_spermatids" ~ "late_spermatid",
+      "spermatocytes" ~ "spermatocyte",
+      "neutrophils" ~ "neutrophil",
+      "skeletal_myocytes" ~ "skeletal_myocyte",
+      .default = cell_type
+    )
+  )
 
-## * Quantify overlap
+min_markers <- 5
+cell_tb <- local({
+  tb <- combined |>
+    mutate(
+      cell_type = case_when(from_tme ~ paste0(cell_type, "-tme"), .default = cell_type),
+      cell_type = paste0(tissue, "-", cell_type)
+    ) |>
+    select(cell_type, ensembl) |>
+    group_by(cell_type) |>
+    nest() |>
+    filter(map_dbl(data, nrow) >= min_markers) |>
+    mutate(data = lapply(data, \(x) unique(x$ensembl)), marker_count = map_dbl(data, \(x) length(x)))
+})
+cell_list <- setNames(cell_tb$data, cell_tb$cell_type)
 
-# TODO: quantify overlap between cell marker sets
-# TODO: add M1 and M2 to TAMs
-# TODO: for immune cells, get markers for both the normal and tumor-associated versions
+
+## * Quantify and resolve overlaps
+
+
+new_list <- cell_list
+
+overlap_tracker <- list(n_intersect = c(), larger = c(), smaller = c())
+# Only let the smaller of the two intersecting gene sets keep the overlapping genes
+for (j in seq_along(new_list)) {
+  for (i in seq_along(new_list)) {
+    if (j < i) {
+      cj <- new_list[[j]]
+      ci <- new_list[[i]]
+      l_int <- length(intersect(cj, ci))
+      if (l_int > 0) {
+        overlap_tracker$n_intersect <- c(overlap_tracker$n_intersect, l_int)
+        if (length(cj) > length(ci)) {
+          new_list[[j]] <- setdiff(cj, ci)
+          overlap_tracker$larger <- c(overlap_tracker$larger, names(new_list)[j])
+          overlap_tracker$smaller <- c(overlap_tracker$smaller, names(new_list)[i])
+        } else {
+          new_list[[i]] <- setdiff(ci, cj)
+          overlap_tracker$larger <- c(overlap_tracker$larger, names(new_list)[i])
+          overlap_tracker$smaller <- c(overlap_tracker$smaller, names(new_list)[j])
+        }
+      }
+    }
+  }
+}
+
+new_list <- new_list[map_dbl(new_list, length) >= min_markers]
+overlap_tb <- as_tibble(overlap_tracker)
+yaml::write_yaml(new_list, final_file)
+write_tsv(tibble(
+  cell_type = names(new_list),
+  marker_count = map_dbl(new_list, length)
+), final_file_metrics)
+
+combined |>
+  filter(ensembl %in% unlist(new_list)) |>
+  write_tsv(final_file_meta)
+
+# [2025-04-23 Wed] Only 142 cell types after all the filtering, not great
