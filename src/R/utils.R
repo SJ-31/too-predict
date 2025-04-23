@@ -350,29 +350,59 @@ lget <- function(lst, key, default = NULL) {
   }
 }
 
+markers_internal <- function() yaml::read_yaml(as.character(ut$get_data("reference/cell_markers_custom.yaml")))
+
 gs_internal <- function(sets = c("go", "reactome", "hallmark")) {
   ut <- import("too_predict.utils")
 
   sets <- str_to_lower(sets)
   result <- c()
+  meta <- empty_tibble(headers = c("id", "name", "source", "category", "size"))
   if ("go" %in% sets) {
+    not_allowed_evidence <- c( # Exclude evidence that isn't manually reviewed
+      "IEA", "ND", "NAS", "ISS", "ISO", "ISA", "ISM", "IGC"
+    )
     go_data <- as.character(ut$get_data("mappings/ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
-    bp_mapping <- local({
-      tb <- go_data |>
-        filter(`GO domain` == "biological_process" & !is.na(`GO term name`)) |>
-        mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_"))
-      group_by_into_list(tb, "GO term name", "Gene stable ID")
-    })
+    go_top_level <- as.character(ut$get_data("mappings/go_term2to_level_3.csv")) |>
+      read_csv() |>
+      filter(!is.na(accession))
+    go_tb <- go_data |> filter(`GO domain` == "biological_process" &
+      !is.na(`GO term name`) &
+      (!`GO term evidence code` %in% not_allowed_evidence) &
+      (`GO term accession` %in% go_top_level$accession))
+
+    bp_mapping <- go_tb |>
+      mutate(`GO term name` = str_replace_all(paste0("GO_BP:", `GO term name`), " ", "_")) |>
+      group_by_into_list("GO term name", "Gene stable ID")
+
+    go_meta <- tibble(
+      name = str_replace_all(str_remove(names(bp_mapping), "GO_BP:"), "_", " "),
+      size = map_dbl(bp_mapping, length),
+      source = "GO_BP"
+    ) |>
+      inner_join(select(go_tb, `GO term accession`, `GO term name`),
+        by = join_by(x$name == y$`GO term name`)
+      ) |>
+      rename(id = `GO term accession`) |>
+      inner_join(select(go_top_level, accession, top_level_name),
+        by = join_by(x$id == y$accession)
+      ) |>
+      rename(category = top_level_name)
+
+    meta <- bind_rows(meta, go_meta)
     result <- c(result, bp_mapping)
   }
   if ("reactome" %in% sets) {
     ensembl2reactome <- as.character(ut$get_data("mappings/ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
     reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
-      read_tsv(col_names = c("Reactome ID", "name", "species"))
+      read_tsv(col_names = c("Reactome ID", "name", "species")) |>
+      filter(species == "Homo sapiens")
     reactome_mapping <- ensembl2reactome |>
       inner_join(reactome, by = join_by(`Reactome ID`)) |>
       mutate(name = str_replace_all(paste0("Reactome:", name), " ", "_")) |>
       group_by_into_list("name", "Gene stable ID")
+
+    # TODO: include the top level reactome terms in the hierarchy
     result <- c(result, reactome_mapping)
   }
   if ("hallmark" %in% sets) {
@@ -382,6 +412,7 @@ gs_internal <- function(sets = c("go", "reactome", "hallmark")) {
     } else {
       hallmark <- readRDS(hfile)
     }
+    names(hallmark) <- str_replace(names(hallmark), "^HALLMARK_", "Hallmark:")
     result <- c(result, hallmark)
   }
   result
