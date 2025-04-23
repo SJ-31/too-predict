@@ -80,18 +80,126 @@ wanted_cells <- here(refdir, "cellmarker2_wanted.yaml") |> yaml::read_yaml()
 
 ## * Markers from CellMarker2
 
-# It's not ideal that you have fold specific cell subsets into one another, but
-# this is for maximum compatibility with other sources
+# Fold cell subsets into parent cell types & reconcile aliases
+#   Not ideal, but for maximum compatibility with other sources
+#   Tumor variants of cells will be renamed to the normal cell type here (the label "tme" will be added later)
 markers <- read_csv(files$cellmarker2) |>
   mutate(
     cell_name = case_match(cell_name,
       "Regulatory T(Treg) cell" ~ "Regulatory T (Treg) cell",
       "Natural killer T(NKT) cell" ~ "Natural killer T (NKT) cell",
+      "Activated dendritic cell" ~ "Dendritic cell",
+      "Plasmacytoid dendritic cell" ~ "Dendritic cell",
+      "Activated dendritic cell" ~ "Dendritic cell",
+      "Monocyte derived dendritic cell" ~ "Dendritic cell",
+      "Migrating dendritic cell" ~ "Dendritic cell",
+      "Plasmacytoid dendritic cell(pDC)" ~ "Dendritic cell",
+      "Cross-presenting dendritic cell" ~ "Dendritic cell",
+      "Pre-dendritic cell(pre-DC)" ~ "Dendritic cell",
+      "Dermal dendritic cell" ~ "Dendritic cell",
+      "Myeloid dendritic cell" ~ "Dendritic cell",
+      "Immature dendritic cell" ~ "Dendritic cell",
+      "Mature dendritic cell" ~ "Dendritic cell",
+      "Conventional dendritic cell 2(cDC2)" ~ "Dendritic cell",
+      "Conventional dendritic cell 1(cDC1)" ~ "Dendritic cell",
+      "Conventional dendritic cell(cDC)" ~ "Dendritic cell",
+      "Conventional dendritic cell 2b(cDC2b)" ~ "Dendritic cell",
+      "Conventional dendritic cell 2a(cDC2a)" ~ "Dendritic cell",
+      # NK cells
+      "Natural Killer CD56+ dim cell" ~ "Natural killer cell",
+      "Natural killer CD56 bright cell" ~ "Natural killer cell",
+      "Natural killer CD56 dim cell" ~ "Natural killer cell",
+      "Natural killer CD4+ T cell" ~ "Natural killer cell",
+      "Circulating natural killer cell" ~ "Natural killer cell",
+      "KLRF+ natural killer cell" ~ "Natural killer cell",
+      # Adipocytes
       "Fat cell (adipocyte)" ~ "Adipocyte",
       "White adipocyte" ~ "Adipocyte",
       "Brown adipocyte" ~ "Adipocyte",
       "Beige adipocyte" ~ "Adipocyte",
+      # CD8 cells
+      "Exhausted CD8 + T cell" ~ "Exhausted CD8+ T cell",
+      "Transitional exhausted CD8+ T cell" ~ "Exhausted CD8+ T cell",
+      "Pre-exhausted CD8+ T cell" ~ "Exhausted CD8+ T cell",
+      "Effector CD8 T cell" ~ "Effector CD8+ T cell",
+      "Memory CD8 T Cell" ~ "Memory CD8+ T cell",
+      "Memory CD8 + T Cell" ~ "Memory CD8+ T cell",
+      "Effector memory CD8+ T cell" ~ "Memory CD8+ T cell",
+      "Central memory CD8+ T cell" ~ "Memory CD8+ T cell",
+      "CD8 T cell" ~ "CD8+ T cell",
+      "Terminally differentiated CD8+ cell" ~ "CD8+ T cell",
+      "Tumor-reactive CD8+ infiltrating T cell" ~ "CD8+ T cell",
+      "CD8+ intraepithelial cell" ~ "CD8+ T cell",
+      "CD8+ tumor antigen-specific T (Tas) cell" ~ "CD8+ T cell",
+      "Memory CD8+ T Cell" ~ "Memory CD8+ T cell",
+      # CD4 cells
+      # CD4+ t cell == T helper cell (but not of any specific subset)
+      "CD4+ T cell" ~ "T helper cell",
+      "IL7R T helper cell" ~ "T helper cell",
+      "Exhausted CD4+ T cell" ~ "T helper cell",
+      "Central memory CD4+ T cell" ~ "T helper cell",
+      "Conventional CD4+ T cell" ~ "T helper cell",
+      "Conventional CD4 T cell" ~ "T helper cell",
+      "Mucosa-associated invariant CD4+ T cell" ~ "T helper cell",
+      "Effector CD4+ T cell" ~ "T helper cell",
+      "CD40LG+ T helper cell" ~ "T helper cell",
+      "CD4+ T helper cell" ~ "T helper cell",
+      # Tregs
+      "Regulatory T (Treg) cell" ~ "Treg cell",
+      "Foxp3+ regulatory T cell" ~ "Treg cell",
+      "Tumor regulatory T cell" ~ "Treg cell",
+      "Resting regulatory T cell" ~ "Treg cell",
+      "Tumor-infiltrating regulatory T cell" ~ "Treg cell",
+      "Eomesodermin homolog(EOMES)+ regulatory T cell type 1" ~ "Treg cell",
+      "Suppressive regulatory T cell" ~ "Treg cell",
+      # T memory
+      "Memory T(Tm) cell" ~ "Tm cell",
+      "Memory T cell" ~ "Tm cell",
+      "Memory double-positive T cell" ~ "Tm cell",
+      "Memory T helper 1 cell" ~ "Tm cell",
+      "Memory T(Tm) cell" ~ "Tm cell",
+      "Naïve or central memory  T cell" ~ "Central memory T cell",
+      # CAFs
+      "Cancer associated fibroblast(CAF)" ~ "Cancer associated fibroblast (CAF)",
+      "Classical cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Pan-cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Complement-secreting cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Myofibroblastic cancer‐associated fibroblast (myCAF)" ~ "Cancer associated fibroblast (CAF)",
+      "Inflammatory cancer‐associated fibroblast (iCAF)" ~ "Cancer associated fibroblast (CAF)",
+      "Cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Antigen presentation cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Myofibroblastic cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Inflammatory cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      # B cells
+      "Regulatory B(Breg) cell" ~ "Breg cell",
+      "B10 Regulatory B cell" ~ "Breg cell",
+      "GrB+ Regulatory B cell" ~ "Breg cell",
+      "IgA+ Regulatory B cell" ~ "Breg cell",
+      "TIM-1+ Regulatory B cell" ~ "Breg cell",
+      "PD-1hi Regulatory B cell" ~ "Breg cell",
+      # Misc.
       "lymphatic endothelial cell" ~ "Lymphatic endothelial cell",
+      "Pan-macrophage" ~ "Macrophage",
+      "Tissue-resident macrophage" ~ "Macrophage",
+      "Infiltrating macrophage" ~ "Macrophage",
+      "Classical monocyte" ~ "Monocyte",
+      "Malignant cell" ~ "Tumor cell",
+      "Tumor-infiltrating lymphocyte(TIL)" ~ "Lymphocyte",
+      "Lymphoid-primed multipotent progenitor cell(LMPP)" ~ "Multipotent progenitor cell",
+      "Pro-tumor type-2 pericyte" ~ "Pericyte",
+      "Low-density neutrophil" ~ "Neutrophil",
+      "Pan-B cell" ~ "B cell",
+      "B cell lineage" ~ "B cell",
+      "Primitive stromal cell" ~ "Stromal cell",
+      "Tumor-associated microglia cell" ~ "Microglial cell",
+      "Microglia-derived tumor-associated macrophage(Mg-TAM)" ~ "Tumor-associated macrophage (TAM)",
+      "Epithelial-mesenchymal transition cancer stem cell" ~ "EMT cancer stem cell",
+      "Pan–T-cell" ~ "T cell",
+      "Superpotent cancer stem cell" ~ "Cancer stem cell",
+      "Proliferating T cell" ~ "T cell",
+      "Non-malignant epithelial cell" ~ "Epithelial cell",
+      "Tumor epithelial cell" ~ "Epithelial cell",
+      "Tumor-infiltrating T cell" ~ "T cell",
       .default = cell_name
     ),
     tissue = str_replace(str_to_lower(tissue_class), " ", "_"),
@@ -163,7 +271,10 @@ source_tbs$panglaodb <- panglaodb |>
 
 ## * HTC atlas
 
-## TODO: check out the files in htc atlas
+## These files are single-cell objects, which might be required for certain
+# deconvolution software.
+# Use AverageExpression with the group.by = "Cell_Type" to get cell type profiles for
+# each tissue
 
 ## * Enriched from hpa
 ## https://www.proteinatlas.org/humanproteome/single+cell/tissue+cell+type
