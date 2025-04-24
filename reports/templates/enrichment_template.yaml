@@ -1,0 +1,83 @@
+__variables__:
+  dir: foobar
+  rname: Report name
+  meta:
+  gsa: True
+  plage: True
+  contrasts:
+    foobar: contrast_name
+
+name: ?rname
+datasets:
+  metadata:
+    path: ?meta
+    separator: "\t"
+  ?if gsa:
+    gsa:
+      path: ?f"{dir}/gsa_gene_sets.tsv"
+      separator: "\t"
+      links:
+        set details:
+          column: set_name
+          table-row: Metadata/set_name
+          optional: true
+  ?if plage:
+    plage_decideTests:
+      path: ?f"{dir}/plage_decideTests.tsv"
+      separator: "\t"
+      links:
+        set details:
+          column: set_name
+          table-row: Metadata/set_name
+          optional: true
+    ?for item in contrasts:
+      ?f"plage_toptreat_{item}":
+        path: ?f"{dir}/plage_topTreat_{item}.tsv"
+        separator: "\t"
+        links:
+          set details:
+            column: set_name
+            table-row: Metadata/set_name
+            optional: true
+views:
+  Metadata:
+    dataset: metadata
+    desc: "Descriptions and statistics for gene sets"
+    render-table:
+      columns:
+        set_name:
+          display-mode: hidden
+  ?if gsa:
+    GSA:
+      dataset: gsa
+      desc: "Results from Gene Set Analysis"
+  ?if plage:
+    PLAGE decideTests:
+      dataset: plage_decideTests
+      desc: "Hypothesis test conclusions from PLAGE\n-1 indicates significantly negative, 0 not significant and 1 significantly positive"
+      render-table:
+        columns:
+          ?for item in contrasts:
+            ?item:
+              plot:
+                ticks:
+                  domain:
+                    - -1
+                    - 1
+
+    ?for key, value in contrasts.items():
+      ?f"PLAGE topTreat {key}":
+        dataset: ?f"plage_toptreat_{key}"
+        desc: ?f"topTreat results for contrast {value}"
+        render-table:
+          columns:
+            P.Value:
+              spell:
+                url: v1.3.0/stats/p-value
+                with:
+                  significance_threshold: 0.01
+            adj.P.Val:
+              spell:
+                url: v1.3.0/stats/p-value
+                with:
+                  significance_threshold: 0.01
