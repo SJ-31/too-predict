@@ -20,44 +20,56 @@ tf <- import("too_predict.filter")
 ut <- import("too_predict.utils")
 pd <- import("pandas")
 ad <- import("anndata")
-go_annotations <- evoGO::loadGOAnnotation(species = "hsapiens", path = as.character(ut$get_data("")))
-gene_sets <- gs_internal()
+
+gene_sets <- gs_internal(
+  from_file = TRUE, min_size = 15,
+  max_size = 500
+) # Gene sets must have at least `min_size` genes
+
 bp_param <- MulticoreParam(workers = multicoreWorkers())
 
 get_tags <- function(qlf, count) {
   topTags(qlf, n = count, sort.by = "PValue") |>
     as.data.frame() |>
     as_tibble() |>
-    relocate(all_of(added_cols), .after = "GENEID")
+    relocate(all_of(ADDED_COLS), .after = "GENEID")
 }
 
 ## * Setup
 wanted_stype <- c("primary", "organoid")
+outdir_o <- here("data", "output", "chula_organoid_comparison", "de_enrichment")
 if (path.expand("~") != "/home/shannc") {
   wanted_ttype <- c("PAAD", "COAD_READ", "LIHC", "CHOL")
   adata_fn <- function() {
     adata <- ut$training_data_internal()
-    adata <- adata[, 1:2000]
     adata
   }
   gsa_nperm <- 5
+  validate <- TRUE
+  storage <- here("remote", "repos", "too-predict", "organoid_comparison")
+  prefix <- ""
 } else {
-  ## test_file <- here(output())
   adata_fn <- function() {
-    ad$read_h5ad(here(
+    adata <- ad$read_h5ad(here(
       "data", "output", "normalization_comparison",
       "edgeR_median_lfc_feature_list_3000", "none-plus_one.h5ad"
     ))
+    adata <- adata[, 1:2000]
+    adata
   }
+  storage <- here(outdir_o, ".storage")
+  outdir_o <- here(outdir_o, "test")
   gsa_nperm <- NULL
   wanted_ttype <- c("PAAD", "COAD_READ", "LIHC", "CHOL")
+  validate <- FALSE
 }
+dir.create(outdir_o)
+dir.create(storage)
 
 adata <- adata_fn()
 adata$obs$tumor_type <- str_replace_all(adata$obs$tumor_type, "-", "_")
 adata <- adata[adata$obs$tumor_type %in% wanted_ttype, ]
 adata <- adata[adata$obs$Sample_Type %in% wanted_stype | grepl("CHULA", adata$obs$Project_ID), ]
-outdir_o <- here("data", "output", "chula_organoid_comparison")
 
 ## * Get DE genes
 
@@ -93,36 +105,49 @@ contrasts <- list(
 # For contrast 1, positive LFC are genes that are up in organoid over primary overall
 # For contrasts 2-5, positive LFC are genes that are up in
 #   organoid over primary in that ttype
+ADDED_COLS <- c("logFC", "logCPM", "F", "PValue", "FDR")
 
-dge <- normLibSizes(dge)
-dge <- estimateDisp(dge, design = mm, robust = TRUE)
+do_de <- function(output) {
+  dge <- filterByExpr(dge, design = mm, min.count = 10, min.prop = 0.8)
+  dge <- normLibSizes(dge)
+  dge <- estimateDisp(dge, design = mm, robust = TRUE)
 
-added_cols <- c("logFC", "logCPM", "F", "PValue", "FDR")
-other_cols <- colnames(dge$genes)
-unwanted_cols <- c(
-  "GENEBIOTYPE", "SEQNAME", "SEQLENGTH", "n_cells_by_counts",
-  "mean_counts", "log1p_mean_counts", "pct_dropout_by_counts", "total_counts",
-  "log1p_total_counts", "n_cells", "n_counts"
-)
+  other_cols <- colnames(dge$genes)
+  unwanted_cols <- c(
+    "GENEBIOTYPE", "SEQNAME", "SEQLENGTH", "n_cells_by_counts",
+    "mean_counts", "log1p_mean_counts", "pct_dropout_by_counts", "total_counts",
+    "log1p_total_counts", "n_cells", "n_counts"
+  )
 
-fit <- glmQLFit(dge, mm, robust = TRUE)
+  fit <- glmQLFit(dge, mm, robust = TRUE)
+  top_tags <<- sapply(names(contrasts), \(n) {
+    qlf <- glmQLFTest(fit, contrast = contrasts[[n]])
+    ## plotMD(qlf)
+    message(glue("Comparison: {qlf$comparison}"))
+    get_tags(qlf, count = nrow(dge)) |>
+      ## rename_with(\(cols) {
+      ##   map_chr(cols, \(x) {
+      ##     if (x %in% added_cols) {
+      ##       glue("{n}_{x}")
+      ##     } else {
+      ##       x
+      ##     }
+      ##   })
+      ## }) |>
+      select(-any_of(unwanted_cols))
+  }, simplify = FALSE, USE.NAMES = TRUE)
+  saveRDS(dge, output)
+  lmap(top_tags, \(x) write_tsv(x[[1]], file = here(outdir_o, glue("{names(x)}_top_tags.tsv"))))
+  dge
+}
 
-top_tags <- sapply(names(contrasts), \(n) {
-  qlf <- glmQLFTest(fit, contrast = contrasts[[n]])
-  ## plotMD(qlf)
-  message(glue("Comparison: {qlf$comparison}"))
-  get_tags(qlf, count = nrow(dge)) |>
-    ## rename_with(\(cols) {
-    ##   map_chr(cols, \(x) {
-    ##     if (x %in% added_cols) {
-    ##       glue("{n}_{x}")
-    ##     } else {
-    ##       x
-    ##     }
-    ##   })
-    ## }) |>
-    select(-any_of(unwanted_cols))
-}, simplify = FALSE, USE.NAMES = TRUE)
+dge_file <- here(storage, "dge.rds")
+if (file.exists(dge_file)) {
+  top_tags <- sapply(names(contrasts), \(n) {
+    read_tsv(glue("{n}_top_tags.tsv"))
+  }, simplify = FALSE, USE.NAMES = TRUE)
+}
+dge <- read_existing(dge_file, do_de, readRDS)
 
 
 ## * Plots
@@ -165,7 +190,15 @@ lapply(names(top_tags), \(x) {
 
 ## * Enrichment analyses
 
+gs_meta <- read_tsv(gs_meta_internal()) |> mutate(set_name = paste0(source, ":", name))
+
 # Want to know how organoid vs. primary differ on the basis of gene sets
+enrichment_analyses <- list(
+  ora = FALSE,
+  fgsea = FALSE,
+  gsa = FALSE,
+  plage = TRUE
+)
 
 lfc_filter <- function(tag_tb) {
   lfc_threshold <- 0 # TODO: any way to choose a good threshold?
@@ -174,28 +207,35 @@ lfc_filter <- function(tag_tb) {
   tag_tb |> filter(abs(logFC) >= lfc_threshold & PValue <= alpha & FDR <= fdr_cutoff)
 }
 
+
 # Validate gene sets by..
 ## - keeping sets where at least n_keep% of genes are nonzero in the data
-## - removing setes with less than n_genes
 ## gene_sets
 n_keep_percent <- 90
-min_genes <- 5
-gene2avg <- rowMeans(adj_counts)
-gene_set_mask <- bplapply(names(gene_sets), \(name) {
-  set <- gene_sets[[name]]
-  if (length(set) < min_genes) {
-    return(FALSE)
-  }
-  expr_level <- map_lgl(set, \(x) gene2avg[x] > 0) |> replace_na(FALSE)
-  (sum(expr_level) / length(set)) * 100 > n_keep_percent
-}, BPPARAM = bp_param) |>
-  unlist()
-gene_sets <- gene_sets[gene_set_mask]
+if (validate) {
+  # TODO: this should work...
+  set_tb <- tibble(name = names(gene_sets), ensembl = gene_sets) |>
+    unnest(cols = c(ensembl)) |>
+    mutate(val = 1) |>
+    pivot_wider(id_cols = name, names_from = ensembl, values_from = val) |>
+    column_to_rownames(var = "name") |>
+    t() %>%
+    replace(is.na(.), 0)
+  nonzero <- adj_counts > 0
+  mode(nonzero) <- "integer"
+  set_tb <- set_tb[rownames(set_tb) %in% rownames(adj_counts), ]
+  set_sums <- t(nonzero[rownames(nonzero) %in% rownames(set_tb), ]) %*% set_tb
+  # sample x pathway matrix where values are the count of nonzero genes for that pathway
+  # in that sample
+  set_percent <- set_sums / colSums(set_tb) |> colMeans()
+  gene_sets <- gene_sets[set_percent >= n_keep_percent]
+  print(glue("N sets passed: {length(gene_sets)}"))
+}
 
 ## ** ORA
 
-do_ora <- FALSE
-if (do_ora) {
+if (enrichment_analyses$ora) {
+  go_annotations <- evoGO::loadGOAnnotation(species = "hsapiens", path = as.character(ut$get_data("")))
   universe <- dge$genes$GENEID
   ora_alpha <- 0.05
   overrepresented <- sapply(names(top_tags), \(n) {
@@ -221,8 +261,7 @@ if (do_ora) {
 ## ** Gene set enrichment analysis
 # Operates on pre-ranked genes i.e. uses results from edgeR above
 
-do_fgsea <- TRUE
-if (do_fgsea) {
+if (enrichment_analyses$fgsea) {
   library(fgsea)
 
   fgsea_alpha <- 0.05
@@ -240,8 +279,7 @@ if (do_fgsea) {
 ## ** Gene Set Analysis
 
 # [2025-04-18 Fri] More direct way of getting the ora results
-do_gsa <- TRUE
-if (do_gsa) {
+if (enrichment_analyses$gsa) {
   library(GSALightning)
   dge$genes$sd_adj <- apply(adj_counts, 1, sd)
   to_gsa <- adj_counts[dge$genes$sd_adj != 0, ]
@@ -255,35 +293,29 @@ if (do_gsa) {
 
 ## ** PLAGE
 
-do_plage <- TRUE
-if (do_plage) {
-  library(GSVA)
-  library(limma)
-  params <- plageParam(exprData = adj_counts, geneSets = gene_sets)
-  plage <- gsva(params) |> as.data.frame()
-
-  # Use limma for comparison, not edgeR because the latter needs the raw units
-  fit_gs <- lmFit(plage, design = mm)
-
-  de_gs <- lapply(names(contrasts), \(name) {
-    contrast_fit <- contrasts.fit(fit_gs, contrasts[[name]])
-    contrast_fit <- eBayes(contrast_fit, robust = TRUE)
-    result <- decideTests(contrast_fit,
-      lfc = log2(1.5) # Judge significant when abs(log2-fc) is at least this large
-    )
-    df <- data.frame(row.names = rownames(result))
-    df[[name]] <- as.double(result[, 1])
-    df
-  }) |>
-    bind_cols()
+if (enrichment_analyses$plage) {
+  plage <- plage_wrapper(
+    counts = adj_counts,
+    gene_sets = gene_sets, fc_cutoff = 1.2,
+    contrasts = contrasts,
+    model_matrix = mm
+  )
+  plage$de <- plage$de |>
+    rownames_to_column(var = "set_name") |>
+    inner_join(gs_meta, by = join_by(set_name)) |>
+    as_tibble()
+  write_tsv(plage$de, here(outdir_o, "plage_decideTests.tsv"))
+  lapply(plage$topTreats, \(x) {
+    df <- plage$topTreats[[x]]
+    inner_join(rownames_to_column(df, var = "set_name"), gs_meta, by = join_by(set_name)) |>
+      write_tsv(here(outdir_o, "plage_topTreat_{x}.tsv"))
+  })
 }
-
 
 # Value interpretation
 # -1 as significantly negative in the comparison
 # 0 not significant
 # 1 significant
-
 
 
 ## ** Globaltest
@@ -299,4 +331,5 @@ if (do_plage) {
 ## p.adjust(global)
 
 ## * Cross-reference with markers
-# TODO: need to find marker sets
+
+## marker_sets <- markers_internal()
