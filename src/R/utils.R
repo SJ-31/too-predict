@@ -415,6 +415,7 @@ plage_wrapper <- function(counts, gene_sets, contrasts = NULL,
 
 
 markers_internal <- function() yaml::read_yaml(as.character(ut$get_data("reference/cell_markers_custom.yaml")))
+markers_meta_internal <- function() read_tsv(as.character(ut$get_data("reference/cell_markers_custom_meta.tsv")))
 
 gs_meta_internal <- function() as.character(ut$get_data("reference/gene_sets_custom_meta.tsv", FALSE))
 
@@ -529,4 +530,35 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
     mask <- lengths <= max_size & mask
   }
   result[mask]
+}
+
+
+#' Keep only gene sets that have >= `min_nonzero_percent` of nonzero genes
+#' in >= `min_sample_percent` of samples
+filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
+                             min_sample_percent = 70) {
+  set_tb <- tibble(name = names(gene_sets), id = gene_sets) |>
+    unnest(cols = c(id)) |>
+    mutate(val = 1) |>
+    pivot_wider(id_cols = name, names_from = id, values_from = val) |>
+    column_to_rownames(var = "name") |>
+    t() %>%
+    replace(is.na(.), 0)
+  nonzero <- counts > 0
+  mode(nonzero) <- "integer"
+  set_mask <- rownames(set_tb) %in% rownames(counts)
+  n_missing <- colSums(set_tb[!set_mask, ])
+  set_tb <- set_tb[set_mask, ]
+  nonzero <- t(nonzero[rownames(nonzero) %in% rownames(set_tb), ])
+  set_sums <- nonzero %*% set_tb
+  # sample x pathway matrix where values are the count of nonzero genes for that pathway
+  # in that sample
+  totals <- colSums(set_tb) + n_missing
+  set_percent <- apply(set_sums, 1, \(r) r / totals) %>% replace(is.na(.), 0)
+  pass_nonzero_thresh <- set_percent >= min_nonzero_percent
+  pass_sample_thresh <- (colSums(pass_nonzero_thresh) / nrow(set_percent)) >= min_sample_percent
+  stopifnot("This shouldn't exceed 1!" = max(set_percent) <= 1)
+  print(glue("N sets before: {length(gene_sets)}"))
+  print(glue("N sets passed: {sum(pass_sample_thresh)}"))
+  gene_sets[pass_sample_thresh]
 }
