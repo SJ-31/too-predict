@@ -12,8 +12,6 @@ suppressMessages({
   ExperimentHub::setExperimentHubOption("CACHE", here("data", ".ExperimentHubCache"))
 })
 
-# TODO: Need to write all of these results out somewhere
-
 ## --- CODE BLOCK ---
 
 tf <- import("too_predict.filter")
@@ -44,10 +42,9 @@ if (path.expand("~") != "/home/shannc") {
     adata <- ut$training_data_internal()
     adata
   }
-  gsa_nperm <- 5
+  gsa_nperm <- NULL
   validate <- TRUE
   storage <- here("remote", "repos", "too-predict", "organoid_comparison")
-  prefix <- ""
 } else {
   adata_fn <- function() {
     adata <- ad$read_h5ad(here(
@@ -57,9 +54,9 @@ if (path.expand("~") != "/home/shannc") {
     adata <- adata[, 1:2000]
     adata
   }
+  gsa_nperm <- 5
   storage <- here(outdir_o, ".storage")
   outdir_o <- here(outdir_o, "test")
-  gsa_nperm <- NULL
   wanted_ttype <- c("PAAD", "COAD_READ", "LIHC", "CHOL")
   validate <- FALSE
 }
@@ -73,7 +70,7 @@ adata <- adata[adata$obs$Sample_Type %in% wanted_stype | grepl("CHULA", adata$ob
 
 ## * Get DE genes
 
-dge <- adata2dge(adata)
+dge <- adata2dge(adata, convert_na = TRUE)
 
 rm(adata)
 
@@ -144,7 +141,7 @@ do_de <- function(output) {
 dge_file <- here(storage, "dge.rds")
 if (file.exists(dge_file)) {
   top_tags <- sapply(names(contrasts), \(n) {
-    read_tsv(glue("{n}_top_tags.tsv"))
+    read_tsv(here(outdir_o, glue("{n}_top_tags.tsv")))
   }, simplify = FALSE, USE.NAMES = TRUE)
 }
 dge <- read_existing(dge_file, do_de, readRDS)
@@ -196,7 +193,7 @@ gs_meta <- read_tsv(gs_meta_internal()) |> mutate(set_name = paste0(source, ":",
 enrichment_analyses <- list(
   ora = FALSE,
   fgsea = FALSE,
-  gsa = FALSE,
+  gsa = TRUE,
   plage = TRUE
 )
 
@@ -211,25 +208,16 @@ lfc_filter <- function(tag_tb) {
 # Validate gene sets by..
 ## - keeping sets where at least n_keep% of genes are nonzero in the data
 ## gene_sets
-n_keep_percent <- 90
+min_nonzero_percent <- 70
+min_sample_percent <- 70
 if (validate) {
-  # TODO: this should work...
-  set_tb <- tibble(name = names(gene_sets), ensembl = gene_sets) |>
-    unnest(cols = c(ensembl)) |>
-    mutate(val = 1) |>
-    pivot_wider(id_cols = name, names_from = ensembl, values_from = val) |>
-    column_to_rownames(var = "name") |>
-    t() %>%
-    replace(is.na(.), 0)
-  nonzero <- adj_counts > 0
-  mode(nonzero) <- "integer"
-  set_tb <- set_tb[rownames(set_tb) %in% rownames(adj_counts), ]
-  set_sums <- t(nonzero[rownames(nonzero) %in% rownames(set_tb), ]) %*% set_tb
-  # sample x pathway matrix where values are the count of nonzero genes for that pathway
-  # in that sample
-  set_percent <- set_sums / colSums(set_tb) |> colMeans()
-  gene_sets <- gene_sets[set_percent >= n_keep_percent]
-  print(glue("N sets passed: {length(gene_sets)}"))
+  gene_sets <- filter_gene_sets(
+    gene_sets = gene_sets, counts = adj_counts,
+    min_nonzero_percent = min_nonzero_percent, min_sample_percent = min_sample_percent
+  )
+  gs_meta |>
+    filter(set_name %in% names(gene_sets)) |>
+    write_tsv(here(outdir_o, "tested_gene_sets.tsv"))
 }
 
 ## ** ORA
@@ -279,16 +267,25 @@ if (enrichment_analyses$fgsea) {
 ## ** Gene Set Analysis
 
 # [2025-04-18 Fri] More direct way of getting the ora results
-if (enrichment_analyses$gsa) {
+do_gsa <- function(outfile, gene_sets, metadata) {
   library(GSALightning)
   dge$genes$sd_adj <- apply(adj_counts, 1, sd)
   to_gsa <- adj_counts[dge$genes$sd_adj != 0, ]
-
   gsa <- GSALight(
     eset = to_gsa, fac = dge$samples$Sample_Type,
     gs = gene_sets, rmGSGenes = "gene",
     nperm = gsa_nperm
-  ) |> as_tibble()
+  ) |>
+    as.data.frame() |>
+    rownames_to_column(var = "set_name") |>
+    inner_join(metadata, by = join_by(set_name))
+  write_tsv(gsa, outfile)
+  gsa
+}
+
+if (enrichment_analyses$gsa) {
+  gsa_out <- here(outdir_o, "gsa_gene_sets.tsv")
+  gsa <- read_existing(gsa_out, \(x) do_gsa(x, gene_sets, gs_meta), read_tsv)
 }
 
 ## ** PLAGE
@@ -305,10 +302,10 @@ if (enrichment_analyses$plage) {
     inner_join(gs_meta, by = join_by(set_name)) |>
     as_tibble()
   write_tsv(plage$de, here(outdir_o, "plage_decideTests.tsv"))
-  lapply(plage$topTreats, \(x) {
+  lapply(names(plage$topTreats), \(x) {
     df <- plage$topTreats[[x]]
     inner_join(rownames_to_column(df, var = "set_name"), gs_meta, by = join_by(set_name)) |>
-      write_tsv(here(outdir_o, "plage_topTreat_{x}.tsv"))
+      write_tsv(here(outdir_o, glue("plage_topTreat_{x}.tsv")))
   })
 }
 
@@ -332,4 +329,27 @@ if (enrichment_analyses$plage) {
 
 ## * Cross-reference with markers
 
-## marker_sets <- markers_internal()
+min_marker_size <- 10
+max_marker_size <- 1000
+marker_sets <- markers_internal()
+marker_lengths <- map_dbl(marker_sets, length)
+marker_sets <- marker_sets[marker_lengths >= min_marker_size & marker_lengths <= max_marker_size]
+marker_meta <- markers_meta_internal() |>
+  mutate(
+    set_name = paste0(tissue, "-", cell_type),
+    set_name = case_when(from_tme ~ paste0(set_name, "-tme"), .default = set_name)
+  ) |>
+  select(-all_of(c("tissue", "cell_type", "ensembl", "from_tme"))) |>
+  group_by(set_name) |>
+  summarise(size = n(), source = dplyr::first(source))
+
+marker_sets <- filter_gene_sets(marker_sets,
+  counts = adj_counts, min_nonzero_percent = min_nonzero_percent,
+  min_sample_percent = min_sample_percent
+)
+marker_meta |>
+  filter(set_name %in% names(marker_sets)) |>
+  write_tsv(here(outdir_o, "tested_marker_sets.tsv"))
+
+gsa_marker_file <- here(outdir_o, "gsa_markers.tsv")
+read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets, marker_meta), read_tsv)
