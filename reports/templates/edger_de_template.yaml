@@ -1,0 +1,49 @@
+__variables__:
+  dir: foobar
+  rname: Report name
+  meta:
+  contrasts:
+    foobar: contrast_name
+
+name: ?rname
+datasets:
+  metadata:
+    path: ?meta
+    separator: "\t"
+  ?for item in contrasts:
+    ?f"toptags_{item}":
+      path: ?f"{dir}/{item}_top_tags.tsv"
+      separator: "\t"
+      links:
+        info:
+          column: GENEID
+          table-row: Metadata/GENEID
+          optional: true
+views:
+  Metadata:
+    dataset: metadata
+    desc: "Descriptions and statistics for genes"
+    render-table:
+      columns:
+        GENEID:
+          link-to-url:
+            ensembl:
+              url: "https://mart.ensembl.org/Human/Search/Results?q={value}"
+        GENENAME:
+          link-to-url:
+            hgnc:
+              url: "https://www.genenames.org/tools/search/#!/?query={value}"
+        GENEBIOTYPE:
+          ellipsis: 10
+
+  ?for key, value in contrasts.items():
+    ?f"{key} topTags":
+      dataset: ?f"toptags_{key}"
+      desc: ?f"topTags for contrast {value}"
+      render-table:
+        columns:
+          PValue:
+            spell:
+              url: v1.3.0/stats/p-value
+              with:
+                significance_threshold: 0.01
