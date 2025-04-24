@@ -6,6 +6,8 @@ build/
 dist/
 rust/target
 src/too_predict/_rust_helpers*
+reports
+!reports/templates
 rust/Cargo.lock
 wheels/
 *.egg-info
