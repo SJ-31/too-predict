@@ -142,11 +142,33 @@ distinct_orderings <- function(tb, cols) {
     select(-tmp)
 }
 
-adata2dge <- function(adata, layer = NULL) {
+adata2eset <- function(adata, layer = NULL, convert_na = FALSE) {
   if (!is.null(layer)) {
     counts <- t(as.matrix(adata$layers[[layer]]))
   } else {
     counts <- t(as.matrix(adata$X))
+    if (convert_na) {
+      counts <- replace(counts, is.na(counts), 0)
+      stopifnot("Removing any counts failed" = !any(is.na(counts)))
+    }
+  }
+  rownames(counts) <- rownames(adata$var)
+  colnames(counts) <- rownames(adata$obs)
+  pdata <- Biobase::AnnotatedDataFrame(adata$obs)
+  fdata <- Biobase::AnnotatedDataFrame(adata$var)
+  Biobase::ExpressionSet(assayData = counts, phenoData = pdata, featureData = fdata)
+}
+
+
+adata2dge <- function(adata, layer = NULL, convert_na = FALSE) {
+  if (!is.null(layer)) {
+    counts <- t(as.matrix(adata$layers[[layer]]))
+  } else {
+    counts <- t(as.matrix(adata$X))
+    if (convert_na) {
+      counts <- replace(counts, is.na(counts), 0)
+      stopifnot("Removing any counts failed" = !any(is.na(counts)))
+    }
   }
   DGEList(counts = counts, samples = adata$obs, genes = adata$var)
 }
@@ -377,6 +399,15 @@ plage_wrapper <- function(counts, gene_sets, contrasts = NULL,
                           model_matrix = NULL) {
   library(GSVA)
   library(limma)
+  dupes <- duplicated(rownames(counts))
+  if (any(dupes)) {
+    ndupes <- sum(dupes)
+    warning(glue("{ndupes} duplicated features in counts detected! Keeping only first...\n
+nrow before: {nrow(counts)}\n
+nrow after: {nrow(counts) - ndupes}
+"))
+    counts <- counts[!duplicated(rownames(counts)), ]
+  }
   params <- plageParam(exprData = counts, geneSets = gene_sets)
   result <- list()
   plage <- gsva(params) |> as.data.frame()
@@ -517,6 +548,7 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
       result <- c(result, hallmark)
     }
     if (nrow(meta > 0)) {
+      meta$set_name <- paste0(meta$source, ":", meta$name)
       write_tsv(meta, meta_out)
     }
     yaml::write_yaml(result, outfile)
@@ -536,7 +568,7 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
 #' Keep only gene sets that have >= `min_nonzero_percent` of nonzero genes
 #' in >= `min_sample_percent` of samples
 filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
-                             min_sample_percent = 70) {
+                             min_sample_percent = 70, stats_only = FALSE) {
   set_tb <- tibble(name = names(gene_sets), id = gene_sets) |>
     unnest(cols = c(id)) |>
     mutate(val = 1) |>
@@ -560,5 +592,27 @@ filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
   stopifnot("This shouldn't exceed 1!" = max(set_percent) <= 1)
   print(glue("N sets before: {length(gene_sets)}"))
   print(glue("N sets passed: {sum(pass_sample_thresh)}"))
-  gene_sets[pass_sample_thresh]
+  if (!stats_only) {
+    gene_sets[pass_sample_thresh]
+  } else {
+    set_percent |>
+      as.data.frame() |>
+      rownames_to_column(var = "sample")
+  }
+}
+
+
+bisque_marker_wrapper <- function(counts, sample_names, var_names, markers) {
+  library(tidyverse)
+  if (is.character(markers)) {
+    markers <- yaml::read_yaml(markers)
+  }
+  marker_spec <- tibble(gene = markers, cluster = names(markers)) |>
+    tidyr::unnest(cols = c(gene)) |>
+    as.data.frame()
+  mode(counts) <- "integer"
+  rownames(counts) <- var_names
+  colnames(counts) <- sample_names
+  eset <- Biobase::ExpressionSet(assayData = counts)
+  res <- BisqueRNA::MarkerBasedDecomposition(eset, marker_spec)
 }
