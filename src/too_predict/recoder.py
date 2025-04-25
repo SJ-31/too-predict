@@ -18,11 +18,14 @@ IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage", "gsva"}
 
 
 class Recoder:
-    def __init__(self, method: str, layer: str = None, **kwargs) -> None:
+    def __init__(
+        self, method: str, layer: str = None, added_fcol: str = "accession", **kwargs
+    ) -> None:
         if method.lower() not in IMPLEMENTED_RECODING:
             raise ValueError(f"method {method} not supported!")
         self.method = method.lower()
         self.layer = layer
+        self.fcol = added_fcol
         self.kwargs = kwargs
 
     def _counts_into_r(self) -> None:
@@ -74,12 +77,15 @@ class Recoder:
         return ad.AnnData(X=vals.values.astype(np.float64), var=var, obs=self.adata.obs)
 
     @ut.r_cleanup
-    def _bisque(self, reference_file: Path, mode: str = "marker") -> ad.AnnData:
+    def _bisque(self, reference: Path | dict, mode: str = "marker") -> ad.AnnData:
         ut.source("utils.R", in_r=True)
         if mode == "marker":
             ut.source("utils.R", in_r=True)
             self._counts_into_r()
-            ro.globalenv["marker_ref"] = str(reference_file.absolute())
+            if isinstance(reference, Path):
+                ro.globalenv["marker_ref"] = str(reference.absolute())
+            else:
+                ro.globalenv["marker_ref"] = ro.ListVector(reference)
             ro.r("result <- bisque_marker_wrapper(counts, markers = marker_ref)")
             matrix = ut.np_from_r(ro.r("result$bulk.props"))
             genes_used = pd.DataFrame(
@@ -127,6 +133,7 @@ class Recoder:
                 raise ValueError()
         if self.was_sparse:
             recoded.X = sparse.csc_array(recoded.X)
+        recoded.var[self.fcol] = recoded.var.index
         return recoded
 
     def fit_transform(self, adata: ad.AnnData) -> ad.AnnData:

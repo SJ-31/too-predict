@@ -6,20 +6,24 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 
 import too_predict.model as tm
+import too_predict.recoder as rt
 from too_predict.corrector import Corrector
 from too_predict.filter import Filter
-from too_predict.go_utils import RecodeGO
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestClassifier, XGBEstimator
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     RANDOM_STATE,
+    cell_markers_internal,
     get_blacklist_internal,
     ref_feature_lists_internal,
 )
 
 REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
+
+markers = cell_markers_internal()
+marker_meta = cell_markers_internal(meta=True)
 
 # * Models
 # Key:
@@ -35,6 +39,7 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 # l : feature blacklist
 
 MODELS: dict = {
+    # ** CLR models
     "clr_random_forest_minfo": {
         "m": tm.RandomForestPred(),
         "t": "clr",
@@ -49,22 +54,6 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "r": "variance_feature_list_lowest_20",
         "s": True,  # [2025-04-08 Tue]
-    },
-    "clr_xgboost_edger_GO": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
-        "t": "clr",
-        "i": "plus_one",
-        "f": "edgeR_go_feature_list_40",
-        "e": "GO",
-        "s": True,
-    },
-    "clr_xgboost_variance_GO": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
-        "t": "clr",
-        "i": "plus_one",
-        "e": "GO",
-        "f": "variance_go_feature_list_1500",
-        "s": True,
     },
     "clr_xgboost_edger_smote": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
@@ -171,6 +160,7 @@ MODELS: dict = {
         "r": "variance_feature_list_lowest_20",
         "s": True,
     },
+    # ** ALR models
     "alr_xgboost_edger_lowest_1000": {
         "m": tm.AlrBase(
             tm.XGBEstimator(),
@@ -179,6 +169,7 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "r": "edgeR_median_lfc_feature_list_lowest_20",
+        "s": True,  # BUG: this one has value errors for some reason
     },
     "alr_xgboost_edger_lowest_1000_only_5": {
         "m": tm.AlrBase(
@@ -189,24 +180,6 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "r": "edgeR_median_lfc_feature_list_lowest_20",
-    },
-    "clr_xgboost_go_level_4_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
-        "i": "plus_one",
-        "e": RecodeGO(id_col="GENEID", level=4),
-        "s": True,  # [2025-04-09 Wed]
-    },
-    "clr_xgboost_go_level_3_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
-        "i": "plus_one",
-        "e": RecodeGO(id_col="GENEID", level=3),
-        "s": True,  #  [2025-04-09 Wed]
-    },
-    "clr_xgboost_go_level_2_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
-        "i": "plus_one",
-        "e": RecodeGO(id_col="GENEID", level=2),
-        "s": True,
     },
     "alr_random_forest_low_variance": {
         "m": tm.AlrBase(
@@ -247,7 +220,7 @@ MODELS: dict = {
         "t": "fpkm",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        # "s": True,
+        "s": True,
     },
     "dirichlet_random_forest_edger": {
         "m": tm.SimPred(
@@ -272,13 +245,18 @@ MODELS: dict = {
         "f": "pulp_euclidean_edgeR_3000_subset",
         "s": True,
     },
-    # With correction
+    # ** With correction
     "clr_xgb3_edger_pycombat_seq": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
-        "c": {"method": "pycombat_seq", "batch": "is_organoid", "group": "tumor_type"},
+        "c": {
+            "method": "pycombat_seq",
+            "batch": "is_organoid",
+            "covar_mod": "tumor_type",
+        },
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,  # [2025-04-25 Fri] Way too slow
     },
     "clr_xgb3_edger_rbe": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -295,8 +273,61 @@ MODELS: dict = {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
-        "c": {"method": "combat_ref", "batch": "is_organoid", "group": "tumor_type"},
+        "c": {
+            "method": "combat_ref",
+            "batch": "is_organoid",
+            "group": "tumor_type",
+        },
         "f": "edgeR_median_lfc_feature_list_3000",
+    },
+    # ** Recodings
+    "clr_xgboost_edger_GO": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_go_feature_list_40",
+        "e": "GO",
+        "s": True,
+    },
+    "clr_xgboost_variance_GO": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "e": "GO",
+        "f": "variance_go_feature_list_1500",
+        "s": True,
+    },
+    "clr_xgboost_go_level_4_sum": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("go", id_col="GENEID", level=4),
+        "s": True,  # [2025-04-09 Wed]
+    },
+    "clr_xgboost_go_level_3_sum": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("go", id_col="GENEID", level=3),
+        "s": True,  #  [2025-04-09 Wed]
+    },
+    "clr_xgboost_go_level_2_sum": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("go", id_col="GENEID", level=2),
+    },
+    "clr_xgboost_plage": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("plage", reference=markers, metadata=marker_meta),
+    },
+    "clr_xgboost_gsva": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("gsva", reference=markers, metadata=marker_meta),
+    },
+    "clr_xgboost_bisquemarker": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("bisquemarker", reference=markers),
     },
 }
 
@@ -336,7 +367,7 @@ def read_model_spec(
     PredBase,
     Transformer,
     Balancer | None,
-    RecodeGO | None,
+    rt.Recoder | None,
     Corrector | None,
 ]:
     M: PredBase = spec.get("m")
