@@ -548,6 +548,31 @@ def find_confounded(x, y) -> list[tuple[str, str]]:
     return problem_pairs
 
 
+def cell_markers_internal(
+    meta: bool = False, file_only=False
+) -> pd.DataFrame | dict | Path:
+    file = (
+        get_data("reference/cell_markers_custom_meta.tsv")
+        if meta
+        else get_data("reference/cell_markers_custom.yaml")
+    )
+    if file_only:
+        return file
+    if meta:
+        df = pd.read_csv(file, sep="\t")
+        df.loc[:, "set_name"] = df["tissue"].combine(
+            df["cell_type"], lambda x, y: f"{x}-{y}"
+        )
+        df: pd.DataFrame = df.groupby("set_name").agg(
+            size=pd.NamedAgg(column="ensembl", aggfunc="count"),
+            source=pd.NamedAgg(column="source", aggfunc="first"),
+        )
+        return df
+    with open(file, "r") as f:
+        dct = yaml.safe_load(f)
+    return dct
+
+
 def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
     public_data = here("remote", "public_data")
     combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
@@ -838,6 +863,17 @@ class RankInterpreter:
                 mask = (pvals <= threshold).all(axis=1)
             requested = requested.loc[mask, :]
         return requested
+
+
+def counts_into_r(adata: ad.AnnData, counts: np.ndarray | None) -> None:
+    if counts is not None:
+        np_to_r(np.transpose(counts), r_symbol="counts")
+    else:
+        np_to_r(np.transpose(adata.X), r_symbol="counts")
+    ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index)
+    ro.globalenv["var_names"] = ro.StrVector(adata.var.index)
+    ro.r("rownames(counts) <- var_names")
+    ro.r("colnames(counts) <- sample_names")
 
 
 def write_tmp_toolkit(

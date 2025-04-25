@@ -11,30 +11,43 @@ from scipy import sparse
 import too_predict.go_utils as gt
 import too_predict.utils as ut
 
-IMPLEMENTED_RECODING = {"GO", "BisqueMarker"}
+IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage"}
 
 
 class Recoder:
     def __init__(self, method: str, layer: str = None, **kwargs) -> None:
-        if method not in IMPLEMENTED_RECODING:
+        if method.lower() not in IMPLEMENTED_RECODING:
             raise ValueError(f"method {method} not supported!")
-        self.method = method
+        self.method = method.lower()
         self.layer = layer
         self.kwargs = kwargs
+
+    def _counts_into_r(self) -> None:
+        ut.counts_into_r(self.adata, self.counts)
+
+    @ut.r_cleanup
+    def _plage(self, reference_file: Path, metadata: Path | pd.DataFrame) -> ad.AnnData:
+        if isinstance(metadata, Path):
+            metadata = pd.read_csv(metadata, sep="\t")
+        ro.r("library(GSVA)")
+        self._counts_into_r()
+        ro.r(f"gs <- yaml::read_yaml('{str(reference_file.absolute())}')")
+        ro.r("params <- plageParam(exprData = counts, geneSets = gs)")
+        ro.r("plage <- gsva(params)")
+        vals: np.ndarray = np.transpose(ut.np_from_r(ro.globalenv["plage"]))
+        var = pd.DataFrame(index=ro.r("rownames(plage)")).merge(
+            metadata, left_index=True, right_index=True, how="left"
+        )
+        return ad.AnnData(X=vals, var=var, obs=self.adata.obs)
 
     @ut.r_cleanup
     def _bisque(self, reference_file: Path, mode: str = "marker") -> ad.AnnData:
         ut.source("utils.R", in_r=True)
         if mode == "marker":
             ut.source("utils.R", in_r=True)
-            ut.np_to_r(np.transpose(self.counts), r_symbol="counts")
+            self._counts_into_r()
             ro.globalenv["marker_ref"] = str(reference_file.absolute())
-            ro.globalenv["samples"] = ro.StrVector(self.adata.obs.index)
-            ro.globalenv["vars"] = ro.StrVector(self.adata.var.index)
-            ro.r("""
-            result <- bisque_marker_wrapper(counts, sample_names = samples,
-                var_names = vars, markers = marker_ref)
-            """)
+            ro.r("result <- bisque_marker_wrapper(counts, markers = marker_ref)")
             matrix = ut.np_from_r(ro.r("result$bulk.props"))
             genes_used = pd.DataFrame(
                 {
@@ -61,14 +74,18 @@ class Recoder:
 
     def transform(self) -> ad.AnnData:
         match self.method:
-            case "GO":
+            case "go":
                 rg = gt.RecodeGO(**self.kwargs)
                 rg.adata = self.adata
                 recoded = rg.transform()
-            case "BisqueMarker":
+            case "bisquemarker":
                 recoded = self._bisque(mode="marker", **self.kwargs)
+            case "plage":
+                recoded = self._plage(**self.kwargs)
             case _:
                 raise ValueError()
+        if self.was_sparse:
+            recoded.X = sparse.csc_array(recoded.X)
         return recoded
 
     def fit_transform(self, adata: ad.AnnData) -> ad.AnnData:
