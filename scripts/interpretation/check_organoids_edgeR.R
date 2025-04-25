@@ -139,7 +139,7 @@ do_de <- function(output) {
   }, simplify = FALSE, USE.NAMES = TRUE)
   saveRDS(dge, output)
   ## TODO: [2025-04-24 Thu] filter out some tags to enable sorting
-  lmap(top_tags, \(x) write_tsv(x[[1]], file = here(outdir_o, glue("{names(x)}_top_tags.tsv"))))
+  suppressMessages(lmap(top_tags, \(x) write_tsv(x[[1]], file = here(outdir_o, glue("{names(x)}_top_tags.tsv")))))
   dge
 }
 
@@ -152,11 +152,13 @@ if (file.exists(dge_file)) {
 dge <- read_existing(dge_file, do_de, readRDS)
 tagdir <- here(outdir_o, "top_tags_sorted")
 dir.create(tagdir)
-lmap(top_tags, \(x) {
-  filter(x[[1]], PValue <= 0.1) |>
-    arrange(desc(abs(logFC))) |>
-    dplyr::slice_head(n = 2000) |>
-    write_tsv(here(tagdir, glue("{names(x)}_top_tags.tsv")))
+suppressMessages({
+  lmap(top_tags, \(x) {
+    filter(x[[1]], PValue <= 0.1) |>
+      arrange(desc(abs(logFC))) |>
+      dplyr::slice_head(n = 2000) |>
+      write_tsv(here(tagdir, glue("{names(x)}_top_tags.tsv")))
+  })
 })
 
 
@@ -286,8 +288,10 @@ fgsea_helper <- function(gene_sets, alpha = 0.05) {
 
 if (enrichment_analyses$fgsea && !file.exists(here(outdir_gs, "fgsea_sample_type.tsv"))) {
   fgsea_gene_sets <- fgsea_helper(gene_sets = gene_sets, alpha = 0.05)
-  lmap(fgsea_gene_sets, \(x)  {
-    write_tsv(x[[1]], here(outdir_gs, glue("fgsea_{names(x)}")))
+  suppressMessages({
+    lmap(fgsea_gene_sets, \(x)  {
+      write_tsv(x[[1]], here(outdir_gs, glue("fgsea_{names(x)}.tsv")))
+    })
   })
 }
 
@@ -387,7 +391,9 @@ read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets, marker_meta), read_ts
 
 if (!file.exists(here(outdir_markers, "fgsea_sample_type.tsv"))) {
   fgsea_markers <- fgsea_helper(marker_sets, alpha = 0.05)
-  lmap(fgsea_markers, \(x)  {
-    write_tsv(x[[1]], here(outdir_markers, glue("fgsea_{names(x)}")))
+  suppressMessages({
+    lmap(fgsea_markers, \(x)  {
+      write_tsv(x[[1]], here(outdir_markers, glue("fgsea_{names(x)}.tsv")))
+    })
   })
 }
