@@ -239,6 +239,16 @@ def tximport_salmon(
     return result
 
 
+def add_gc_content(adata: ad.AnnData, id_col: str = "GENEID") -> None:
+    mapping = pd.read_csv(get_data("mappings/ensembl2gc_content.tsv"), sep="\t").rename(
+        {"Gene % GC content": "gc_content"}, axis=1
+    )
+    mapping.loc[:, "gc_content"] = mapping["gc_content"] / 100
+    adata.var = adata.var.merge(
+        mapping, left_on=id_col, right_on="Gene stable ID", how="left"
+    )
+
+
 @r_cleanup
 def add_gene_metadata(
     adata: ad.AnnData,
