@@ -338,9 +338,11 @@ if (enrichment_analyses$plage) {
   )
   plage$de <- plage$de |> rownames_to_column(var = "set_name")
   write_tsv(plage$de, here(outdir_gs, "plage_decideTests.tsv"))
-  lapply(names(plage$topTreats), \(x) {
-    df <- plage$topTreats[[x]] |> rownames_to_column(var = "set_name")
-    write_tsv(df, here(outdir_gs, glue("plage_topTreat_{x}.tsv")))
+  suppressMessages({
+    lapply(names(plage$topTreats), \(x) {
+      df <- plage$topTreats[[x]] |> rownames_to_column(var = "set_name")
+      write_tsv(df, here(outdir_gs, glue("plage_topTreat_{x}.tsv")))
+    })
   })
 }
 
@@ -361,6 +363,23 @@ if (enrichment_analyses$plage) {
 ##   subsets = gene_sets
 ## )
 ## p.adjust(global)
+
+## ** Final summary
+
+summarize_gs <- list()
+for (g in names(contrasts)) {
+  summarize_gs[[glue("FGSEA {g}")]] <- fgsea_gene_sets[[g]] |> rename(set_name = pathway)
+  summarize_gs[[glue("PLAGE {g}")]] <- plage$topTreats[[g]] |>
+    rownames_to_column(var = "set_name") |>
+    rename(padj = adj.P.Val)
+}
+summarize_gs[["GSA organoid up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in organoid`) |>
+  rename(padj = `p-value:up-regulated in organoid`)
+summarize_gs[["GSA primary up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in primary`) |>
+  rename(padj = `p-value:up-regulated in primary`)
+
+gs_summary <- enrichment_summary(gs_meta, summarize_gs)
+write_tsv(gs_summary, here(outdir_gs, "enrichment_summary.tsv"))
 
 ## * Cross-reference with markers
 
@@ -385,10 +404,7 @@ marker_meta <- markers_meta_internal() |>
 ## marker_meta |>
 ##   filter(set_name %in% names(marker_sets)) |>
 ##   write_tsv(here(outdir_o, "tested_marker_sets.tsv"))
-
-
 marker_stats <- filter_gene_sets(counts = adj_counts, gene_sets = marker_sets, stats_only = TRUE)
-
 
 marker_agg <- agg_gene_set_fractions(marker_stats, sample_stype_map, c("Sample_Type", "Project_ID"))
 marker_agg |> write_tsv(here(outdir_o, "marker_nonzero_percent.tsv"))

@@ -170,6 +170,8 @@ adata2dge <- function(adata, layer = NULL, convert_na = FALSE) {
       stopifnot("Removing any counts failed" = !any(is.na(counts)))
     }
   }
+  rownames(counts) <- rownames(adata$var)
+  colnames(counts) <- rownames(adata$obs)
   DGEList(counts = counts, samples = adata$obs, genes = adata$var)
 }
 
@@ -627,7 +629,8 @@ agg_gene_set_fractions <- function(set_stats, metadata, agg_cols, join_on = "sam
       pivot_wider(names_from = !!as.symbol(col), values_from = value) |>
       dplyr::rename_with(\(c) paste0(col, "-", c), .cols = -name)
   }) |>
-    purrr::reduce(\(x, y) inner_join(x, y, by = join_by(name)))
+    purrr::reduce(\(x, y) inner_join(x, y, by = join_by(name))) |>
+    mutate(across(where(is.numeric), \(x) round(x, 3)))
 }
 
 
@@ -644,4 +647,29 @@ bisque_marker_wrapper <- function(counts, markers) {
   colnames(counts) <- sample_names
   eset <- Biobase::ExpressionSet(assayData = counts)
   res <- BisqueRNA::MarkerBasedDecomposition(eset, marker_spec)
+}
+
+#' Group pathways by `category_col` and count the number of statistically
+#'  significant pathways for each
+#'
+#' @param enrichment_results a list mapping enrichment analyses to their results
+#'    each value of this list must have `join_by` and `p_value_col`
+enrichment_summary <- function(metadata, enrichment_results,
+                               cutoff = 0.05,
+                               p_value_col = "padj",
+                               category_col = "category",
+                               join_by = "set_name") {
+  final <- lmap(enrichment_results, \(x) {
+    tb <- left_join(x[[1]], metadata, by = join_by(!!as.symbol(join_by))) |>
+      filter(!!as.symbol(p_value_col) <= cutoff) |>
+      group_by(!!as.symbol(category_col)) |>
+      summarise(!!as.symbol(names(x)) := n())
+    tb
+  }) |>
+    purrr::reduce(\(x, y) full_join(x, y, by = join_by(!!as.symbol(category_col)))) |>
+    mutate(across(where(is.numeric), \(x) replace(x, is.na(x), 0)))
+  sorted_cols <- sort(colnames(final))
+  final |>
+    select(all_of(sorted_cols)) |>
+    relocate(!!as.symbol(category_col), .before = dplyr::everything())
 }
