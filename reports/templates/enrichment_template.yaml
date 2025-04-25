@@ -2,6 +2,7 @@ __variables__:
   dir: foobar
   rname: Report name
   meta:
+  gs_nonzero:
   gsa: True
   plage: True
   fgsea: True
@@ -15,6 +16,9 @@ name: ?rname
 datasets:
   metadata:
     path: ?meta
+    separator: "\t"
+  gs_nonzero:
+    path: ?gs_nonzero
     separator: "\t"
   ?if gsa:
     gsa:
@@ -31,7 +35,7 @@ datasets:
           optional: true
   ?if fgsea:
     ?for item in contrasts:
-      ?if fgsea_only is not None or item in fgsea_only:
+      ?if fgsea_only is None or item in fgsea_only:
         ?f"fgsea_{item}":
           path: ?f"{dir}/fgsea_{item}.tsv"
           separator: "\t"
@@ -39,6 +43,10 @@ datasets:
             set details:
               column: pathway
               table-row: Metadata/set_name
+              optional: true
+            set nonzero frequency:
+              column: pathway
+              table-row: Nonzero/name
               optional: true
   ?if plage:
     plage_decideTests:
@@ -54,7 +62,7 @@ datasets:
           table-row: Nonzero/name
           optional: true
     ?for item in contrasts:
-      ?if plage_only is not None or item in plage_only:
+      ?if plage_only is None or item in plage_only:
         ?f"plage_toptreat_{item}":
           path: ?f"{dir}/plage_topTreat_{item}.tsv"
           separator: "\t"
@@ -63,6 +71,11 @@ datasets:
               column: set_name
               table-row: Metadata/set_name
               optional: true
+            set nonzero frequency:
+              column: set_name
+              table-row: Nonzero/name
+              optional: true
+
 views:
   Metadata:
     dataset: metadata
@@ -71,6 +84,9 @@ views:
       columns:
         set_name:
           display-mode: hidden
+  Nonzero:
+    dataset: gs_nonzero
+    desc: "Fraction of nonzero genes in the the gene set, averaged across samples with the given group. The columns are 'group_type-member_of_type'"
   ?if gsa:
     GSA:
       dataset: gsa
@@ -89,7 +105,7 @@ views:
                     - -1
                     - 1
     ?for key, value in contrasts.items():
-      ?if plage_only is not None or key in plage_only:
+      ?if plage_only is None or key in plage_only:
         ?f"PLAGE topTreat {key}":
           dataset: ?f"plage_toptreat_{key}"
           desc: ?f"topTreat results for contrast '{value}'"
@@ -107,7 +123,7 @@ views:
                     significance_threshold: ?sig_threshold
     ?if fgsea:
       ?for key, value in contrasts.items():
-        ?if fgsea_only is not None or key in fgsea_only:
+        ?if fgsea_only is None or key in fgsea_only:
           ?f"FGSEA {key}":
             dataset: ?f"fgsea_{key}"
             desc: ?f"FGSEA results for DE genes identified with contrast '{value}'"
@@ -127,4 +143,4 @@ views:
                   plot:
                     pills:
                       separator: ";"
-                      ellipsis: 10
+                      ellipsis: 3
