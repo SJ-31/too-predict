@@ -20,7 +20,7 @@ pd <- import("pandas")
 ad <- import("anndata")
 
 gene_sets <- gs_internal(
-  from_file = TRUE, min_size = 15,
+  from_file = FALSE, min_size = 15,
   max_size = 500
 ) # Gene sets must have at least `min_size` genes
 
@@ -62,6 +62,10 @@ if (path.expand("~") != "/home/shannc") {
 }
 dir.create(outdir_o)
 dir.create(storage)
+outdir_markers <- here(outdir_o, "markers")
+outdir_gs <- here(outdir_o, "gene_sets")
+dir.create(outdir_markers)
+dir.create(outdir_gs)
 
 adata <- adata_fn()
 adata$obs$tumor_type <- str_replace_all(adata$obs$tumor_type, "-", "_")
@@ -105,7 +109,7 @@ contrasts <- list(
 ADDED_COLS <- c("logFC", "logCPM", "F", "PValue", "FDR")
 
 do_de <- function(output) {
-  dge <- filterByExpr(dge, design = mm, min.count = 10, min.prop = 0.8)
+  ## dge <- filterByExpr(dge, design = mm, min.count = 10, min.prop = 0.8)
   dge <- normLibSizes(dge)
   dge <- estimateDisp(dge, design = mm, robust = TRUE)
 
@@ -134,6 +138,7 @@ do_de <- function(output) {
       select(-any_of(unwanted_cols))
   }, simplify = FALSE, USE.NAMES = TRUE)
   saveRDS(dge, output)
+  ## TODO: [2025-04-24 Thu] filter out some tags to enable sorting
   lmap(top_tags, \(x) write_tsv(x[[1]], file = here(outdir_o, glue("{names(x)}_top_tags.tsv"))))
   dge
 }
@@ -145,6 +150,14 @@ if (file.exists(dge_file)) {
   }, simplify = FALSE, USE.NAMES = TRUE)
 }
 dge <- read_existing(dge_file, do_de, readRDS)
+tagdir <- here(outdir_o, "top_tags_sorted")
+dir.create(tagdir)
+lmap(top_tags, \(x) {
+  filter(x[[1]], PValue <= 0.1) |>
+    arrange(desc(abs(logFC))) |>
+    dplyr::slice_head(n = 2000) |>
+    write_tsv(here(tagdir, glue("{names(x)}_top_tags.tsv")))
+})
 
 
 ## * Plots
@@ -210,14 +223,22 @@ lfc_filter <- function(tag_tb) {
 ## gene_sets
 min_nonzero_percent <- 70
 min_sample_percent <- 70
+sample_stype_map <- rownames_to_column(dge$samples, var = "sample") |>
+  select(sample, Sample_Type, Project_ID)
 if (validate) {
-  gene_sets <- filter_gene_sets(
-    gene_sets = gene_sets, counts = adj_counts,
-    min_nonzero_percent = min_nonzero_percent, min_sample_percent = min_sample_percent
-  )
-  gs_meta |>
-    filter(set_name %in% names(gene_sets)) |>
-    write_tsv(here(outdir_o, "tested_gene_sets.tsv"))
+  ## gene_sets <- filter_gene_sets(
+  ##   gene_sets = gene_sets, counts = adj_counts,
+  ##   min_nonzero_percent = min_nonzero_percent, min_sample_percent = min_sample_percent
+  ## )
+  ## [2025-04-24 Thu] Nothing passed...
+  ## gs_meta |>
+  ##   filter(set_name %in% names(gene_sets)) |>
+  ##   write_tsv(here(outdir_o, "tested_gene_sets.tsv"))
+
+  gs_stats <- filter_gene_sets(counts = adj_counts, gene_sets = gene_sets, stats_only = TRUE)
+  agg_gene_set_fractions(gs_stats, sample_stype_map, c("Sample_Type", "Project_ID")) |>
+    write_tsv(here(outdir_o, "gene_set_nonzero_percent.tsv"))
+  gs_stats |> write_tsv(here(outdir_o, "gene_set_counts.tsv"))
 }
 
 ## ** ORA
@@ -277,14 +298,13 @@ do_gsa <- function(outfile, gene_sets, metadata) {
     nperm = gsa_nperm
   ) |>
     as.data.frame() |>
-    rownames_to_column(var = "set_name") |>
-    inner_join(metadata, by = join_by(set_name))
+    rownames_to_column(var = "set_name")
   write_tsv(gsa, outfile)
   gsa
 }
 
 if (enrichment_analyses$gsa) {
-  gsa_out <- here(outdir_o, "gsa_gene_sets.tsv")
+  gsa_out <- here(outdir_gs, "gsa.tsv")
   gsa <- read_existing(gsa_out, \(x) do_gsa(x, gene_sets, gs_meta), read_tsv)
 }
 
@@ -297,15 +317,11 @@ if (enrichment_analyses$plage) {
     contrasts = contrasts,
     model_matrix = mm
   )
-  plage$de <- plage$de |>
-    rownames_to_column(var = "set_name") |>
-    inner_join(gs_meta, by = join_by(set_name)) |>
-    as_tibble()
-  write_tsv(plage$de, here(outdir_o, "plage_decideTests.tsv"))
+  plage$de <- plage$de |> rownames_to_column(var = "set_name")
+  write_tsv(plage$de, here(outdir_gs, "plage_decideTests.tsv"))
   lapply(names(plage$topTreats), \(x) {
-    df <- plage$topTreats[[x]]
-    inner_join(rownames_to_column(df, var = "set_name"), gs_meta, by = join_by(set_name)) |>
-      write_tsv(here(outdir_o, glue("plage_topTreat_{x}.tsv")))
+    df <- plage$topTreats[[x]] |> rownames_to_column(var = "set_name")
+    write_tsv(df, here(outdir_gs, glue("plage_topTreat_{x}.tsv")))
   })
 }
 
@@ -343,13 +359,27 @@ marker_meta <- markers_meta_internal() |>
   group_by(set_name) |>
   summarise(size = n(), source = dplyr::first(source))
 
-marker_sets <- filter_gene_sets(marker_sets,
-  counts = adj_counts, min_nonzero_percent = min_nonzero_percent,
-  min_sample_percent = min_sample_percent
-)
-marker_meta |>
-  filter(set_name %in% names(marker_sets)) |>
-  write_tsv(here(outdir_o, "tested_marker_sets.tsv"))
+## marker_sets <- filter_gene_sets(marker_sets,
+##   counts = adj_counts, min_nonzero_percent = min_nonzero_percent,
+##   min_sample_percent = min_sample_percent
+## )
+## marker_meta |>
+##   filter(set_name %in% names(marker_sets)) |>
+##   write_tsv(here(outdir_o, "tested_marker_sets.tsv"))
 
-gsa_marker_file <- here(outdir_o, "gsa_markers.tsv")
+marker_stats <- filter_gene_sets(counts = adj_counts, gene_sets = marker_sets, stats_only = TRUE)
+
+
+marker_agg <- agg_gene_set_fractions(marker_stats, sample_stype_map, c("Sample_Type", "Project_ID"))
+marker_agg |> write_tsv(here(outdir_o, "marker_nonzero_percent.tsv"))
+marker_stats |> write_tsv(here(outdir_o, "marker_counts.tsv"))
+
+gsa_marker_file <- here(outdir_markers, "gsa_markers.tsv")
 read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets, marker_meta), read_tsv)
+
+if (!file.exists(here(outdir_markers, "fgsea_sample_type.tsv"))) {
+  fgsea_markers <- fgsea_helper(marker_sets, alpha = 0.05)
+  lmap(fgsea_markers, \(x)  {
+    write_tsv(x[[1]], here(outdir_markers, glue("fgsea_{names(x)}")))
+  })
+}
