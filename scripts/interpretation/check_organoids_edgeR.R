@@ -30,7 +30,7 @@ get_tags <- function(qlf, count) {
   topTags(qlf, n = count, sort.by = "PValue") |>
     as.data.frame() |>
     as_tibble() |>
-    relocate(all_of(ADDED_COLS), .after = "GENEID")
+    relocate(any_of(ADDED_COLS), .after = "GENEID")
 }
 
 ## * Setup
@@ -106,8 +106,9 @@ contrasts <- list(
 # For contrast 1, positive LFC are genes that are up in organoid over primary overall
 # For contrasts 2-5, positive LFC are genes that are up in
 #   organoid over primary in that ttype
-ADDED_COLS <- c("logFC", "logCPM", "F", "PValue", "FDR")
+ADDED_COLS <- c("logFC", "logCPM", "F", "PValue", "FDR", "unshrunk.logFC")
 
+de_summary_file <- here(outdir_o, "de_summary.tsv")
 do_de <- function(output) {
   ## dge <- filterByExpr(dge, design = mm, min.count = 10, min.prop = 0.8)
   dge <- normLibSizes(dge)
@@ -121,25 +122,21 @@ do_de <- function(output) {
   )
 
   fit <- glmQLFit(dge, mm, robust = TRUE)
+  decided <<- list()
   top_tags <<- sapply(names(contrasts), \(n) {
-    qlf <- glmQLFTest(fit, contrast = contrasts[[n]])
-    ## plotMD(qlf)
+    qlf <- glmTreat(fit, contrast = contrasts[[n]], lfc = log2(1.2))
     message(glue("Comparison: {qlf$comparison}"))
-    get_tags(qlf, count = nrow(dge)) |>
-      ## rename_with(\(cols) {
-      ##   map_chr(cols, \(x) {
-      ##     if (x %in% added_cols) {
-      ##       glue("{n}_{x}")
-      ##     } else {
-      ##       x
-      ##     }
-      ##   })
-      ## }) |>
-      select(-any_of(unwanted_cols))
+    dec <<- summary(decideTests(qlf, p.value = 0.05))
+    decided[[n]] <<- as_tibble(as.integer(dec)) |>
+      rename(!!as.symbol(n) := value) |>
+      mutate(direction = rownames(dec))
+    get_tags(qlf, count = nrow(dge)) |> select(-any_of(unwanted_cols))
   }, simplify = FALSE, USE.NAMES = TRUE)
   saveRDS(dge, output)
-  ## TODO: [2025-04-24 Thu] filter out some tags to enable sorting
   suppressMessages(lmap(top_tags, \(x) write_tsv(x[[1]], file = here(outdir_o, glue("{names(x)}_top_tags.tsv")))))
+  purrr::reduce(decided, \(x, y) inner_join(x, y, by = join_by(direction))) |>
+    relocate(direction, .before = everything()) |>
+    write_tsv(de_summary_file)
   dge
 }
 
@@ -165,6 +162,7 @@ suppressMessages({
 ## * Plots
 
 adj_counts <- edgeR::cpm(dge)
+log_adj_counts <- edgeR::cpm(dge, log = TRUE)
 rownames(adj_counts) <- dge$genes$GENEID
 
 plot_spec <- sapply(names(top_tags), \(n) {
