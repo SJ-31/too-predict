@@ -567,6 +567,8 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
 
 #' Keep only gene sets that have >= `min_nonzero_percent` of nonzero genes
 #' in >= `min_sample_percent` of samples
+#' if stats_only, returns a sample x gene_set dataframe containing the fraction
+#'    of nonzero genes in that gene set for that sample
 filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
                              min_sample_percent = 70, stats_only = FALSE) {
   set_tb <- tibble(name = names(gene_sets), id = gene_sets) |>
@@ -586,7 +588,9 @@ filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
   # sample x pathway matrix where values are the count of nonzero genes for that pathway
   # in that sample
   totals <- colSums(set_tb) + n_missing
-  set_percent <- apply(set_sums, 1, \(r) r / totals) %>% replace(is.na(.), 0)
+  set_percent <- apply(set_sums, 1, \(r) r / totals) |>
+    t() %>%
+    replace(is.na(.), 0)
   pass_nonzero_thresh <- set_percent >= min_nonzero_percent
   pass_sample_thresh <- (colSums(pass_nonzero_thresh) / nrow(set_percent)) >= min_sample_percent
   stopifnot("This shouldn't exceed 1!" = max(set_percent) <= 1)
