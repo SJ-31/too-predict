@@ -205,7 +205,7 @@ gs_meta <- read_tsv(gs_meta_internal()) |> mutate(set_name = paste0(source, ":",
 # Want to know how organoid vs. primary differ on the basis of gene sets
 enrichment_analyses <- list(
   ora = FALSE,
-  fgsea = FALSE,
+  fgsea = TRUE,
   gsa = TRUE,
   plage = TRUE
 )
@@ -267,20 +267,28 @@ if (enrichment_analyses$ora) {
 }
 
 
-## ** Gene set enrichment analysis
+## ** Gene set enrichment analysis (FGSEA)
 # Operates on pre-ranked genes i.e. uses results from edgeR above
 
-if (enrichment_analyses$fgsea) {
+fgsea_helper <- function(gene_sets, alpha = 0.05) {
   library(fgsea)
-
-  fgsea_alpha <- 0.05
   fgsea_results <- sapply(names(top_tags), \(n) {
     tb <- top_tags[[n]]
     sorted <- lfc_filter(tb) |>
       arrange(logFC)
     ranked <- setNames(sorted$logFC, sorted$GENEID)
-    fgsea(pathways = gene_sets, stats = ranked) |> filter(padj <= fgsea_alpha)
+    fgsea(pathways = gene_sets, stats = ranked) |>
+      filter(padj <= alpha) |>
+      mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";")))
   }, simplify = FALSE, USE.NAMES = TRUE)
+  fgsea_results
+}
+
+if (enrichment_analyses$fgsea && !file.exists(here(outdir_gs, "fgsea_sample_type.tsv"))) {
+  fgsea_gene_sets <- fgsea_helper(gene_sets = gene_sets, alpha = 0.05)
+  lmap(fgsea_gene_sets, \(x)  {
+    write_tsv(x[[1]], here(outdir_gs, glue("fgsea_{names(x)}")))
+  })
 }
 
 # Methods below use raw expression data
