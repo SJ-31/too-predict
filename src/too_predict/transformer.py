@@ -9,9 +9,14 @@ import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
-import too_predict.utils as ut
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
-from too_predict.utils import np_from_r, np_to_r, r_cleanup
+from too_predict.utils import (
+    add_gc_content,
+    counts_into_r,
+    np_from_r,
+    np_to_r,
+    r_cleanup,
+)
 
 IMPLEMENTED_TRANSFORMATION = {
     "clr",
@@ -19,6 +24,7 @@ IMPLEMENTED_TRANSFORMATION = {
     "alr",
     "tpm",
     "fpkm",
+    "cqn",
     "robust_clr",
     "none",
     "qsmooth",
@@ -169,13 +175,48 @@ class Transformer:
         return alr_adjusted
 
     @r_cleanup
-    def tmm(self) -> np.ndarray:
+    def cqn(
+        self,
+        length_col: str = "SEQLENGTH",
+        gc_col: str | None = None,
+        size_factors: str | None = None,
+    ):
+        # [2025-04-25 Fri]
+        # BUG: could not find function "mclustBIC"
+        na_lengths = self.adata.var[length_col].isna()
+        print(f"WARNING {na_lengths.sum()} genes have no length data! Removing...")
+        self.adata = self.adata[:, ~na_lengths]
+        self.counts = self.counts[:, ~na_lengths]
+        ro.globalenv["lengths"] = ro.IntVector(self.adata.var[length_col])
+        if gc_col is None:
+            add_gc_content(self.adata, id_col="GENEID")
+            gc_col = "gc_content"
+        na_gc = self.adata.var[gc_col].isna()
+        if any(na_gc):
+            print(f"WARNING {na_gc.sum()} genes have no GC content data! Removing...")
+            self.adata = self.adata[:, ~na_gc]
+            self.counts = self.counts[:, ~na_gc]
+        ro.globalenv["gc_content"] = ro.FloatVector(self.adata.var[gc_col])
+        if size_factors is None:
+            ro.r("size_factors <- NULL")
+        else:
+            ro.globalenv["size_factors"] = ro.FloatVector(self.adata.var[size_factors])
+
+        counts_into_r(self.adata, counts=self.counts)
+        ro.r("norm <- cqn::cqn(counts, gc_content, lengths)")
+        return np.transpose(np_from_r(ro.globalenv["norm"]))
+
+    @r_cleanup
+    def tmm(self, log=True) -> np.ndarray:
         np_cv_rules = default_converter + numpy2ri.converter
         with np_cv_rules.context():
             ro.globalenv["mat"] = np.transpose(self.counts)
         ro.r("dge <- edgeR::DGEList(mat)")
         ro.r("edgeR::normLibSizes(dge)")
-        ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
+        if log:
+            ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
+        else:
+            ro.r("counts <- edgeR::cpm(dge, log = FALSE)")
         return np.transpose(np.asarray(ro.r("counts")))
 
     @r_cleanup
@@ -379,6 +420,8 @@ class Transformer:
                 case "robust_clr":
                     self.kwargs.update({"robust": True})
                     normalized = self.clr(**self.kwargs)
+                case "cqn":
+                    normalized = self.cqn(**self.kwargs)
                 case "clr":
                     normalized = self.clr(**self.kwargs)
                 case "tmm":
