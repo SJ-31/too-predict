@@ -3,15 +3,18 @@
 from pathlib import Path
 
 import anndata as ad
+import gseapy as gp
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
+import yaml
 from scipy import sparse
 
 import too_predict.go_utils as gt
 import too_predict.utils as ut
+from too_predict.transformer import Transformer
 
-IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage"}
+IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage", "gsva"}
 
 
 class Recoder:
@@ -26,19 +29,49 @@ class Recoder:
         ut.counts_into_r(self.adata, self.counts)
 
     @ut.r_cleanup
-    def _plage(self, reference_file: Path, metadata: Path | pd.DataFrame) -> ad.AnnData:
+    def _plage(
+        self, reference: Path | dict, metadata: Path | pd.DataFrame | None = None
+    ) -> ad.AnnData:
         if isinstance(metadata, Path):
             metadata = pd.read_csv(metadata, sep="\t")
         ro.r("library(GSVA)")
         self._counts_into_r()
-        ro.r(f"gs <- yaml::read_yaml('{str(reference_file.absolute())}')")
+        if isinstance(reference, Path):
+            ro.r(f"gs <- yaml::read_yaml('{str(reference.absolute())}')")
+        else:
+            ro.globalenv["gs"] = ro.ListVector(reference)
         ro.r("params <- plageParam(exprData = counts, geneSets = gs)")
         ro.r("plage <- gsva(params)")
         vals: np.ndarray = np.transpose(ut.np_from_r(ro.globalenv["plage"]))
-        var = pd.DataFrame(index=ro.r("rownames(plage)")).merge(
-            metadata, left_index=True, right_index=True, how="left"
-        )
+        var = pd.DataFrame(index=ro.r("rownames(plage)"))
+        if metadata is not None:
+            var = var.merge(metadata, left_index=True, right_index=True, how="left")
         return ad.AnnData(X=vals, var=var, obs=self.adata.obs)
+
+    def _gsva(
+        self,
+        reference: Path | dict,
+        metadata: Path | pd.DataFrame | None = None,
+        **kwargs,
+    ) -> ad.AnnData:
+        if isinstance(metadata, Path):
+            metadata = pd.read_csv(metadata, sep="\t")
+        if isinstance(reference, Path):
+            with open(reference, "r") as f:
+                reference = yaml.safe_load(f)
+        for_gp = pd.DataFrame(
+            np.transpose(self.counts),
+            index=self.adata.var.index,
+            columns=self.adata.obs.index,
+        )
+        if not kwargs:
+            kwargs = {"kcdf": "Gaussian", "mx_diff": True}
+        result = gp.gsva(for_gp, gene_sets=reference, **kwargs)
+        vals = result.res2d.pivot(index="Name", columns="Term", values="ES")
+        var = pd.DataFrame(index=vals.columns)
+        if metadata is not None:
+            var = var.merge(metadata, left_index=True, right_index=True, how="left")
+        return ad.AnnData(X=vals.values.astype(np.float64), var=var, obs=self.adata.obs)
 
     @ut.r_cleanup
     def _bisque(self, reference_file: Path, mode: str = "marker") -> ad.AnnData:
@@ -67,7 +100,13 @@ class Recoder:
         return result
 
     def fit(self, adata: ad.AnnData) -> None:
-        self.adata = adata.copy()
+        if self.method == "gsva":
+            # [2025-04-25 Fri] Original gsva uses cqn but this is too slow
+            # use tmm instead
+            T = Transformer("tmm", log=False, inplace=False, impute_fn=None)
+            self.adata = T.fit_transform(adata)
+        else:
+            self.adata = adata.copy()
         self.counts = adata.X if self.layer is None else adata.layers[self.layer]
         self.was_sparse = sparse.issparse(self.counts)
         self.counts = self.counts.toarray() if self.was_sparse else self.counts
@@ -82,6 +121,8 @@ class Recoder:
                 recoded = self._bisque(mode="marker", **self.kwargs)
             case "plage":
                 recoded = self._plage(**self.kwargs)
+            case "gsva":
+                recoded = self._gsva(**self.kwargs)
             case _:
                 raise ValueError()
         if self.was_sparse:
