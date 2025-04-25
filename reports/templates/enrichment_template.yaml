@@ -4,8 +4,12 @@ __variables__:
   meta:
   gsa: True
   plage: True
+  fgsea: True
+  sig_threshold: 0.01
   contrasts:
     foobar: contrast_name
+  fgsea_only:
+  plage_only:
 
 name: ?rname
 datasets:
@@ -14,13 +18,24 @@ datasets:
     separator: "\t"
   ?if gsa:
     gsa:
-      path: ?f"{dir}/gsa_gene_sets.tsv"
+      path: ?f"{dir}/gsa.tsv"
       separator: "\t"
       links:
         set details:
           column: set_name
           table-row: Metadata/set_name
           optional: true
+  ?if fgsea:
+    ?for item in contrasts:
+      ?if fgsea_only and item in fgsea_only:
+        ?f"fgsea_{item}":
+          path: ?f"{dir}/fgsea_{item}.tsv"
+          separator: "\t"
+          links:
+            set details:
+              column: pathway
+              table-row: Metadata/set_name
+              optional: true
   ?if plage:
     plage_decideTests:
       path: ?f"{dir}/plage_decideTests.tsv"
@@ -31,14 +46,15 @@ datasets:
           table-row: Metadata/set_name
           optional: true
     ?for item in contrasts:
-      ?f"plage_toptreat_{item}":
-        path: ?f"{dir}/plage_topTreat_{item}.tsv"
-        separator: "\t"
-        links:
-          set details:
-            column: set_name
-            table-row: Metadata/set_name
-            optional: true
+      if plage_only and item in plage_only:
+        ?f"plage_toptreat_{item}":
+          path: ?f"{dir}/plage_topTreat_{item}.tsv"
+          separator: "\t"
+          links:
+            set details:
+              column: set_name
+              table-row: Metadata/set_name
+              optional: true
 views:
   Metadata:
     dataset: metadata
@@ -66,18 +82,42 @@ views:
                     - 1
 
     ?for key, value in contrasts.items():
-      ?f"PLAGE topTreat {key}":
-        dataset: ?f"plage_toptreat_{key}"
-        desc: ?f"topTreat results for contrast {value}"
-        render-table:
-          columns:
-            P.Value:
-              spell:
-                url: v1.3.0/stats/p-value
-                with:
-                  significance_threshold: 0.01
-            adj.P.Val:
-              spell:
-                url: v1.3.0/stats/p-value
-                with:
-                  significance_threshold: 0.01
+      ?if plage_only and key in plage_only:
+        ?f"PLAGE topTreat {key}":
+          dataset: ?f"plage_toptreat_{key}"
+          desc: ?f"topTreat results for contrast {value}"
+          render-table:
+            columns:
+              P.Value:
+                spell:
+                  url: v1.3.0/stats/p-value
+                  with:
+                    significance_threshold: ?sig_threshold
+              adj.P.Val:
+                spell:
+                  url: v1.3.0/stats/p-value
+                  with:
+                    significance_threshold: ?sig_threshold
+    ?if fgsea:
+      ?for key, value in contrasts.items():
+        ?if fgsea_only and key in fgsea_only:
+          ?f"FGSEA {key}":
+            dataset: ?f"fgsea_{key}"
+            desc: ?f"FGSEA results for DE genes identified with contrast {value}"
+            render-table:
+              columns:
+                pval:
+                  spell:
+                    url: v1.3.0/stats/p-value
+                    with:
+                      significance_threshold: ?sig_threshold
+                padj:
+                  spell:
+                    url: v1.3.0/stats/p-value
+                    with:
+                      significance_threshold: ?sig_threshold
+                leadingEdge:
+                  plot:
+                    pills:
+                      separator: ";"
+                      ellipsis: 10
