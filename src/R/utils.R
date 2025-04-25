@@ -602,7 +602,32 @@ filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
 }
 
 
-bisque_marker_wrapper <- function(counts, sample_names, var_names, markers) {
+#' Helper function for aggregating gene set fractions from the
+#'  `filter_gene_sets` stats mode
+#'
+#' @description
+#' returns a gene_set x agg_cols dataframe. The columns are all the unique elements
+#'    in each of agg_cols
+#' @param agg_cols Columns of metadata with which to aggregate the samples by
+agg_gene_set_fractions <- function(set_stats, metadata, agg_cols, join_on = "sample",
+                                   agg_fn = mean) {
+  w_meta <- inner_join(set_stats, metadata, by = join_by(!!as.symbol(join_on)))
+  lapply(agg_cols, \(col) {
+    other_cols <- colnames(metadata)
+    other_cols <- other_cols[other_cols != col]
+    w_meta |>
+      select(-all_of(other_cols)) |>
+      group_by(!!as.symbol(col)) |>
+      summarise(across(where(is.numeric), agg_fn)) |>
+      pivot_longer(cols = -!!as.symbol(col)) |>
+      pivot_wider(names_from = !!as.symbol(col), values_from = value) |>
+      dplyr::rename_with(\(c) paste0(col, "-", c), .cols = -name)
+  }) |>
+    purrr::reduce(\(x, y) inner_join(x, y, by = join_by(name)))
+}
+
+
+bisque_marker_wrapper <- function(counts, markers) {
   library(tidyverse)
   if (is.character(markers)) {
     markers <- yaml::read_yaml(markers)
