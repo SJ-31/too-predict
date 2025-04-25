@@ -270,22 +270,31 @@ if (enrichment_analyses$ora) {
 ## ** Gene set enrichment analysis (FGSEA)
 # Operates on pre-ranked genes i.e. uses results from edgeR above
 
-fgsea_helper <- function(gene_sets, alpha = 0.05) {
+fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir) {
   library(fgsea)
   fgsea_results <- sapply(names(top_tags), \(n) {
     tb <- top_tags[[n]]
-    sorted <- lfc_filter(tb) |>
-      arrange(logFC)
+    sorted <- lfc_filter(tb) |> arrange(logFC)
+    warning(glue("There are {sum(is.na(sorted$GENEID))} genes with missing ENSEMBL ids!"))
+    sorted <- filter(sorted, !is.na(GENEID))
     ranked <- setNames(sorted$logFC, sorted$GENEID)
-    fgsea(pathways = gene_sets, stats = ranked) |>
-      filter(padj <= alpha) |>
-      mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";")))
+    result <- fgsea(pathways = gene_sets, stats = ranked)
+    result <- result[result$padj <= alpha, ]
+
+    lapply(result$pathway, \(pwy) {
+      plot <- plotEnrichment(pathway = gene_sets[[pwy]], stats = ranked) + labs(title = pwy)
+      name <- str_replace_all(pwy, " ", "_") |> str_replace_all("/", "-")
+      ggsave(here(plotdir, glue("{name}_enrichment.png")), plot, height = 8, width = 8)
+    })
+    fgsea_tb <- result |> mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";")))
+    fgsea_tb
   }, simplify = FALSE, USE.NAMES = TRUE)
   fgsea_results
 }
 
 if (enrichment_analyses$fgsea && !file.exists(here(outdir_gs, "fgsea_sample_type.tsv"))) {
-  fgsea_gene_sets <- fgsea_helper(gene_sets = gene_sets, alpha = 0.05)
+  dir.create(here(outdir_gs, "fgsea_plots"))
+  fgsea_gene_sets <- fgsea_helper(gene_sets = gene_sets, alpha = 0.05, plotdir = here(outdir_gs, "fgsea_plots"))
   suppressMessages({
     lmap(fgsea_gene_sets, \(x)  {
       write_tsv(x[[1]], here(outdir_gs, glue("fgsea_{names(x)}.tsv")))
@@ -377,6 +386,7 @@ marker_meta <- markers_meta_internal() |>
 ##   filter(set_name %in% names(marker_sets)) |>
 ##   write_tsv(here(outdir_o, "tested_marker_sets.tsv"))
 
+
 marker_stats <- filter_gene_sets(counts = adj_counts, gene_sets = marker_sets, stats_only = TRUE)
 
 
@@ -388,7 +398,8 @@ gsa_marker_file <- here(outdir_markers, "gsa_markers.tsv")
 read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets, marker_meta), read_tsv)
 
 if (!file.exists(here(outdir_markers, "fgsea_sample_type.tsv"))) {
-  fgsea_markers <- fgsea_helper(marker_sets, alpha = 0.05)
+  dir.create(here(outdir_markers, "fgsea_plots"))
+  fgsea_markers <- fgsea_helper(marker_sets, alpha = 0.05, plotdir = here(outdir_markers, "fgsea_plots"))
   suppressMessages({
     lmap(fgsea_markers, \(x)  {
       write_tsv(x[[1]], here(outdir_markers, glue("fgsea_{names(x)}.tsv")))
