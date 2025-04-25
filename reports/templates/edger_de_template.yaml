@@ -2,6 +2,7 @@ __variables__:
   dir: foobar
   rname: Report name
   meta:
+  summary:
   contrasts:
     foobar: contrast_name
 
@@ -9,6 +10,9 @@ name: ?rname
 datasets:
   metadata:
     path: ?meta
+    separator: "\t"
+  summary:
+    path: ?summary
     separator: "\t"
   ?for item in contrasts:
     ?f"toptags_{item}":
@@ -35,6 +39,9 @@ views:
               url: "https://www.genenames.org/tools/search/#!/?query={value}"
         GENEBIOTYPE:
           ellipsis: 10
+  LFC summary:
+    dataset: summary
+    desc: "Count of statistically significant genes in each contrast"
 
   ?for key, value in contrasts.items():
     ?f"{key} topTags":
