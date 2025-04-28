@@ -6,6 +6,7 @@ __variables__:
   gsa: True
   plage: True
   fgsea: True
+  enrichment_summary:
   sig_threshold: 0.01
   contrasts:
     foobar: contrast_name
@@ -20,6 +21,10 @@ datasets:
   gs_nonzero:
     path: ?gs_nonzero
     separator: "\t"
+  ?if enrichment_summary is not None:
+    en_summary:
+      path: ?enrichment_summary
+      separator: "\t"
   ?if gsa:
     gsa:
       path: ?f"{dir}/gsa.tsv"
@@ -91,6 +96,10 @@ views:
     GSA:
       dataset: gsa
       desc: "Results from Gene Set Analysis"
+  ?if enrichment_summary is not None:
+    Category counts:
+      dataset: en_summary
+      desc: "Counts of statistically significant gene sets in each category for each test"
   ?if plage:
     PLAGE decideTests:
       dataset: plage_decideTests
