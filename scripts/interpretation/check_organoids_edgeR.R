@@ -12,6 +12,7 @@ suppressMessages({
   ExperimentHub::setExperimentHubOption("CACHE", here("data", ".ExperimentHubCache"))
 })
 
+
 ## --- CODE BLOCK ---
 
 tf <- import("too_predict.filter")
@@ -25,6 +26,7 @@ gene_sets <- gs_internal(
 ) # Gene sets must have at least `min_size` genes
 
 bp_param <- MulticoreParam(workers = multicoreWorkers())
+db <- ensembldb::EnsDb(here("data", "reference", "Homo_sapiens.GRCh38.113.sqlite"))
 
 get_tags <- function(qlf, count) {
   topTags(qlf, n = count, sort.by = "PValue") |>
@@ -176,7 +178,7 @@ plot_spec <- sapply(names(top_tags), \(n) {
 
 
 fdr_cutoff <- 0.01
-lapply(names(top_tags), \(x) {
+tmp <- lapply(names(top_tags), \(x) {
   cur_tags <- top_tags[[x]]
   vplot <- volcano_plot(cur_tags, fdr_cutoff = fdr_cutoff) + labs(title = x)
   vplot_name <- here(outdir_o, glue("{x}_volcano.png"))
@@ -270,7 +272,7 @@ if (enrichment_analyses$ora) {
 ## ** Gene set enrichment analysis (FGSEA)
 # Operates on pre-ranked genes i.e. uses results from edgeR above
 
-fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir) {
+fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir, meta = NULL) {
   library(fgsea)
   fgsea_results <- sapply(names(top_tags), \(n) {
     tb <- top_tags[[n]]
@@ -281,25 +283,55 @@ fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir) {
     result <- fgsea(pathways = gene_sets, stats = ranked)
     result <- result[result$padj <= alpha, ]
 
-    lapply(result$pathway, \(pwy) {
-      plot <- plotEnrichment(pathway = gene_sets[[pwy]], stats = ranked) + labs(title = pwy)
+    result$id <- result$pathway
+    converted <- fgsea_result2gseGO(result, id_col = "id")
+
+    en_res <- GseaVis::dfGO2gseaResult(
+      enrich.df = converted, geneList = sort(ranked, decreasing = TRUE),
+      own_termSet = gene_sets, setType = "ALL"
+    )
+
+    ndir <- here(plotdir, n)
+    dir.create(ndir)
+    tmp <- lapply(result$pathway, \(pwy) {
+      ## plot <- plotEnrichment(pathway = gene_sets[[pwy]], stats = ranked) + labs(title = pwy)
       name <- str_replace_all(pwy, " ", "_") |> str_replace_all("/", "-")
-      ggsave(here(plotdir, glue("{name}_enrichment.png")), plot, height = 8, width = 8)
+      png(
+        file = here(ndir, glue("{name}.png")), width = 8, height = 8, units = "in",
+        res = 1200
+      )
+      enrichplot::gseaplot2(en_res, geneSetID = pwy, title = pwy, pvalue_table = TRUE)
+      dev.off()
+      ## ggsave(here(ndir, glue("{name}_enrichment.png")), plot, height = 8, width = 8)
     })
     fgsea_tb <- result |> mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";")))
-    fgsea_tb
+    if (!is.null(meta)) {
+      fgsea_tb |> left_join(select(meta, set_name, category), by = join_by(x$pathway == y$set_name))
+    } else {
+      fgsea_tb
+    }
   }, simplify = FALSE, USE.NAMES = TRUE)
   fgsea_results
 }
 
 if (enrichment_analyses$fgsea && !file.exists(here(outdir_gs, "fgsea_sample_type.tsv"))) {
   dir.create(here(outdir_gs, "fgsea_plots"))
-  fgsea_gene_sets <- fgsea_helper(gene_sets = gene_sets, alpha = 0.05, plotdir = here(outdir_gs, "fgsea_plots"))
+  fgsea_gene_sets <- fgsea_helper(
+    gene_sets = gene_sets, alpha = 0.05, plotdir = here(outdir_gs, "fgsea_plots"),
+    gs_meta
+  )
   suppressMessages({
     lmap(fgsea_gene_sets, \(x)  {
       write_tsv(x[[1]], here(outdir_gs, glue("fgsea_{names(x)}.tsv")))
     })
   })
+} else {
+  fgsea_gene_sets <- sapply(names(contrasts), \(x) {
+    read_tsv(here(outdir_gs, glue("fgsea_{x}.tsv")))
+  },
+  simplify = FALSE,
+  USE.NAMES = TRUE
+  )
 }
 
 # Methods below use raw expression data
@@ -307,7 +339,7 @@ if (enrichment_analyses$fgsea && !file.exists(here(outdir_gs, "fgsea_sample_type
 ## ** Gene Set Analysis
 
 # [2025-04-18 Fri] More direct way of getting the ora results
-do_gsa <- function(outfile, gene_sets, metadata) {
+do_gsa <- function(outfile, gene_sets, metadata = NULL) {
   library(GSALightning)
   dge$genes$sd_adj <- apply(adj_counts, 1, sd)
   to_gsa <- adj_counts[dge$genes$sd_adj != 0, ]
@@ -318,6 +350,9 @@ do_gsa <- function(outfile, gene_sets, metadata) {
   ) |>
     as.data.frame() |>
     rownames_to_column(var = "set_name")
+  if (!is.null(metadata)) {
+    gsa <- left_join(gsa, select(metadata, set_name, category), by = join_by(set_name))
+  }
   write_tsv(gsa, outfile)
   gsa
 }
@@ -329,7 +364,7 @@ if (enrichment_analyses$gsa) {
 
 ## ** PLAGE
 
-if (enrichment_analyses$plage) {
+if (enrichment_analyses$plage && !file.exists(here(outdir_gs, "plage_decideTests.tsv"))) {
   plage <- plage_wrapper(
     counts = adj_counts,
     gene_sets = gene_sets, fc_cutoff = 1.2,
@@ -343,6 +378,12 @@ if (enrichment_analyses$plage) {
       df <- plage$topTreats[[x]] |> rownames_to_column(var = "set_name")
       write_tsv(df, here(outdir_gs, glue("plage_topTreat_{x}.tsv")))
     })
+  })
+} else {
+  plage <- list()
+  plage$de <- read_tsv(here(outdir_gs, "plage_decideTests.tsv"))
+  plage$topTreats <- lapply(names(top_tags), \(x) {
+    read_tsv(here(outdir_gs, glue("plage_topTreat_{x}.tsv")))
   })
 }
 
@@ -367,16 +408,23 @@ if (enrichment_analyses$plage) {
 ## ** Final summary
 
 summarize_gs <- list()
-for (g in names(contrasts)) {
-  summarize_gs[[glue("FGSEA {g}")]] <- fgsea_gene_sets[[g]] |> rename(set_name = pathway)
-  summarize_gs[[glue("PLAGE {g}")]] <- plage$topTreats[[g]] |>
-    rownames_to_column(var = "set_name") |>
-    rename(padj = adj.P.Val)
-}
+summarize_gs[["FGSEA organoid up-regulated"]] <- fgsea_gene_sets$sample_type |>
+  filter(NES > 0) |>
+  rename(set_name = pathway)
+summarize_gs[["FGSEA primary up-regulated"]] <- fgsea_gene_sets$sample_type |>
+  filter(NES < 0) |>
+  rename(set_name = pathway)
 summarize_gs[["GSA organoid up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in organoid`) |>
   rename(padj = `p-value:up-regulated in organoid`)
 summarize_gs[["GSA primary up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in primary`) |>
   rename(padj = `p-value:up-regulated in primary`)
+
+summarize_gs <- sapply(names(summarize_gs), \(x) {
+  summarize_gs[[x]] |> select(-any_of(c("category")))
+}, simplify = FALSE, USE.NAMES = TRUE)
+
+
+lapply(summarize_gs, \(x) colnames(x))
 
 gs_summary <- enrichment_summary(gs_meta, summarize_gs)
 write_tsv(gs_summary, here(outdir_gs, "enrichment_summary.tsv"))
@@ -410,8 +458,8 @@ marker_agg <- agg_gene_set_fractions(marker_stats, sample_stype_map, c("Sample_T
 marker_agg |> write_tsv(here(outdir_o, "marker_nonzero_percent.tsv"))
 marker_stats |> write_tsv(here(outdir_o, "marker_counts.tsv"))
 
-gsa_marker_file <- here(outdir_markers, "gsa_markers.tsv")
-read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets, marker_meta), read_tsv)
+gsa_marker_file <- here(outdir_markers, "gsa.tsv")
+gsa_markers <- read_existing(gsa_marker_file, \(x) do_gsa(x, marker_sets), read_tsv)
 
 if (!file.exists(here(outdir_markers, "fgsea_sample_type.tsv"))) {
   dir.create(here(outdir_markers, "fgsea_plots"))
@@ -421,4 +469,31 @@ if (!file.exists(here(outdir_markers, "fgsea_sample_type.tsv"))) {
       write_tsv(x[[1]], here(outdir_markers, glue("fgsea_{names(x)}.tsv")))
     })
   })
+} else {
+  fgsea_markers <- sapply(names(top_tags), \(x) {
+    read_tsv(here(outdir_markers, glue("fgsea_{x}.tsv")))
+  },
+  simplify = FALSE, USE.NAMES = TRUE
+  )
 }
+
+## * More browser
+
+# Want to somehow plot the expression of statistically significant markers
+# from gsea and gsa
+library(ggVennDiagram)
+gsea_gsa_downreg_overlap <- function(fgsea, gsa, outdir) {
+  fgsea_vals <- fgsea |>
+    filter(NES < 0) |>
+    pluck("pathway")
+  gsa_vals <- gsa_markers |>
+    filter(`p-value:up-regulated in primary` <= 0.05) |>
+    pluck("set_name")
+  lst <- list(FGSEA = fgsea_vals, GSA = gsa_vals)
+  plot <- ggVennDiagram(lst) + scale_fill_paletteer_c("ggthemes::Orange") +
+    labs(title = "Overlap between statistically significant gene sets downregulated in organoids")
+  ggsave(here(outdir, "gsea_gsa_downreg_overlap.png"), plot)
+}
+
+gsea_gsa_downreg_overlap(fgsea_markers$sample_type, gsa_markers, outdir_markers)
+gsea_gsa_downreg_overlap(fgsea_gene_sets$sample_type, gsa, outdir_gs)

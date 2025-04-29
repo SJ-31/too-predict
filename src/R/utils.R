@@ -673,3 +673,27 @@ enrichment_summary <- function(metadata, enrichment_results,
     select(all_of(sorted_cols)) |>
     relocate(!!as.symbol(category_col), .before = dplyr::everything())
 }
+
+#' Convert fgsea result object into the format of gseGO as produced by clusterProfiler
+#'
+fgsea_result2gseGO <- function(fgsea, id_col = NULL, delim = "-") {
+  if (!is.null(id_col)) {
+    expanded <- fgsea |> rename(ID := !!as.symbol(id_col), Description = pathway)
+  } else {
+    expanded <- fgsea |>
+      tidyr::separate_wider_delim(pathway, delim = delim, names = c("ID", "Description"), too_many = "merge")
+  }
+  expanded <- rowwise(expanded) |> mutate(leadingEdge = paste0(unlist(leadingEdge), collapse = "/"))
+  enrich_df <- data.frame(
+    ID = expanded$ID,
+    Description = expanded$Description,
+    setSize = expanded$size,
+    enrichmentScore = expanded$ES,
+    NES = expanded$NES,
+    pvalue = expanded$pval,
+    p.adjust = expanded$padj,
+    core_enrichment = expanded$leadingEdge
+  )
+  rownames(enrich_df) <- enrich_df$ID
+  enrich_df
+}
