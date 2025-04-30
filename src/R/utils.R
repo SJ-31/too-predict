@@ -142,6 +142,21 @@ distinct_orderings <- function(tb, cols) {
     select(-tmp)
 }
 
+adata2seurat <- function(adata, layer = NULL, assay = "RNA") {
+  if (is.character(adata)) {
+    adata <- ad$read_h5ad(adata)
+  }
+  if (is.null(layer)) {
+    obj <- SeuratObject::CreateSeuratObject(counts = t(adata$X), assay = assay, meta.data = adata$obs)
+  } else {
+    obj <- SeuratObject::CreateSeuratObject(counts = t(adata$layers[[layer]]), assay = assay, meta.data = adata$obs)
+  }
+  rownames(obj) <- rownames(adata$var)
+  colnames(obj) <- rownames(adata$obs)
+  obj[[assay]][[]] <- adata$var
+  obj
+}
+
 adata2eset <- function(adata, layer = NULL, convert_na = FALSE) {
   if (!is.null(layer)) {
     counts <- t(as.matrix(adata$layers[[layer]]))
