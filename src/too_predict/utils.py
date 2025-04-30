@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
+import scipy.spatial.distance as spd
 import yaml
 from joblib import Parallel, delayed
 from pyhere import here
@@ -930,3 +931,31 @@ def pairwise_overlaps(
     series = df["intersection"]
     series.index = pd.MultiIndex.from_frame(df.loc[:, ["x", "y"]])
     return series
+
+
+def quantify_overlap(sets: dict, method: str) -> pd.Series:
+    if method == "overlap":
+        result = pairwise_overlaps(sets, do_parallel=True).sort_values(ascending=False)
+    else:
+        df = (
+            pd.DataFrame({"items": sets.values(), "values": True}, index=sets.keys())
+            .explode("items")
+            .pivot(columns="items")
+            .fillna(False)
+        )
+        df.columns = df.columns.droplevel()
+        dist = spd.squareform(spd.pdist(df, "jaccard"))
+        long = (
+            pd.DataFrame(dist, index=df.index, columns=df.index)
+            .melt(ignore_index=False)
+            .reset_index()
+        )
+        long.loc[:, "pair"] = long["index"].combine(
+            long["variable"], lambda x, y: {x, y}
+        )
+        long = long.drop_duplicates(subset="pair").drop("pair", axis=1)
+        result = pd.Series(
+            long["value"],
+            index=pd.MultiIndex.from_frame(long.loc[:, ["index", "variable"]]),
+        ).sort_values(ascending=False)
+    return result
