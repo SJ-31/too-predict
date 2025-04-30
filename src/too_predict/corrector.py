@@ -9,7 +9,13 @@ from scipy import sparse
 
 import too_predict.utils as ut
 
-IMPLEMENTED_CORRECTION = {"pycombat_seq", "removeBatchEffect", "combat_ref"}
+IMPLEMENTED_CORRECTION = {
+    "pycombat_seq",
+    "removeBatchEffect",
+    "combat_ref",
+    "combat_seq",
+}
+# Both combat_seq and combat_ref preserve integer count data
 
 # [2025-04-21 Mon] Try to save the batch correction factor used in train and
 # apply it to the test data
@@ -73,6 +79,43 @@ class Corrector:
             np.transpose(self.counts), batch=self.batch, covar_mod=covar_mod, **kwargs
         )
         return np.transpose(pyc)
+
+    @ut.r_cleanup
+    def _combat_seq(
+        self,
+        group: list[str] | str | None = None,
+        covar_mod: list[str] | str | None = None,
+        full_mod: bool = True,
+        shrink: bool = False,
+        shrink_disp: bool = False,
+        gene_subset_n: int | None = None,
+    ) -> np.ndarray:
+        ut.np_to_r(np.transpose(self.counts), "counts")
+        ro.globalenv["batch"] = ro.StrVector(self.batch)
+        ro.globalenv["full_mod"] = full_mod
+        ro.globalenv["shrink"] = shrink
+        ro.globalenv["shrink_disp"] = shrink_disp
+        if gene_subset_n is not None:
+            ro.globalenv["gene_subset_n"] = ro.IntVector(gene_subset_n)
+        else:
+            ro.r("gene_subset_n <- NULL")
+        if group is not None:
+            ro.globalenv["group"] = ro.StrVector(self._get_obs_col(group))
+        else:
+            ro.r("group <- NULL")
+        if covar_mod is not None:
+            ro.globalenv["covar_mod"] = ro.StrVector(self._get_obs_col(covar_mod))
+        else:
+            ro.r("covar_mod <- NULL")
+        ro.r("""
+        corrected <- sva::ComBat_seq(
+            counts, batch, group = group, covar_mod = covar_mod,
+            full_mod = full_mod, shrink = shrink, shrink.disp = shrink_disp,
+            gene.subset.n = gene_subset_n
+        )
+        """)
+        corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
+        return corrected
 
     @ut.r_cleanup
     def _combat_ref(
@@ -160,6 +203,8 @@ class Corrector:
                 # [2025-04-21 Mon] this is really slow
             case "combat_ref":
                 corrected = self._combat_ref(**self.kwargs)
+            case "combat_seq":
+                corrected = self._combat_seq(**self.kwargs)
             case "removeBatchEffect":
                 corrected = self._remove_batch_effect(**self.kwargs)
             case _:
