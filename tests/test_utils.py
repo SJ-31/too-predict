@@ -34,14 +34,18 @@ import too_predict.explanation as te
 import too_predict.filter as fil
 import too_predict.go_utils as gu
 import too_predict.model as tm
+import too_predict.recoder as rt
 import too_predict.utils as ut
-from joblib import Parallel, delayed
+from joblib import Parallel, delayed, parallel
 from pyhere import here
 from rpy2.robjects.packages import importr
 from scipy import sparse
 from scipy.stats import mode
+from sklearn.linear_model import LogisticRegressionCV
 from too_predict._train_utils import MODELS, read_model_spec
+from too_predict.corrector import Corrector
 from too_predict.plotting import plot_adata
+from too_predict.transformer import Transformer
 
 # #  --- CODE BLOCK ---
 #
@@ -73,39 +77,25 @@ def make_contingency(pair, pair_lookup, mat, current_label, label_vec):
 
 spc = MODELS["clr_random_forest_edger"]
 
-F, M, T, B, E = read_model_spec(spc)
+F, M, T, B, E, C = read_model_spec(spc)
+adata.obs.loc[:, "not_primary"] = adata.obs["Sample_Type"] != "primary"
 filtered = F.fit_transform(adata)
 transformed = T.fit_transform(filtered)
 
 transformed.obs["foo"] = "foo"
 train, test = ut.train_test_split_ad(transformed)
 
-ccs = fil.CompareSplits(train, test)
-# fig = ccs.plot_pca(
-#     plot_together=True,
-#     subset=("BRCA", "COAD_READ", "DLBC"),
-#     style=["Sample_Type", "usage"],
-# )
-# fig.show()
-
-
-# ccs.get_prototypes()
-# fig = ccs.plot_prototypes(plot_together=True)
-# fig.savefig(Path.home().joinpath("test.png"))
-#
-
-
+counts = adata.X.toarray()
 # #  --- CODE BLOCK ---
+# meta = ut.cell_markers_internal(meta=True)
+# reference_file = ut.cell_markers_internal(file_only=True)
+# reference = ut.cell_markers_internal()
 
-obs = pl.read_csv("/home/shannc/Bio_SDD/too-predict/data/training_data_obs.csv")
-wanted = ["tumor_type", "primary_site", "Sample_Type"]
-obs.select(
-    pl.col("Project_ID"),
-    pl.col("tumor_type"),
-    pl.col("primary_site"),
-    pl.col("Sample_Type"),
-).group_by("Project_ID").agg(n=pl.count(), *[pl.col(w).first() for w in wanted]).sort(
-    "Sample_Type"
-).filter(~pl.col("Project_ID").str.contains("CHULA")).write_csv(
-    Path.home().joinpath("Downloads").joinpath("external_sources_2025-4-10.csv")
-)
+
+# gs = ut.gs_internal()
+
+# over = ut.pairwise_overlaps(gs, do_parallel=True)
+
+# ut.write_pickle(over, ut.get_data("reference/gene_sets_overlap.pckl", must_exist=False))
+
+# over = ut.load_pickle(ut.get_data("reference/gene_sets_overlap.pckl", must_exist=False))

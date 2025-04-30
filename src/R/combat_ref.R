@@ -62,7 +62,7 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
     which(group == levels(group)[i])
   }) # list of samples in each group
   n_groups <- sapply(groups_ind, length)
-  if (full_mod & nlevels(group) > 1) {
+  if (full_mod && nlevels(group) > 1) {
     cat("Using full model in ComBat-seq.\n")
     mod <- model.matrix(~ 0 + group) # model.matrix(~0+group)
   } else {
@@ -82,9 +82,11 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
     }
     if (ncol(design) > (n_batch + 1)) {
       if ((qr(design[, -c(1:n_batch)])$rank < ncol(design[, -c(1:n_batch)]))) {
-        stop("The covariates are confounded! Please remove one or more of the covariates so the design is not confounded")
+        stop("The covariates are confounded!
+Please remove one or more of the covariates so the design is not confounded")
       } else {
-        stop("At least one covariate is confounded with batch! Please remove confounded covariates and rerun ComBat-Seq")
+        stop("At least one covariate is confounded with batch!
+Please remove confounded covariates and rerun ComBat-Seq")
       }
     }
   }
@@ -94,9 +96,9 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
   disp_common <- sapply(1:n_batch, function(i) {
     if ((n_batches[i] <= ncol(design) - ncol(batchmod) + 1) | qr(mod[batches_ind[[i]], ])$rank < ncol(mod)) {
       # not enough residual degree of freedom
-      return(estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = NULL, subset = nrow(counts)))
+      estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = NULL, subset = nrow(counts))
     } else {
-      return(estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = mod[batches_ind[[i]], ], subset = nrow(counts)))
+      estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = mod[batches_ind[[i]], ], subset = nrow(counts))
     }
   })
   for (i in 1:n_batch) {
@@ -142,17 +144,17 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
     genewise_disp_lst <- lapply(1:n_batch, function(j) {
       if ((n_batches[j] <= ncol(design) - ncol(batchmod) + 1) | qr(mod[batches_ind[[j]], ])$rank < ncol(mod)) {
         # not enough residual degrees of freedom - use the common dispersion
-        return(rep(disp_common[j], nrow(counts)))
+        rep(disp_common[j], nrow(counts))
       } else {
-        return(estimateGLMTagwiseDisp(counts[, batches_ind[[j]]],
+        estimateGLMTagwiseDisp(counts[, batches_ind[[j]]],
           design = mod[batches_ind[[j]], ],
           dispersion = disp_common[j], prior.df = 0
-        ))
+        )
       }
     })
   } else {
     genewise_disp_lst <- lapply(1:n_batch, function(j) {
-      return(rep(disp_common[j], nrow(counts)))
+      rep(disp_common[j], nrow(counts))
     })
   }
 
@@ -201,7 +203,7 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
 }
 
 vec2mat <- function(vec, n_times) {
-  return(matrix(rep(vec, n_times), ncol = n_times, byrow = FALSE))
+  matrix(rep(vec, n_times), ncol = n_times, byrow = FALSE)
 }
 
 

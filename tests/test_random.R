@@ -1,6 +1,5 @@
 suppressMessages({
   library(BiocParallel)
-  library(ALDEx2)
   library(edgeR)
   library(here)
   library(reticulate)
@@ -13,18 +12,37 @@ suppressMessages({
   source(here("src", "R", "plotting.R"))
 })
 
-pyutils <- new.env()
-fs_dir <- here("data", "output", "feature_selection")
-fs_lists <- list.files(here(fs_dir, "feature_lists"), full.names = TRUE)
-source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+tdir <- here("data", "tests")
+scrna <- here(tdir, "scr_ref")
+ut <- import("too_predict.utils")
+## ad <- import("anndata")
 
-adata <- pyutils$training_data_internal_test()
+adata <- ut$training_data_internal_test()
 
-adata <- adata[, 1:2000]
+group <- adata$obs$tumor_type
+batch <- adata$obs$Sample_Type == "organoid"
+full_mod <- TRUE
 
-counts <- adata$X %>%
-  as.matrix() |>
-  t()
+batchmod <- model.matrix(~batch) # colnames: levels(batch)
+# covariate
+group <- as.factor(group)
+n_group <- nlevels(group) # number of groups
+if (full_mod && nlevels(group) > 1) {
+  cat("Using full model in ComBat-seq.\n")
+  mod <- model.matrix(~ 0 + group) # model.matrix(~0+group)
+} else {
+  cat("Using null model in ComBat-seq.\n")
+  mod <- model.matrix(~1, data = as.data.frame(t(counts)))
+}
+
+
+## {
+##   ad$AnnData(X = t(res$bulk.prop))
+## }
+
+
+
+# [2025-04-23 Wed] Want only some top-level reactome pathways
 
 # [2025-04-09 Wed] Trying to use DESeq2 cause edgeR is acting up
 # but the contrast spec is worse here. Can't do what you did in edgeR which
