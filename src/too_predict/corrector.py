@@ -14,6 +14,7 @@ IMPLEMENTED_CORRECTION = {
     "removeBatchEffect",
     "combat_ref",
     "combat_seq",
+    "deseq2",
 }
 # Both combat_seq and combat_ref preserve integer count data
 
@@ -118,6 +119,24 @@ class Corrector:
         return corrected
 
     @ut.r_cleanup
+    def _deseq2(
+        self, group: list[str] | str | None = None, full: bool = True
+    ) -> np.ndarray:
+        ut.source("correction.R", in_r=True)
+        ut.counts_into_r(self.adata, counts=self.counts)
+        ro.globalenv["batch"] = ro.StrVector(self.batch)
+        ro.globalenv["full_mod"] = full
+        if group is not None:
+            ro.globalenv["group"] = ro.StrVector(self._get_obs_col(group))
+        else:
+            ro.r("group <- NULL")
+        ro.r("""
+        corrected <- deseq2_batch(counts, batch, group = group, full_mod = full_mod)
+        """)
+        corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
+        return corrected
+
+    @ut.r_cleanup
     def _combat_ref(
         self,
         group: list[str] | str | None = None,
@@ -205,6 +224,8 @@ class Corrector:
                 corrected = self._combat_ref(**self.kwargs)
             case "combat_seq":
                 corrected = self._combat_seq(**self.kwargs)
+            case "deseq2":
+                corrected = self._deseq2(**self.kwargs)
             case "removeBatchEffect":
                 corrected = self._remove_batch_effect(**self.kwargs)
             case _:
