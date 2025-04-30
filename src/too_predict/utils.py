@@ -916,7 +916,7 @@ def pairwise_overlaps(
     combs = itertools.combinations(sets.keys(), 2)
 
     def helper(x):
-        return np.array([x[0], x[1], len(sets[x[0]] | sets[x[1]])])
+        return np.array([x[0], x[1], len(sets[x[0]] & sets[x[1]])])
 
     if not do_parallel:
         overlaps = np.array(list(map(helper, combs)))
