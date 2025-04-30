@@ -22,7 +22,7 @@ from too_predict.utils import (
 
 REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 
-markers = cell_markers_internal()
+marker_file = cell_markers_internal(file_only=True)
 marker_meta = cell_markers_internal(meta=True)
 
 # * Models
@@ -258,6 +258,18 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-25 Fri] Way too slow
     },
+    "clr_xgb3_edger_combat_seq": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "c": {
+            "method": "combat_seq",
+            "batch": "is_organoid",
+            "covar_mod": "tumor_type",
+        },
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "s": False,
+    },
     "clr_xgb3_edger_rbe": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
@@ -268,6 +280,19 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,
+    },
+    "clr_xgb3_edger_deseq2": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {
+            "method": "deseq2",
+            "batch": "is_organoid",
+            "group": "tumor_type",
+        },
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "s": False,
     },
     "clr_xgb3_edger_combat_ref": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -279,6 +304,11 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,  # [2025-04-28 Mon] Now this works well, let's see if it'll work
+        # if you don't correct beforehand
+        # [2025-04-29 Tue] Okay looks like this only works if the batch correction is
+        # able to use information from the organoid samples, which constitutes
+        # data leakage
     },
     # ** Recodings
     "clr_xgboost_edger_GO": {
@@ -313,21 +343,25 @@ MODELS: dict = {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": rt.Recoder("go", id_col="GENEID", level=2),
+        "s": True,
     },
     "clr_xgboost_plage": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("plage", reference=markers, metadata=marker_meta),
+        "e": rt.Recoder("plage", reference=marker_file, metadata=marker_meta),
+        "s": True,
     },
     "clr_xgboost_gsva": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("gsva", reference=markers, metadata=marker_meta),
+        "e": rt.Recoder("gsva", reference=marker_file, metadata=marker_meta),
+        "s": True,  # [2025-04-29 Tue] Out of memory
     },
     "clr_xgboost_bisquemarker": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("bisquemarker", reference=markers),
+        "e": rt.Recoder("bisquemarker", reference=marker_file),
+        "s": True,
     },
 }
 
