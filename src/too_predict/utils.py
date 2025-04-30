@@ -16,6 +16,7 @@ import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
 import yaml
+from joblib import Parallel, delayed
 from pyhere import here
 from rpy2.rinterface_lib.sexp import (
     NACharacterType,
@@ -558,6 +559,16 @@ def find_confounded(x, y) -> list[tuple[str, str]]:
     return problem_pairs
 
 
+def gs_internal(meta: bool = False) -> dict | pd.DataFrame:
+    if not meta:
+        with open(get_data("reference/gene_sets_custom.yaml"), "r") as f:
+            data = yaml.safe_load(f)
+            return {
+                k: set(v) if not isinstance(v, str) else {v} for k, v in data.items()
+            }
+    return pd.read_csv(get_data("reference/gene_sets_custom_meta.tsv"), sep="\t")
+
+
 def cell_markers_internal(
     meta: bool = False, file_only=False
 ) -> pd.DataFrame | dict | Path:
@@ -875,13 +886,13 @@ class RankInterpreter:
         return requested
 
 
-def counts_into_r(adata: ad.AnnData, counts: np.ndarray | None) -> None:
+def counts_into_r(adata: ad.AnnData, counts: np.ndarray | None = None) -> None:
     if counts is not None:
         np_to_r(np.transpose(counts), r_symbol="counts")
     else:
         np_to_r(np.transpose(adata.X), r_symbol="counts")
-    ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index)
-    ro.globalenv["var_names"] = ro.StrVector(adata.var.index)
+    ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index.astype(str))
+    ro.globalenv["var_names"] = ro.StrVector(adata.var.index.astype(str))
     ro.r("rownames(counts) <- var_names")
     ro.r("colnames(counts) <- sample_names")
 
@@ -897,3 +908,25 @@ def write_tmp_toolkit(
     counts = np.transpose(counts)
     df = pd.DataFrame(counts, columns=list(sample_names), index=adata.var[symbol_col])
     df.to_csv(outfile, index_label="Entrez_Gene_Id", sep="\t")
+
+
+def pairwise_overlaps(
+    sets: dict, as_matrix: bool = False, do_parallel=False
+) -> pd.Series | pd.DataFrame:
+    combs = itertools.combinations(sets.keys(), 2)
+
+    def helper(x):
+        return np.array([x[0], x[1], len(sets[x[0]] | sets[x[1]])])
+
+    if not do_parallel:
+        overlaps = np.array(list(map(helper, combs)))
+    else:
+        par = Parallel()
+        overlaps = np.array(par(delayed(helper)(x) for x in combs))
+    df = pd.DataFrame(overlaps, columns=["x", "y", "intersection"])
+    df.loc[:, "intersection"] = df["intersection"].astype(np.int64)
+    if as_matrix:
+        return df
+    series = df["intersection"]
+    series.index = pd.MultiIndex.from_frame(df.loc[:, ["x", "y"]])
+    return series

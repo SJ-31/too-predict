@@ -1,4 +1,7 @@
 use core::f64;
+use std::cmp::Eq;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 
 use itertools::Itertools;
 use ndarray::{
@@ -7,7 +10,7 @@ use ndarray::{
 use ndarray_stats::CorrelationExt;
 use numpy::{IntoPyArray, PyArray, PyArray1, PyArray2, PyReadonlyArray2, ToPyArray};
 use pyo3::prelude::*;
-use pyo3::types::{PyModuleMethods, PyTuple, PyType};
+use pyo3::types::{PyDict, PyModuleMethods, PyTuple, PyType};
 use pyo3::{pyfunction, pymodule, types::PyModule, Bound, PyResult, Python};
 use pyo3::{wrap_pyfunction, IntoPy, PyAny, ToPyObject};
 use rayon::prelude::*;
@@ -24,7 +27,14 @@ fn _rust_helpers(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(phi_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(rho_matrix, m)?)?;
     m.add_function(wrap_pyfunction!(encode_pairs, m)?)?;
+    m.add_function(wrap_pyfunction!(pairwise_overlaps, m)?)?;
     Ok(())
+}
+
+#[pyfunction]
+fn pairwise_overlaps<'py>(py: Python<'py>, sets: Py<PyDict>, do_parallel: bool) -> Py<PyAny> {
+    let converted: HashMap<String, HashSet<String>> = sets.extract(py).unwrap();
+    pairwise_overlap_rs(&converted, do_parallel).into_py(py)
 }
 
 #[pyfunction]
@@ -181,8 +191,44 @@ fn encode_pairs_rs(arr: ArrayView2<f64>) -> (Array2<i64>, Vec<Vec<usize>>) {
     (result, combos)
 }
 
+fn overlap_helper<K, V>(query: &Vec<&K>, dict: &HashMap<K, HashSet<V>>) -> ((K, K), usize)
+where
+    K: Hash + Eq + Clone,
+    V: Hash + Eq,
+{
+    let x: &K = query[0];
+    let y: &K = query[1];
+    let xs: &HashSet<V> = dict.get(&x).unwrap();
+    let ys: &HashSet<V> = dict.get(&y).unwrap();
+    let inter: HashSet<&V> = xs.intersection(ys).collect();
+    ((x.clone(), y.clone()), inter.len())
+}
+
+fn pairwise_overlap_rs<K, V>(
+    sets: &HashMap<K, HashSet<V>>,
+    do_parallel: bool,
+) -> Vec<((K, K), usize)>
+where
+    K: Hash + Eq + Send + Sync + Clone,
+    V: Hash + Eq + Sync,
+{
+    let combinations: Vec<Vec<&K>> = sets.keys().into_iter().combinations(2).collect();
+    if !do_parallel {
+        combinations
+            .iter()
+            .map(|x| overlap_helper(x, sets))
+            .collect()
+    } else {
+        combinations
+            .into_par_iter()
+            .map(|x| overlap_helper(&x, sets))
+            .collect()
+    }
+}
+
 // * Tests
 
+#[ignore = "reason"]
 #[test]
 fn test_phi_prop() {
     use ndarray::arr2;
@@ -197,6 +243,62 @@ fn test_phi_prop() {
     let (encode2, val) = encode_pairs_rs(h.view());
     println!("foo");
     println!("{:?}", encode2);
+}
+
+#[test]
+fn test_pairwise_overlap() {
+    let mut map: HashMap<&str, HashSet<&str>> = HashMap::new();
+    map.insert(
+        "fruits",
+        ["apple", "banana", "orange", "grape"]
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "vegetables",
+        ["carrot", "broccoli", "spinach", "tomato"] // tomato overlaps
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "red_foods",
+        ["apple", "tomato", "strawberry", "cherry"] // overlaps: apple, tomato
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "green_foods",
+        ["spinach", "broccoli", "grape", "kiwi"] // overlaps: spinach, broccoli, grape
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "snacks",
+        ["banana", "apple", "chips", "nuts"] // overlaps: banana, apple
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "juices",
+        ["orange", "apple", "carrot", "grape"] // overlaps: orange, apple, carrot, grape
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    map.insert(
+        "smoothies",
+        ["banana", "strawberry", "spinach", "apple"] // overlaps: banana, strawberry, spinach, apple
+            .iter()
+            .map(|&s| s)
+            .collect(),
+    );
+    let overlaps = pairwise_overlap_rs(&map, false);
+    println!("{:?}", overlaps)
 }
 
 #[ignore]
