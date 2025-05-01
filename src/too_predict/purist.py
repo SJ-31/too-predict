@@ -29,12 +29,26 @@ def purist(adata: ad.AnnData, name_col: str = "GENENAME") -> pd.DataFrame:
     score: np.ndarray = np.zeros(shape=(9, n_samples))
     score[8, :] = intercept
     for i, (k, v) in enumerate(tsp2coeff.items()):
-        a_index = np.where(adata.var[name_col] == k[0])[0][0]
-        b_index = np.where(adata.var[name_col] == k[1])[0][0]
-        ranked = counts[:, a_index] > counts[:, b_index]
+        check_a, check_b = (
+            np.where(adata.var[name_col] == k[0]),
+            np.where(adata.var[name_col] == k[1]),
+        )
+        if len(check_a[0]) > 0:
+            a_index = check_a[0][0]
+            a_score = counts[:, a_index]
+        else:
+            print(f"WARNING: reference {k[0]} is missing in the data!")
+            a_score = 0
+        if len(check_b[0]) > 0:
+            b_index = check_b[0][0]
+            b_score = counts[:, b_index]
+        else:
+            print(f"WARNING: reference {k[1]} is missing in the data!")
+            b_score = 0
+
+        ranked = a_score > b_score
         score[i, :] = ranked * v
 
-    print(score)
     tsp_score = np.sum(score, axis=0)
     proba = expit(tsp_score)
     # convert to probability with inverse logit
@@ -51,6 +65,7 @@ def purist(adata: ad.AnnData, name_col: str = "GENENAME") -> pd.DataFrame:
 
 
 def test_purist():
+    # Test based on Figure 4 in the paper
     genes = [
         "GPR87",
         "REG4",
@@ -91,9 +106,18 @@ def test_purist():
             ]
         ]
     )
-    adata = ad.AnnData(
-        X=X,
-        var=pd.DataFrame({"GENENAME": genes}, index=genes),
-        obs=pd.DataFrame(index=["sample1"]),
-    )
-    print(purist(adata))
+
+    def make_ad():
+        return ad.AnnData(
+            X=X,
+            var=pd.DataFrame({"GENENAME": genes}, index=genes),
+            obs=pd.DataFrame(index=["sample1"]),
+        )
+
+    print(purist(make_ad()))
+    genes[0] = "foobar"
+    print("----")
+    print(purist(make_ad()))
+    print("----")
+    genes[1] = "fsf"
+    print(purist(make_ad()))
