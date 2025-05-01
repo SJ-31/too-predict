@@ -766,3 +766,23 @@ fgsea_result2gseGO <- function(fgsea, id_col = NULL, delim = "-") {
   rownames(enrich_df) <- enrich_df$ID
   enrich_df
 }
+
+#' Compute the average value e.g. for a given gene set
+#'
+#' The average is taken with respect to the genes present in `reference`
+gene_set_average <- function(gene_sets, reference, ref_gene_col = "GENEID", ref_val_col = "logFC") {
+  eff_sizes <- map_dbl(gene_sets, \(x) length(intersect(x, reference[[ref_gene_col]])))
+  df <- tibble(set = names(gene_sets), gene = gene_sets, value = 1) |>
+    unnest(cols = c(gene)) |>
+    pivot_wider(id_cols = set, names_from = gene, values_from = value) |>
+    column_to_rownames(var = "set")
+  df[is.na(df)] <- 0
+  reference <- left_join(tibble(!!ref_gene_col := colnames(df)), reference, by = join_by(!!ref_gene_col)) |>
+    mutate(across(where(is.numeric), \(x) replace(x, is.na(x), 0)))
+  as.matrix(df) %*% reference[[ref_val_col]] |>
+    as.data.frame() |>
+    rownames_to_column(var = "set_name") |>
+    rename(average = V1) |>
+    as_tibble() |>
+    mutate(average = average / eff_sizes)
+}

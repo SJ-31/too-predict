@@ -24,6 +24,8 @@ gene_sets <- gs_internal(
   from_file = FALSE, min_size = 15,
   max_size = 500
 ) # Gene sets must have at least `min_size` genes
+ignored_sets <- readLines(here("data", "reference", "gene_sets_custom_ignore.txt"))
+gene_sets <- gene_sets[!names(gene_sets) %in% ignored_sets]
 
 bp_param <- MulticoreParam(workers = multicoreWorkers())
 db <- ensembldb::EnsDb(here("data", "reference", "Homo_sapiens.GRCh38.113.sqlite"))
@@ -294,17 +296,14 @@ fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir, meta = NULL) {
     ndir <- here(plotdir, n)
     dir.create(ndir)
     tmp <- lapply(result$pathway, \(pwy) {
-      ## plot <- plotEnrichment(pathway = gene_sets[[pwy]], stats = ranked) + labs(title = pwy)
       name <- str_replace_all(pwy, " ", "_") |> str_replace_all("/", "-")
-      png(
-        file = here(ndir, glue("{name}.png")), width = 8, height = 8, units = "in",
-        res = 1200
-      )
-      enrichplot::gseaplot2(en_res, geneSetID = pwy, title = pwy, pvalue_table = TRUE)
-      dev.off()
-      ## ggsave(here(ndir, glue("{name}_enrichment.png")), plot, height = 8, width = 8)
+      plot <- enrichplot::gseaplot2(en_res, geneSetID = pwy, title = pwy, pvalue_table = TRUE)
+      ggsave(here(ndir, glue("{name}_enrichment.png")), plot, height = 8, width = 12)
     })
-    fgsea_tb <- result |> mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";")))
+    avg_lfc <- gene_set_average(gene_sets = gene_sets, reference = tb) |> rename(mean_lfc = average)
+    fgsea_tb <- result |>
+      mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";"))) |>
+      inner_join(avg_lfc, by = join_by(set_name))
     if (!is.null(meta)) {
       fgsea_tb |> left_join(select(meta, set_name, category), by = join_by(x$pathway == y$set_name))
     } else {
@@ -409,10 +408,10 @@ if (enrichment_analyses$plage && !file.exists(here(outdir_gs, "plage_decideTests
 
 summarize_gs <- list()
 summarize_gs[["FGSEA organoid up-regulated"]] <- fgsea_gene_sets$sample_type |>
-  filter(NES > 0) |>
+  filter(mean_lfc > 0) |>
   rename(set_name = pathway)
 summarize_gs[["FGSEA primary up-regulated"]] <- fgsea_gene_sets$sample_type |>
-  filter(NES < 0) |>
+  filter(mean_lfc < 0) |>
   rename(set_name = pathway)
 summarize_gs[["GSA organoid up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in organoid`) |>
   rename(padj = `p-value:up-regulated in organoid`)
@@ -420,7 +419,7 @@ summarize_gs[["GSA primary up-regulated"]] <- select(gsa, set_name, `p-value:up-
   rename(padj = `p-value:up-regulated in primary`)
 
 summarize_gs <- sapply(names(summarize_gs), \(x) {
-  summarize_gs[[x]] |> select(-any_of(c("category")))
+  summarize_gs[[x]] |> select(-any_of("category"))
 }, simplify = FALSE, USE.NAMES = TRUE)
 
 
