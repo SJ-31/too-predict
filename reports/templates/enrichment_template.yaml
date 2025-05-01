@@ -6,6 +6,7 @@ __variables__:
   gsa: True
   plage: True
   fgsea: True
+  gsa_comparison:
   enrichment_summary:
   sig_threshold: 0.01
   contrasts:
@@ -96,6 +97,18 @@ views:
     GSA:
       dataset: gsa
       desc: "Results from Gene Set Analysis"
+      render-table:
+        columns:
+          ?f"p-value:up-regulated in {gsa_comparison[0]}":
+            spell:
+              url: v1.3.0/stats/p-value
+              with:
+                significance_threshold: ?sig_threshold
+          ?f"p-value:up-regulated in {gsa_comparison[1]}":
+            spell:
+              url: v1.3.0/stats/p-value
+              with:
+                significance_threshold: ?sig_threshold
   ?if enrichment_summary is not None:
     Category counts:
       dataset: en_summary
