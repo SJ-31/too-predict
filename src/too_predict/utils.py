@@ -887,15 +887,20 @@ class RankInterpreter:
         return requested
 
 
-def counts_into_r(adata: ad.AnnData, counts: np.ndarray | None = None) -> None:
-    if counts is not None:
-        np_to_r(np.transpose(counts), r_symbol="counts")
-    else:
-        np_to_r(np.transpose(adata.X), r_symbol="counts")
+def counts_into_r(
+    adata: ad.AnnData, counts: np.ndarray | None = None, symbol="counts", transpose=True
+) -> None:
     ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index.astype(str))
     ro.globalenv["var_names"] = ro.StrVector(adata.var.index.astype(str))
-    ro.r("rownames(counts) <- var_names")
-    ro.r("colnames(counts) <- sample_names")
+    to_send = adata.X if counts is None else counts
+    to_send = np.transpose(to_send) if transpose else to_send
+    np_to_r(to_send, r_symbol=symbol)
+    if transpose:
+        ro.r(f"rownames({symbol}) <- var_names")
+        ro.r(f"colnames({symbol}) <- sample_names")
+    else:
+        ro.r(f"colnames({symbol}) <- var_names")
+        ro.r(f"rownames({symbol}) <- sample_names")
 
 
 def write_tmp_toolkit(
@@ -959,3 +964,13 @@ def quantify_overlap(sets: dict, method: str) -> pd.Series:
             index=pd.MultiIndex.from_frame(long.loc[:, ["index", "variable"]]),
         ).sort_values(ascending=False)
     return result
+
+
+def r_null_if_none(obj, symbol, conversion=lambda x: x) -> None:
+    """Assign `obj` to R object `symbol` iff obj is not None. Otherwise assign
+    NULL to symbol
+    """
+    if obj is None:
+        ro.r(f"{symbol} <- NULL")
+    else:
+        ro.globalenv[symbol] = conversion(obj)
