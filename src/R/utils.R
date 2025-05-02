@@ -786,3 +786,88 @@ gene_set_average <- function(gene_sets, reference, ref_gene_col = "GENEID", ref_
     as_tibble() |>
     mutate(average = average / eff_sizes)
 }
+
+#' Replace a column, rowname or colnames in obj with a mapping
+#'
+#' @description
+#' @param `drop_missing` whether or not to drop elements in `obj` that aren't found
+#'    in the mapping
+#' @param mapping a list of old->new
+mapping_replace <- function(obj, what, mapping, drop_missing = TRUE) {
+  mask_on <- "rows"
+  if (what == "rownames" && !is.null(rownames(obj))) {
+    query <- mapping[rownames(obj)]
+  } else if (what == "colnames" && !is.null(colnames(obj)) && drop_missing) {
+    query <- mapping[colnames(obj)]
+    mask_on <- "columns"
+  } else { # `what` is a column name
+    query <- mapping[obj[[what]]]
+  }
+  nas <- is.na(query)
+  if (drop_missing && mask_on == "rows") {
+    obj <- obj[!nas, ]
+  } else if (drop_missing) {
+    obj <- obj[, !nas]
+  } else if (!drop_missing && any(nas)) {
+    stop("Not all old names could be mapped!")
+  }
+  if (drop_missing) {
+    print("Dropping {glue(sum(nas))} entries with non-mapping names...")
+  }
+  query <- query[!nas]
+  if (what == "rownames") {
+    rownames(obj) <- query
+  } else if (what == "colnames") {
+    colnames(obj) <- query
+  } else {
+    obj[[what]] <- query
+  }
+  obj
+}
+
+
+counts2tpm <- function(data, lengths = NULL) {
+  if (is.character(lengths) && "DGEList" %in% class(data)) {
+    lengths <- data$genes[[lengths]]
+    counts <- data$counts
+  } else if (is.character(lengths) && "anndata._core.anndata.AnnData" %in% class(data)) {
+    lengths <- data$var[[lengths]]
+    counts <- t(data$X)
+  }
+  stopifnot(length(lengths) == nrow(counts) && is.numeric(lengths))
+  numer <- log(counts) - log(lengths)
+  denom <- log(exp(colSums(numer)))
+  tpm <- exp(numer - denom + log(1e6))
+  tpm
+}
+
+# Must create a new object because this is not supported...
+rename_seurat_features <- function(obj, new_names, mapping = FALSE) {
+  assays <- Seurat::Assays(obj)
+  layers <- SeuratObject::Layers(obj[[assays[1]]])
+  if (mapping) {
+    new_names <- new_names[rownames(obj)]
+    obj <- obj[!is.na(new_names), ]
+    new_names <- new_names[!is.na(new_names)]
+  }
+  new <- SeuratObject::CreateSeuratObject(
+    counts = SeuratObject::LayerData(obj[[assays[1]]], layer = layers[1]) |>
+      `rownames<-`(NULL),
+    assay = assays[1],
+    meta.data = obj[[]]
+  )
+  rownames(new) <- new_names
+  colnames(new) <- colnames(obj)
+  if (length(layers) > 1) {
+    for (l in layers[2:length(layers)]) {
+      SeuratObject::LayerData(new, assay = assays[1], layer = l) <- SeuratObject::LayerData(obj, assay = assays[1], layer = l) |> `rownames<-`(NULL)
+    }
+  }
+  if (length(assays) > 1) {
+    for (a in assays[2:length(assays)]) {
+      SeuratObject::LayerData(new, assay = a)
+      new[[a]][[]] <- obj[[a]][[]]
+    }
+  }
+  new
+}
