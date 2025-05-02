@@ -114,7 +114,11 @@ def test_purist():
             obs=pd.DataFrame(index=["sample1"]),
         )
 
-    print(purist(make_ad()))
+    result = purist(make_ad())
+    print(result)
+    assert round(result.loc["sample1"]["purist_tsp_score"], 1) == 2.4
+    assert round(result.loc["sample1"]["purist_probability"], 2) == 0.92
+
     genes[0] = "foobar"
     print("----")
     print(purist(make_ad()))

@@ -455,7 +455,7 @@ new_list <- new_list[map_dbl(new_list, length) >= min_markers]
 overlap_tb <- as_tibble(overlap_tracker)
 yaml::write_yaml(new_list, final_file)
 write_tsv(tibble(
-  cell_type = names(new_list),
+  set_name = names(new_list),
   marker_count = map_dbl(new_list, length)
 ), final_file_metrics)
 

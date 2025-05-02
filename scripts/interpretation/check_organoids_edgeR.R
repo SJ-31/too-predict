@@ -303,7 +303,7 @@ fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir, meta = NULL) {
     avg_lfc <- gene_set_average(gene_sets = gene_sets, reference = tb) |> rename(mean_lfc = average)
     fgsea_tb <- result |>
       mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";"))) |>
-      inner_join(avg_lfc, by = join_by(set_name))
+      inner_join(avg_lfc, by = join_by(x$pathway == y$set_name))
     if (!is.null(meta)) {
       fgsea_tb |> left_join(select(meta, set_name, category), by = join_by(x$pathway == y$set_name))
     } else {

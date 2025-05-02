@@ -124,6 +124,7 @@ class Corrector:
     ) -> np.ndarray:
         ut.source("correction.R", in_r=True)
         ut.counts_into_r(self.adata, counts=self.counts)
+        ro.r("mode(counts) <- 'integer'")
         ro.globalenv["batch"] = ro.StrVector(self.batch)
         ro.globalenv["full_mod"] = full
         if group is not None:

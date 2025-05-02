@@ -57,11 +57,11 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
   batchmod <- model.matrix(~batch) # colnames: levels(batch)
   # covariate
   group <- as.factor(group)
-  n_group <- nlevels(group) # number of groups
-  groups_ind <- lapply(1:n_group, function(i) {
-    which(group == levels(group)[i])
-  }) # list of samples in each group
-  n_groups <- sapply(groups_ind, length)
+  ## n_group <- nlevels(group) # number of groups
+  ## groups_ind <- lapply(1:n_group, function(i) {
+  ##   which(group == levels(group)[i])
+  ## }) # list of samples in each group
+  ## n_groups <- sapply(groups_ind, length)
   if (full_mod && nlevels(group) > 1) {
     cat("Using full model in ComBat-seq.\n")
     mod <- model.matrix(~ 0 + group) # model.matrix(~0+group)

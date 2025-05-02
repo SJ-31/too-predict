@@ -39,6 +39,14 @@ marker_meta = cell_markers_internal(meta=True)
 # l : feature blacklist
 
 MODELS: dict = {
+    # ** Qsmooth
+    "qsmooth_xgboost_edger_1000": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "qsmooth",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
+        "s": True,
+    },
     # ** CLR models
     "clr_random_forest_minfo": {
         "m": tm.RandomForestPred(),
@@ -63,13 +71,6 @@ MODELS: dict = {
         "b": Balancer("SMOTE"),
         "s": True,
     },
-    "qsmooth_xgboost_edger_1000": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
-        "t": "qsmooth",
-        "i": "plus_one",
-        "f": "edgeR_median_lfc_feature_list_1000",
-        "s": True,
-    },
     "clr_lr_edger_3000": {
         "m": tm.PredBase(model=LogisticRegression(solver="saga")),
         "t": "clr",
@@ -91,6 +92,13 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-08 Tue] Surprisingly good
+    },
+    "clr_xgb3_1000_edger": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_1000",
+        "s": True,
     },
     "clr_xgboost_edger_1000_organoid_edger_blacklist": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
@@ -131,7 +139,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
-        "s": True,
+        "S": True,
     },
     "clr_random_forest_edger": {
         "m": tm.PredBase(model=RandomForestClassifier()),
@@ -140,16 +148,7 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
-    "alr_xgboost_low_variance": {
-        "m": tm.AlrBase(
-            tm.XGBEstimator(),
-            references=REF_LISTS["variance_feature_list_lowest_20"],
-        ),
-        "i": "plus_one",
-        "f": "edgeR_median_lfc_feature_list_3000",
-        "r": "variance_feature_list_lowest_20",
-        "s": True,
-    },
+    # ** ALR models
     "alr_xgboost_low_variance_1000": {
         "m": tm.AlrBase(
             tm.XGBEstimator(),
@@ -160,7 +159,6 @@ MODELS: dict = {
         "r": "variance_feature_list_lowest_20",
         "s": True,
     },
-    # ** ALR models
     "alr_xgboost_edger_lowest_1000": {
         "m": tm.AlrBase(
             tm.XGBEstimator(),
@@ -264,11 +262,12 @@ MODELS: dict = {
         "c": {
             "method": "combat_seq",
             "batch": "is_organoid",
-            "covar_mod": "tumor_type",
+            "group": "tumor_type",
         },
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,
+        "s": True,  # [2025-05-01 Thu] Higher accuracy but not as good for
+        # organoids as combat ref
     },
     "clr_xgb3_edger_rbe": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
