@@ -84,12 +84,16 @@ def cross_validate_helper(
             adata = read_h5ad(output)
         else:
             if encoder is not None:
-                adata = encoder.fit_transform(adata)
+                adata = encoder.fit_transform(adata)  # TODO: this can leak data
+                #
             if filter is not None:
                 adata = filter.fit_transform(adata)
             if corrector is not None:
                 adata.obs["is_organoid"] = adata.obs["Sample_Type"] == "organoid"
-                adata = corrector.fit_transform(adata)
+                adata = corrector.fit_transform(
+                    adata
+                )  # [2025-04-30 Wed] NOTE: temporary
+                # Should apply the correction during validation
         if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
             track_meta = result_dir.joinpath(".metadata")
             track_meta.mkdir(exist_ok=True)
@@ -100,7 +104,7 @@ def cross_validate_helper(
                 random_state=RANDOM_STATE,
                 n_splits=K,
                 transformer=transformer,
-                corrector=corrector,
+                corrector=None,  # [2025-04-30 Wed] NOTE: temporary
                 record_dir=track_meta,
             )
             write_results(results, result_dir, lc, cm_prefix="fold_")
@@ -112,7 +116,7 @@ def cross_validate_helper(
                 ADDITIONAL_SPLITS,
                 label_col=lc,
                 balancer=balancer,
-                corrector=corrector,
+                corrector=None,  # [2025-04-30 Wed] NOTE: temporary
             )
             write_results(results2, result_dir2, lc)
     except ValueError as e:
