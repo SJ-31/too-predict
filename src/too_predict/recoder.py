@@ -14,7 +14,7 @@ import too_predict.go_utils as gt
 import too_predict.utils as ut
 from too_predict.transformer import Transformer
 
-IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage", "gsva"}
+IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage", "gsva", "bayesprism"}
 
 
 class Recoder:
@@ -23,10 +23,13 @@ class Recoder:
     ) -> None:
         if method.lower() not in IMPLEMENTED_RECODING:
             raise ValueError(f"method {method} not supported!")
-        self.method = method.lower()
-        self.layer = layer
-        self.fcol = added_fcol
-        self.kwargs = kwargs
+        self.adata: ad.AnnData
+        self.was_sparse: bool = False
+        self.counts: np.ndarray
+        self.method: str = method.lower()
+        self.layer: str | None = layer
+        self.fcol: str = added_fcol
+        self.kwargs: dict = kwargs
 
     def _counts_into_r(self) -> None:
         ut.counts_into_r(self.adata, self.counts)
@@ -117,20 +120,67 @@ class Recoder:
         self.was_sparse = sparse.issparse(self.counts)
         self.counts = self.counts.toarray() if self.was_sparse else self.counts
 
+    @ut.r_cleanup
+    def _BayesPrism(
+        self,
+        adata: ad.AnnData,
+        reference: ad.AnnData,
+        filtered_genes=("Rb", "Mrp", "other_Rb", "chrM", "MALAT1", "chrX", "chrY"),
+        state_col="cell_states",
+        type_col="cell_types",
+        gene_type=("protein_coding"),  # Combination of "protein_coding", "pseudogene",
+        # "lincrna"
+        malignant_cell_name: str | None = None,
+    ) -> ad.AnnData:
+        ro.r("library(BayesPrism)")
+        ro.globalenv["cell_states"] = ro.StrVector(reference.obs[state_col])
+        ro.globalenv["cell_types"] = ro.StrVector(reference.obs[type_col])
+        ro.globalenv["gene_types"] = ro.StrVector(gene_type)
+        ro.globalenv["to_filter"] = ro.StrVector(filtered_genes)
+        ut.r_null_if_none(malignant_cell_name, "malignant")
+        ut.counts_into_r(adata, symbol="bulk", transpose=False)
+        ut.counts_into_r(reference, symbol="ref", transpose=False)
+        ro.r("""ref <- cleanup.genes(ref,
+            gene.group = to_filter,
+            species = 'hs',
+            input.type = 'count.matrix')""")
+        ro.r("ref <- select.gene.type(ref, gene.type = gene_types)")
+        ro.r("""
+        prism <- new.prism(reference = ref,
+            mixture = bulk,
+            input.type = "count.matrix",
+            cell.type.labels = cell_types,
+            cell.state.labels = cell_states,
+            key = malignant)""")
+        ro.r("result <- run.prism(prism)")  # TODO: don't know yet how to retrieve
+        ro.r("""
+        fraction <- get.fraction(result, which.theta = 'final', state.or.type = 'type')
+        """)
+        samples = list(ro.r("rownames(fraction)"))
+        types = list(ro.r("colnames(fraction)"))
+        recoded: pd.DataFrame = pd.DataFrame(
+            data=ut.np_from_r(ro.globalenv["fraction"]), columns=types, index=samples
+        )
+        result = ad.AnnData(
+            X=recoded, obs=self.adata.obs, var=pd.DataFrame(index=types)
+        )
+        return result
+
     def transform(self) -> ad.AnnData:
-        match self.method:
-            case "go":
-                rg = gt.RecodeGO(**self.kwargs)
-                rg.adata = self.adata
-                recoded = rg.transform()
-            case "bisquemarker":
-                recoded = self._bisque(mode="marker", **self.kwargs)
-            case "plage":
-                recoded = self._plage(**self.kwargs)
-            case "gsva":
-                recoded = self._gsva(**self.kwargs)
-            case _:
-                raise ValueError()
+        if self.method == "go":
+            rg = gt.RecodeGO(**self.kwargs)
+            rg.adata = self.adata
+            recoded = rg.transform()
+        elif self.method == "bisquemarker":
+            recoded = self._bisque(mode="marker", **self.kwargs)
+        elif self.method == "plage":
+            recoded = self._plage(**self.kwargs)
+        elif self.method == "gsva":
+            recoded = self._gsva(**self.kwargs)
+        elif self.method == "bayesprism":
+            recoded = self._BayesPrism(**self.kwargs)
+        else:
+            raise ValueError()
         if self.was_sparse:
             recoded.X = sparse.csc_array(recoded.X)
         recoded.var[self.fcol] = recoded.var.index
