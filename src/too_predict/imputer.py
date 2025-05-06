@@ -25,7 +25,7 @@ class Imputer:
         if method and method.lower() not in IMPLEMENTED_IMPUTATION:
             raise ValueError(f"Imputation method {method} not implemented!")
         self.method: str | None = method
-        self.kwargs = kwargs
+        self.kwargs: dict = kwargs
 
     @staticmethod
     def replace_one(mat: np.ndarray) -> np.ndarray:

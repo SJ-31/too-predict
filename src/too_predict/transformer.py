@@ -47,7 +47,7 @@ class Transformer:
 
     def fit(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
         if isinstance(data, ad.AnnData):
-            self.counts_only = False
+            self.counts_only: bool = False
             self.adata = data if self.inplace else data.copy()
             self.adata.layers["counts"] = data.X.copy()
             if sparse.issparse(data.X):
@@ -61,7 +61,7 @@ class Transformer:
 
     def __init__(
         self,
-        method: str,
+        method: str | None,
         impute_fn=None,
         inplace=False,
         make_sparse=True,
@@ -70,12 +70,13 @@ class Transformer:
     ) -> None:
         self.counts: np.ndarray | pd.DataFrame
         self.adata: ad.AnnData | None
-        self.inplace = inplace
-        self.method = method
-        self.make_sparse = make_sparse
+        self.counts_only: bool
+        self.inplace: bool = inplace
+        self.method: str | None = method
+        self.make_sparse: bool = make_sparse
         if method is not None and method.lower() not in supported_methods:
             raise ValueError(f"Method {method} not implemented!")
-        self.kwargs = kwargs
+        self.kwargs: dict = kwargs
         self.impute: Callable[[np.ndarray], np.ndarray] = impute_fn
 
     def alr(
