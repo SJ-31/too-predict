@@ -3,18 +3,29 @@
 from pathlib import Path
 
 import anndata as ad
+import autogenes as ag
 import gseapy as gp
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
+import scanpy as sc
 import yaml
 from scipy import sparse
 
 import too_predict.go_utils as gt
+import too_predict.transformer as tt
 import too_predict.utils as ut
+from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 
-IMPLEMENTED_RECODING = {"go", "bisquemarker", "plage", "gsva", "bayesprism"}
+IMPLEMENTED_RECODING = {
+    "go",
+    "bisquemarker",
+    "plage",
+    "gsva",
+    "bayesprism",
+    "autogenes",
+}
 
 
 class Recoder:
@@ -53,6 +64,115 @@ class Recoder:
         if metadata is not None:
             var = var.merge(metadata, left_index=True, right_index=True, how="left")
         return ad.AnnData(X=vals, var=var, obs=self.adata.obs)
+
+    def _autogenes(
+        self,
+        reference: Path | ad.AnnData,
+        hvg_kws: dict | None = None,
+        init_kws: dict | None = None,
+        transform_kws: dict | None = None,
+        optimize_kws: dict | None = None,
+        select_kws: dict | None = None,
+        deconvolve_kws: dict | None = None,
+    ) -> ad.AnnData:
+        """Wrapper function for deconvolution by autogenes
+
+        Parameters
+        ----------
+        reference : scRNA-seq reference data. Assumed to be raw if `process_ref`,
+            otherwise, reference counts should be converted to CPM
+
+        Notes
+        -----
+        Normalizes scRNA-seq reference (if process_ref) and bulk by CPM and TPM
+            respectively, as done in the original paper
+        """
+        defaults: dict[str, dict] = {
+            "hvg": {"flavor": "seurat"},
+            "init": {"celltype_key": "Cell_Type", "use_highly_variable": True},
+            "optimize": {
+                "ngen": 1000,
+                "objectives": ("correlation", "distance"),
+                "mode": "fixed",
+                "nfeatures": 400,
+                "weights": (-1, 1),
+            },
+            "transform": {"length_col": "SEQLENGTH"},
+            "select": {"weights": (-1, 1)},
+            "deconvolve": {"model": "nusvr"},
+        }
+        for k, v in {
+            "hvg": hvg_kws,
+            "init": init_kws,
+            "optimize": optimize_kws,
+            "deconvolve": deconvolve_kws,
+            "select": select_kws,
+            "transform": transform_kws,
+        }.items():
+            if v is not None:
+                defaults[k].update(v)
+        if isinstance(reference, Path):
+            reference = ad.read_h5ad(reference)
+        else:
+            reference = reference.copy()
+
+        # Get common genes
+        common_genes = set(reference.var.index) & set(self.adata.var.index)
+        if len(common_genes) == 0:
+            raise ValueError("No genes in common between reference and bulk!")
+        else:
+            print(f"{len(common_genes)} common genes found")
+        reference = reference[:, reference.var.index.isin(common_genes)]
+        mask = self.adata.var.index.isin(common_genes)
+        self.adata = self.adata[:, mask].copy()
+        self.counts = self.counts[:, mask]
+
+        # Normalize
+        sc.pp.normalize_per_cell(reference, counts_per_cell_after=1e4)
+        if (
+            defaults["init"].get("use_highly_variable", False)
+            and "highly_variable" not in reference.var.columns
+        ):
+            log_ref: ad.AnnData = sc.pp.log1p(reference, copy=True)
+            sc.pp.highly_variable_genes(log_ref, **defaults["hvg"], inplace=True)
+            hv: pd.Series = log_ref.var["highly_variable"]
+            if hv.sum() <= (n_feats := defaults["optimize"]["nfeatures"]):
+                raise ValueError(
+                    f"The number of highly variable features ({hv.sum()}) is less than the number of requested features ({n_feats})!"
+                )
+            reference.var.loc[:, "highly_variable"] = hv
+        lengths = self.adata.var[defaults["transform"]["length_col"]].values
+        trans: tt.Transformer = tt.Transformer(
+            "tpm",
+            impute_fn=Imputer("plus_one"),
+            inplace=False,
+            **defaults["transform"],
+            gene_lengths=lengths,
+        )
+        self.adata.X = trans.fit_transform(self.counts)
+        if sparse.issparse(self.adata.X):
+            self.adata.X = self.adata.X.toarray()
+
+        # Run autogenes
+        ag.init(data=reference, **defaults["init"])
+        ag.optimize(**defaults["optimize"])
+        soln: ad.AnnData = ag.select(copy=True, **defaults["select"])
+        coef: np.ndarray = ag.deconvolve(bulk=self.adata, **defaults["deconvolve"])
+
+        # Record data
+        recoded: ad.AnnData = ad.AnnData(
+            X=coef, obs=self.adata.obs, var=pd.DataFrame(index=soln.obs.index)
+        )
+        recoded.uns["autogenes_markers"] = list(
+            soln.var.query("autogenes")["autogenes"].index
+        )
+        fmat: np.ndarray = ag.fitness_matrix()
+        recoded.uns["autogenes_fitness_matrix"] = pd.DataFrame(
+            fmat,
+            index=[f"solution_{i}" for i in range(fmat.shape[0])],
+            columns=defaults["optimize"]["objectives"],
+        )
+        return recoded
 
     def _gsva(
         self,
@@ -179,6 +299,8 @@ class Recoder:
             recoded = self._gsva(**self.kwargs)
         elif self.method == "bayesprism":
             recoded = self._BayesPrism(**self.kwargs)
+        elif self.method == "autogenes":
+            recoded = self._autogenes(**self.kwargs)
         else:
             raise ValueError()
         if self.was_sparse:
