@@ -157,6 +157,7 @@ adata2seurat <- function(adata, layer = NULL, assay = "RNA") {
   obj
 }
 
+
 adata2eset <- function(adata, layer = NULL, convert_na = FALSE) {
   if (!is.null(layer)) {
     counts <- t(as.matrix(adata$layers[[layer]]))
@@ -718,6 +719,31 @@ bisque_marker_wrapper <- function(counts, markers) {
   res <- BisqueRNA::MarkerBasedDecomposition(eset, marker_spec)
 }
 
+bisque_reference_wrapper <- function(counts, reference, ref_obs, markers = NULL,
+                                     cell_type_col = "cell_type",
+                                     subject_col = "subject",
+                                     use_overlap = FALSE) {
+  mode(counts) <- "integer"
+  mode(reference) <- "integer"
+  shared_genes <- intersect(rownames(counts), rownames(ref))
+  if (!is.null(markers)) shared_genes <- intersect(shared_genes, markers)
+  counts <- counts[rownames(counts) %in% shared_genes, ]
+  reference <- reference[rownames(reference) %in% shared_genes, ]
+  mask <- colSums(reference) != 0
+  reference <- reference[, mask]
+  ref_obs <- ref_obs[mask, ]
+
+  eset <- Biobase::ExpressionSet(assayData = counts)
+  ref <- Biobase::ExpressionSet(
+    assayData = reference,
+    phenoData = Biobase::AnnotatedDataFrame(ref_obs)
+  )
+  BisqueRNA::ReferenceBasedDecomposition(
+    bulk.eset = eset, sc.eset = ref, cell.types = cell_type_col,
+    subject.names = subject_col, use.overlap = use_overlap
+  )
+}
+
 #' Group pathways by `category_col` and count the number of statistically
 #'  significant pathways for each
 #'
@@ -870,4 +896,27 @@ rename_seurat_features <- function(obj, new_names, mapping = FALSE) {
     }
   }
   new
+}
+
+
+
+#' Subcluster cells
+#'
+#' @description
+#' Partition the seurat object by cell type, then cluster independently for each
+#' obj is assumed to have undergone normalization and is ready for `FindClusters`
+seurat_subcluster_cells <- function(obj, cell_col, subcluster_col = "cell_subclusters") {
+  sub_clustered <- lapply(unique(obj[[]][[cell_col]]), \(type) {
+    mask <- obj[[]][[cell_col]] == type
+    cur <- obj[, mask]
+    cur <- FindClusters(cur)
+    cur[[]][[subcluster_col]] <- paste0(cur[[]][[cell_col]], ".", cur[[]]$seurat_clusters)
+    cur
+  })
+  final <- merge(
+    x = sub_clustered[[1]], y = sub_clustered[2:length(sub_clustered)],
+    merge.data = TRUE, merge.dr = TRUE
+  )
+  final[[]]$seurat_clusters <- NULL
+  final
 }

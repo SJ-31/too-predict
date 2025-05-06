@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 
 from pathlib import Path
+from typing import Literal, Sequence
 
 import anndata as ad
 import autogenes as ag
@@ -10,6 +11,7 @@ import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
 import yaml
+from scanpy.get import obs_df
 from scipy import sparse
 
 import too_predict.go_utils as gt
@@ -20,7 +22,8 @@ from too_predict.transformer import Transformer
 
 IMPLEMENTED_RECODING = {
     "go",
-    "bisquemarker",
+    "bisque_marker",
+    "bisque_reference",
     "plage",
     "gsva",
     "bayesprism",
@@ -200,15 +203,25 @@ class Recoder:
         return ad.AnnData(X=vals.values.astype(np.float64), var=var, obs=self.adata.obs)
 
     @ut.r_cleanup
-    def _bisque(self, reference: Path | dict, mode: str = "marker") -> ad.AnnData:
+    def _bisque(
+        self,
+        markers: Path | dict | Sequence | None = None,
+        reference: Path | ad.AnnData | None = None,
+        mode: str = Literal["reference", "marker"],
+        cell_type_col: str = "cell_type",
+        subject_col: str = "subject",
+    ) -> ad.AnnData:
         ut.source("utils.R", in_r=True)
+        self._counts_into_r()
+        if mode == "marker" and markers is None:
+            raise ValueError("Markers must be provided!")
+        elif mode == "reference" and reference is None:
+            raise ValueError("Single-cell reference must be provided!")
         if mode == "marker":
-            ut.source("utils.R", in_r=True)
-            self._counts_into_r()
-            if isinstance(reference, Path):
-                ro.globalenv["marker_ref"] = str(reference.absolute())
+            if isinstance(markers, Path):
+                ro.globalenv["marker_ref"] = str(markers.absolute())
             else:
-                ro.globalenv["marker_ref"] = ro.ListVector(reference)
+                ro.globalenv["marker_ref"] = ro.ListVector(markers)
             ro.r("result <- bisque_marker_wrapper(counts, markers = marker_ref)")
             matrix = ut.np_from_r(ro.r("result$bulk.props"))
             genes_used = pd.DataFrame(
@@ -225,7 +238,33 @@ class Recoder:
                 X=np.transpose(matrix), obs=self.adata.obs, var=genes_used
             )
         else:
-            raise ValueError("Reference mode for Bisque not implemented yet!")
+            if isinstance(reference, Path):
+                reference = ad.read_h5ad(reference)
+            ut.counts_into_r(reference, symbol="ref")
+            ut.r_null_if_none(subject_col, symbol="subject_col")
+            ut.r_null_if_none(markers, symbol="markers", conversion=ro.StrVector)
+            if markers is not None and not isinstance(markers, Sequence):
+                raise ValueError("Markers must be a sequence in reference mode!")
+            ro.globalenv["cell_type_col"] = cell_type_col
+            ro.globalenv["subject_col"] = subject_col
+            ut.df_to_r(reference.obs, r_symbol="ref_obs")
+            ro.r("""
+            result <- bisque_reference_wrapper(counts, ref, ref_obs = ref_obs,
+                markers = markers,
+                cell_type_col = cell_type_col,
+                subject_col = subject_col)
+            """)
+            types = list(ro.r("rownames(result$bulk.props)"))
+            matrix = ut.np_from_r(ro.r("result$bulk.props"))
+            result = ad.AnnData(
+                X=np.transpose(matrix),
+                var=pd.DataFrame(index=types),
+                obs=self.adata.obs,
+            )
+            result.uns["sc.props"] = ut.df_from_r(
+                ro.r("as.data.frame(result$sc.props)")
+            )
+            result.obs.loc[:, "rnorm"] = list(ro.r("result$rnorm"))
         return result
 
     def fit(self, adata: ad.AnnData) -> None:
@@ -291,7 +330,7 @@ class Recoder:
             rg = gt.RecodeGO(**self.kwargs)
             rg.adata = self.adata
             recoded = rg.transform()
-        elif self.method == "bisquemarker":
+        elif self.method == "bisque_marker":
             recoded = self._bisque(mode="marker", **self.kwargs)
         elif self.method == "plage":
             recoded = self._plage(**self.kwargs)
@@ -301,6 +340,8 @@ class Recoder:
             recoded = self._BayesPrism(**self.kwargs)
         elif self.method == "autogenes":
             recoded = self._autogenes(**self.kwargs)
+        elif self.method == "bisque_reference":
+            recoded = self._bisque(mode="reference", **self.kwargs)
         else:
             raise ValueError()
         if self.was_sparse:
