@@ -359,7 +359,7 @@ MODELS: dict = {
     "clr_xgboost_bisquemarker": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("bisquemarker", reference=marker_file),
+        "e": rt.Recoder("bisque_marker", markers=marker_file),
         "s": True,
     },
 }

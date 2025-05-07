@@ -132,7 +132,6 @@ def do_rfecv(f):
 
 if __name__ == "__main__":
     args = parse_args()
-    TEST = args.test
     backend = "dask" if args.dask else "loky"
     par_args = {"n_jobs": args.cores}
     rfecv_file = OUTDIR.joinpath(f"{CHOSEN_MODEL}_rfecv.pckl")
@@ -140,7 +139,7 @@ if __name__ == "__main__":
         # main()
         rfecv: fs.RFECV = ut.read_existing(rfecv_file, do_rfecv, ut.load_pickle)
         cv: dict = rfecv.cv_results_
-        mean_score = pd.DataFrame(
+        mean_score: pd.DataFrame = pd.DataFrame(
             {"mean_test_score": cv["mean_test_score"], "n_features": cv["n_features"]}
         )
         feature_list_file: Path = here(
@@ -153,8 +152,8 @@ if __name__ == "__main__":
         plot = mean_score.plot.scatter(x="n_features", y="mean_test_score")
         fig = plot.figure
         fig.savefig(OUTDIR.joinpath(f"{CHOSEN_MODEL}_rfecv_mean.png"))
+        mean_score.to_csv(
+            OUTDIR.joinpath(f"{CHOSEN_MODEL}_rfecv_mean.csv"), index=False
+        )
         chosen_features = np.array(F.features)[rfecv.support_]
         feature_list_file.write_text("\n".join(chosen_features))
-
-
-# main2()

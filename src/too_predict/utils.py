@@ -241,6 +241,14 @@ def tximport_salmon(
     return result
 
 
+def symbol2ensembl(as_df: bool = False) -> dict | pd.DataFrame:
+    df = pd.read_csv(get_data("mappings/ensembl_113_id_mapping.tsv"), sep="\t")
+    sel = df.loc[:, ["symbol", "ensembl"]].dropna(subset="symbol").drop_duplicates()
+    if as_df:
+        return sel
+    return {k: v for k, v in zip(sel["symbol"], sel["ensembl"])}
+
+
 def add_gc_content(adata: ad.AnnData, id_col: str = "GENEID") -> None:
     mapping = pd.read_csv(get_data("mappings/ensembl2gc_content.tsv"), sep="\t").rename(
         {"Gene % GC content": "gc_content"}, axis=1
@@ -349,7 +357,7 @@ def rename_genes(
     if was_adata:
         ad_passed, ad_failed = data[:, row_mask], data[:, ~row_mask]
         ad_passed.var, ad_failed.var = passed, failed
-        return ad_passed, ad_failed
+        return ad_passed.copy(), ad_failed.copy()
     return passed, failed
 
 
@@ -893,6 +901,7 @@ def counts_into_r(
     ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index.astype(str))
     ro.globalenv["var_names"] = ro.StrVector(adata.var.index.astype(str))
     to_send = adata.X if counts is None else counts
+    to_send = to_send.toarray() if sparse.issparse(to_send) else to_send
     to_send = np.transpose(to_send) if transpose else to_send
     np_to_r(to_send, r_symbol=symbol)
     if transpose:

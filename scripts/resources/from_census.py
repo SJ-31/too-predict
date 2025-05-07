@@ -116,6 +116,9 @@ census_datasets.loc[:, "output_name"] = census_datasets["collection_name"].combi
     census_datasets["soma_joinid"], lambda x, y: f"{x.lower().replace(' ', '_')}-{y}"
 )
 dataset_id_map = dict(zip(census_datasets.index, census_datasets["output_name"]))
+census_datasets.reset_index().to_csv(
+    here("data", "mappings", "cellxgene_datasets.csv"), index=False
+)
 
 storage_dir = here("remote", "public_data", "cellxgene-census")
 

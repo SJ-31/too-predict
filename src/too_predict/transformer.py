@@ -243,6 +243,7 @@ class Transformer:
         Calculation adapted from [1], but using gene length instead of effective length
         if average fragment size isn't given
         """
+        lengths: np.ndarray
         if not self.counts_only:
             lengths = self.adata.var[length_col]
         elif not isinstance(gene_lengths, np.ndarray) and gene_lengths is not None:
