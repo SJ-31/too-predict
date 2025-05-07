@@ -4,10 +4,12 @@ from pathlib import Path
 
 import anndata as ad
 import joblib
+import numpy as np
 import pandas as pd
 import scanpy as sc
 import sklearn.feature_selection as fs
 import sklearn.metrics as sm
+import too_predict.utils as ut
 from pyhere import here
 from sklearn.linear_model import LogisticRegressionCV
 from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
@@ -26,7 +28,8 @@ OUTDIR: Path = here("data", "output", "organoid_feature_selection")
 OUTDIR.mkdir(exist_ok=True, parents=True)
 TEST = True
 
-F, M, T, B, R, C = read_model_spec(MODELS["clr_xgb3_edger"])
+CHOSEN_MODEL = "clr_xgb3_1000_edger"
+F, M, T, B, R, C = read_model_spec(MODELS[CHOSEN_MODEL])
 
 
 def parse_args():
@@ -119,11 +122,39 @@ def main():
     score_df.to_csv(OUTDIR.joinpath("cv_results.csv"), index=False)
 
 
+def do_rfecv(f):
+    adata, _ = get_adata()
+    adata = F.fit_transform(adata)
+    result = M.rfecv(adata)
+    ut.write_pickle(result, f)
+    return result
+
+
 if __name__ == "__main__":
     args = parse_args()
     TEST = args.test
     backend = "dask" if args.dask else "loky"
     par_args = {"n_jobs": args.cores}
+    rfecv_file = OUTDIR.joinpath(f"{CHOSEN_MODEL}_rfecv.pckl")
     with joblib.parallel_backend(backend, **par_args):
         # main()
-        main2()
+        rfecv: fs.RFECV = ut.read_existing(rfecv_file, do_rfecv, ut.load_pickle)
+        cv: dict = rfecv.cv_results_
+        mean_score = pd.DataFrame(
+            {"mean_test_score": cv["mean_test_score"], "n_features": cv["n_features"]}
+        )
+        feature_list_file: Path = here(
+            "data",
+            "output",
+            "feature_selection",
+            "feature_lists",
+            f"{CHOSEN_MODEL}_rfecv_feature_list.txt",
+        )
+        plot = mean_score.plot.scatter(x="n_features", y="mean_test_score")
+        fig = plot.figure
+        fig.savefig(OUTDIR.joinpath(f"{CHOSEN_MODEL}_rfecv_mean.png"))
+        chosen_features = np.array(F.features)[rfecv.support_]
+        feature_list_file.write_text("\n".join(chosen_features))
+
+
+# main2()
