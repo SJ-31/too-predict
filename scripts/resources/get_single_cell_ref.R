@@ -1,3 +1,4 @@
+library(ensembldb)
 library(Seurat)
 library(here)
 library(tidyverse)
@@ -7,21 +8,28 @@ library(paletteer)
 library(reticulate)
 use_condaenv("too-predict")
 
-if (path.expand("~") != "/home/shannc") {
+test <- FALSE
+if (sys.nframe() == 0) {
+  library("optparse")
+  parser <- OptionParser()
+  parser <- add_option(parser, c("-t", "--test"), type = "logical", help = "test", default = FALSE)
+  args <- parse_args(parser)
+  test <- args$test
+}
+
+if (path.expand("~") != "/home/shannc" && !test) {
   storage_dir <- here("remote", "public_data")
 } else {
   storage_dir <- here("data", "tests", "scr_ref")
 }
 AnnotationHub::setAnnotationHubOption("CACHE", here("data", ".AnnotationHub"))
 ad <- import("anndata")
+ut <- import("too_predict.utils")
 
 dirs <- list(
   htc_atlas = here(storage_dir, "htca_2025-4-21"),
   gtex = here(storage_dir, "GTEx_single_cell_2025-4-29"),
-  tabula = here(storage_dir, "Tabula_Sapiens_V2_2025-4-29")
-  # TODO: complete the python script for getting the cellxgene data which includes
-  # Tabula
-  ## sc_atlas = here(storage_dir, "singlecellatlas_2025-4-28")
+  cellxgene = here(storage_dir, "cellxgene-census")
 )
 to_ignore <- list(
   htc_atlas = c(
@@ -30,7 +38,9 @@ to_ignore <- list(
     "HTCA_ADULT_STOMACH.rds",
   ),
   gtex = c(),
+  cellxgene = c(),
 )
+# NOTE: probably don't need tissue_mapping anymore
 tissue_mapping <- list(
   htc_atlas = local({
     files <- list.files(dirs$htc_atlas) |> as.list()
@@ -38,7 +48,7 @@ tissue_mapping <- list(
     setNames(files, tissues)
   }),
   gtex = list(),
-  tabula = list()
+  cellxgene = list()
 )
 
 ## * Sources
@@ -49,10 +59,10 @@ merge_seurat_from_files <- function(dir, ignore_list, tissue_map, read_fn) {
   file_list <- list.files(dir) |> discard(\(x) x %in% ignore_list)
   fnames <- tools::file_path_sans_ext(file_list)
   objs <- lapply(file_list, \(x) {
-    read_fn(paste(dir, "/", x), tissue_map[[x]])
+    read_fn(paste(dir, "/", x))
   })
   if (length(objs) > 1) {
-    merge(objs[[1]], add.cells.ids = fnames)
+    merge(objs[[1]], objs[2:length(objs)], add.cells.ids = fnames)
   } else {
     objs
   }
@@ -60,27 +70,82 @@ merge_seurat_from_files <- function(dir, ignore_list, tissue_map, read_fn) {
 
 ## ** HTC atlas
 
-htca_fn <- function(file, tissue) {
-  data <- readRDS(here(dirs$htc_atlas, file))
-  ## avg <- AverageExpression(test, group.by = "Cell_Type", return.seurat = TRUE, layer = "counts")
-  data[[]]$source <- "htca"
-  data[[]]$tissue <- tissue
-  data
+symbol2ensembl <- local({
+  tb <- read_tsv(here("data", "mappings", "ensembl_113_id_mapping.tsv")) |> distinct(ensembl, .keep_all = TRUE)
+  setNames(tb$ensembl, tb$symbol)
+})
+
+ensdb <- EnsDb(as.character(ut$get_data("reference/Homo_sapiens.GRCh38.113.sqlite")))
+
+htca_fn <- function(file) {
+  obj <- readRDS(here(dirs$htc_atlas, file))
+  obj[[]]$source <- paste0("htca-", obs[[]]$Project)
+  obj[[]] <- obj[[]] |>
+    dplyr::rename(tissue = Tissue, subject = Sample_ID, cell_type = Cell_Type) |>
+    select(tissue, subject, cell_type, source)
+  obj[["RNA"]][[]]$GENENAME <- rownames(obj[["RNA"]][[]])
+  obj <- rename_seurat_features(obj, symbol2ensembl, mapping = TRUE)
+  var_meta <- AnnotationDbi::select(ensdb,
+    keys = rownames(obj), columns = c("GENEBIOTYPE", "SEQLENGTH"),
+    keytype = "GENEID"
+  )
+  obj[["RNA"]][[]]$GENEID <- rownames(obj)
+  obj[["RNA"]][[]] <- left_join(obj[["RNA"]][[]], var_meta, by = join_by(GENEID))
+  obj
 }
 
-## ** Tabula Sapiens
+## ** Cellxgene
 
-# Will just get this from cellxgene_census
-tabula_fn <- function(file, tissue) {
-  data <- adata2seurat(file)
-  data[[]]$source <- "tabula"
-  data[[]]$tissue <- tissue
-  data
+dataset_id_map <- local({
+  tb <- read_csv(here("data", "mappings", "cellxgene_datasets.csv"))
+  setNames(tb$collection_name, tb$dataset_id)
+})
+
+cellxgene_fn <- function(file) {
+  adata <- ad$read_h5ad(file)
+  adata <- adata[, !is.na(adata$var$feature_id)]
+  rownames(adata$var) <- adata$var$feature_id
+  mapping <- c(
+    "feature_id" = "GENEID", "feature_type" = "GENEBIOTYPE", "feature_length" = "SEQLENGTH",
+    "feature_name" = "GENENAME"
+  )
+  adata$var <- adata$var |>
+    dplyr::rename(all_of(mapping)) |>
+    select(all_of(mapping))
+  adata$obs$source <- paste0("cellxgene", "-", dataset_id_map[adata$obs$dataset_id])
+  adata$obs$subject <- paste0(adata$obs$dataset_id, "-", adata$obs$donor_id)
+  adata$obs <- adata$obs |> select(cell_type, tissue, source, subject)
+  adata2seurat(adata)
 }
 
 ## ** GTEx
 
-# TODO:
+gtex_fn <- function(file) {
+  adata <- ad$read_h5ad(file)
+  adata$X <- adata$layers$counts
+  wanted_cols <- c(
+    "tissue", "Participant ID", "Cell types level 2",
+    "batch", "prep", "Tissue Site Detail", "Broad cell type",
+    "Granular cell type", "Tissue composition", "PercentMito", "PercentRibo", "scrublet"
+  )
+  adata$obsp <- NULL
+  adata$obsm <- NULL
+  adata$varm <- NULL
+  adata <- adata[!as.logical(adata$obs$scrublet), ]
+  adata$obs <- select(adata$obs, any_of(wanted_cols)) |>
+    dplyr::rename_with(\(x) str_to_lower(str_replace_all(x, " ", "_"))) |>
+    mutate(granular_cell_type = str_extract(granular_cell_type, "\\((.*)\\)", group = 1))
+  adata$obs$source <- "GTEx"
+  adata <- adata[, !is.na(adata$var$gene_ids)]
+  rownames(adata$var) <- adata$var$gene_ids
+  adata$var <- adata$var |>
+    select("gene_ids", "gene_name", "gene_biotype", "gene_length") |>
+    dplyr::rename_with(\(x) str_replace(str_to_upper(x), "_", "")) |>
+    dplyr::rename(SEQLENGTH = "GENELENGTH", GENEID = "GENEIDS") |>
+    select(SEQLENGTH, GENEID, GENENAME, GENEBIOTYPE)
+  adata2seurat(adata)
+}
+
 
 ## ** Single Cell Atlas
 # REVIEW: Files are matrices, but no annotation. Should only use this as last resort
@@ -148,10 +213,13 @@ colData(together)$cell_type <- with(colData(together), case_when(
 # Plan is to aggregate all the cell data together into one Seurat object
 # Combine and remove batch effect
 
+# var columns: GENEID, GENEBIOTYPE, SEQLENGTH
+# obs columns: cell_type, tissue, subject, source
+
 read_fns <- list(
   htc_atlas = htca_fn,
-  gtex = print,
-  tabula = print,
+  gtex = gtex_fn,
+  cellxgene = cellxgene_fn,
 )
 
 all_objs <- sapply(names(dirs), \(x) {
@@ -161,3 +229,6 @@ all_objs <- sapply(names(dirs), \(x) {
     read_fn = read_fns[[x]]
   )
 }, simplify = FALSE, USE.NAMES = TRUE)
+combined <- merge(all_objs[[1]], all_objs[2:length(all_objs)], add.cells.ids = names(all_objs))
+write_csv(combined[[]], here("data", "reference", "sc_ref_all_obs.csv"))
+## SaveSeuratRds(combined, file = here(storage_dir, "sc_ref_all.rds"))
