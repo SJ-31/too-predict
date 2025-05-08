@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Sequence
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -14,7 +15,6 @@ import scipy.cluster.hierarchy as sch
 import scipy.spatial.distance as spd
 import seaborn as sns
 import sklearn.neighbors as sn
-from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from scipy import sparse
 
@@ -39,10 +39,12 @@ class Filter:
         # Requested features to subset data by
         if blacklist is not None:
             self.features = [f for f in features if f not in blacklist]
-        self.feature_col = feature_col
-        self.discarded_features = None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
-        self.inplace = inplace
-        self.missing_features = []
+        self.feature_col: str = feature_col
+        self.discarded_features: Sequence | None = (
+            None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
+        )
+        self.inplace: bool = inplace
+        self.missing_features: list = []
 
     def copy(self) -> Filter:
         return Filter(

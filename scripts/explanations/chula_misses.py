@@ -234,7 +234,6 @@ def lfc_main(model, train, test, ignored, name, label_col, filter):
         figure.set_size_inches((20, 10))
         fig_path = outdir.joinpath(f"lfc_comparison_{name}.png")
         figure.savefig(fig_path)
-        exit(1)  # NOTE: [2025-04-10 Thu] You only want the pca
         for q in [0.1, 0.2, 0.3, 0.5]:
             noisy = cc.sc_get_noisy(
                 quantile=q, agg_method="median", subset=["LIHC", "CHOL"]

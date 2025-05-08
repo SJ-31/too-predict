@@ -25,6 +25,12 @@ REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
 marker_file = cell_markers_internal(file_only=True)
 marker_meta = cell_markers_internal(meta=True)
 
+
+def get_common():
+    m: dict[str, list] = cell_markers_internal()
+    return {k: v for k, v in m.items() if k.startswith("common-")}
+
+
 # * Models
 # Key:
 # m : model
@@ -93,6 +99,13 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-08 Tue] Surprisingly good
     },
+    "clr_xgb3_edger_rfecv": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "clr_xgb3_1000_edger_rfecv_feature_list",
+        "s": True,  # [2025-05-07 Wed] Only 783 features, not bad
+    },
     "clr_xgb3_1000_edger": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
@@ -135,7 +148,7 @@ MODELS: dict = {
         "s": True,  # [2025-03-27 Thu] Want to try this out badly, but it's so slow
     },
     "clr_dt_edger": {  # A surrogate model
-        "model": tm.PredBase(model=DecisionTreeClassifier()),
+        "m": tm.PredBase(model=DecisionTreeClassifier()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
@@ -309,6 +322,18 @@ MODELS: dict = {
         # able to use information from the organoid samples, which constitutes
         # data leakage
     },
+    "clr_xgb3_edger_combat_ref_rfecv": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {
+            "method": "combat_ref",
+            "batch": "is_organoid",
+            "group": "tumor_type",
+        },
+        "f": "clr_xgb3_1000_edger_rfecv_feature_list",
+        "s": False,
+    },
     # ** Recodings
     "clr_xgboost_edger_GO": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
@@ -344,6 +369,7 @@ MODELS: dict = {
         "e": rt.Recoder("go", id_col="GENEID", level=2),
         "s": True,
     },
+    # *** Marker-only
     "clr_xgboost_plage": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
@@ -356,11 +382,23 @@ MODELS: dict = {
         "e": rt.Recoder("gsva", reference=marker_file, metadata=marker_meta),
         "s": True,  # [2025-04-29 Tue] Out of memory
     },
+    "clr_xgboost_plage_common": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("plage", reference=get_common(), metadata=marker_meta),
+        "s": False,
+    },
     "clr_xgboost_bisquemarker": {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": rt.Recoder("bisque_marker", markers=marker_file),
         "s": True,
+    },
+    "clr_xgboost_bisquemarker_common": {
+        "m": PredBase(XGBEstimator(max_depth=3)),
+        "i": "plus_one",
+        "e": rt.Recoder("bisque_marker", markers=get_common()),
+        "s": False,
     },
 }
 
