@@ -2,13 +2,14 @@
 
 import importlib.resources as res
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import anndata as ad
 import anndata2ri
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
+import scanpy as sc
 from rpy2.robjects import RObject, numpy2ri, pandas2ri
 from rpy2.robjects.conversion import localconverter
 from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
@@ -286,3 +287,41 @@ def r_null_if_none(obj, symbol, conversion=lambda x: x) -> None:
         ro.r(f"{symbol} <- NULL")
     else:
         ro.globalenv[symbol] = conversion(obj)
+
+
+@r_cleanup
+def pooled_normalization(
+    adata: ad.AnnData,
+    cluster_method: Literal["scran", "leiden"] = "leiden",
+    cluster_col: str | None = None,
+    do_parallel: bool = True,
+    n_workers: int = 8,
+) -> None:
+    if not do_parallel:
+        ro.r("bppar <- NULL")
+    else:
+        ro.r(f"bppar <- BiocParallel::MulticoreParam(workers = {n_workers})")
+
+    if cluster_col is not None:
+        clusters = adata.obs[cluster_col]
+    elif cluster_method == "leiden":
+        adata_c = adata.copy()
+        sc.pp.normalize_total(adata_c)
+        sc.pp.log1p(adata_c)
+        sc.pp.pca(adata_c, n_comps=10)
+        sc.pp.neighbors(adata_c)
+        sc.tl.leiden(adata_c)
+        clusters = adata_c.obs["leiden"]
+    elif cluster_method == "scran":
+        counts_into_r(adata)
+        ro.r("result <- scran::quickCluster(counts, BPPARAM = bppar)")
+        clusters = ro.globalenv["result"]
+
+    ro.globalenv["clusters"] = ro.StrVector(clusters)
+    counts_into_r(adata)
+    adata.obs["size_factors"] = ro.r(
+        """scuttle::pooledSizeFactors(counts, clusters = clusters, BPPARAM = bppar)"""
+    )
+    adata.layers["raw"] = adata.X
+    normalized = adata.X / adata.obs["size_factors"].values.reshape((-1, 1))
+    adata.X = sparse.csc_array(sc.pp.log1p(normalized))
