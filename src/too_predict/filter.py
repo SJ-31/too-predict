@@ -21,6 +21,7 @@ from scipy import sparse
 import too_predict._rust_helpers as rh
 import too_predict.explanation as te
 import too_predict.plotting as plotting
+import too_predict.r_utils as ru
 import too_predict.utils as ut
 from too_predict.model import PredBase
 
@@ -263,19 +264,19 @@ class CompareSplits:
         self.train_y: Iterable = train.obs[y].unique()
         self.prototypes: dict[str, dict] = {}
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def edgeR_lfc(self) -> pd.DataFrame:
         i_name = self.adata.var.index.name
-        ut.source("utils.R", in_r=True)
-        ut.df_to_r(self.adata.obs, r_symbol="obs")
-        ut.df_to_r(self.adata.var.reset_index(), r_symbol="var")
+        ru.source("utils.R", in_r=True)
+        ru.df_to_r(self.adata.obs, r_symbol="obs")
+        ru.df_to_r(self.adata.var.reset_index(), r_symbol="var")
         counts = (
             self.adata.X.toarray() if sparse.issparse(self.adata.X) else self.adata.X
         )
-        ut.np_to_r(np.transpose(counts), r_symbol="counts")
+        ru.np_to_r(np.transpose(counts), r_symbol="counts")
         ro.globalenv["label"] = self.y
         ro.r("result <- edgeR_lfc_train_test(counts, obs, var, label)")
-        df = ut.df_from_r(ro.globalenv["result"])
+        df = ru.df_from_r(ro.globalenv["result"])
         df.index = df[i_name]
         return df.drop(i_name, axis=1)
 

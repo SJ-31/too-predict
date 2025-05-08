@@ -1,5 +1,7 @@
 #!/usr/bin/env ipython
 
+from typing import Sequence
+
 import anndata as ad
 import numpy as np
 import rpy2.robjects as ro
@@ -7,6 +9,7 @@ from inmoose import pycombat
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse
 
+import too_predict.r_utils as ru
 import too_predict.utils as ut
 
 IMPLEMENTED_CORRECTION = {
@@ -38,12 +41,15 @@ class Corrector:
         layer=None,
         **kwargs,
     ):
-        self.method = method
+        self.method: str = method
         if self.method not in IMPLEMENTED_CORRECTION:
             raise ValueError("Method not supported!")
-        self.batch_key = batch
-        self.inplace = inplace
-        self.layer = layer
+        self.batch_key: str | None = batch
+        self.batch: Sequence
+        self.was_sparse: bool
+        self.inplace: bool = inplace
+        self.layer: str | None = layer
+        self.adata: ad.AnnData
         self.kwargs: dict = kwargs
         self.counts: np.ndarray
 
@@ -81,7 +87,7 @@ class Corrector:
         )
         return np.transpose(pyc)
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _combat_seq(
         self,
         group: list[str] | str | None = None,
@@ -118,12 +124,12 @@ class Corrector:
         corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _deseq2(
         self, group: list[str] | str | None = None, full: bool = True
     ) -> np.ndarray:
         ut.source("correction.R", in_r=True)
-        ut.counts_into_r(self.adata, counts=self.counts)
+        ru.counts_into_r(self.adata, counts=self.counts)
         ro.r("mode(counts) <- 'integer'")
         ro.globalenv["batch"] = ro.StrVector(self.batch)
         ro.globalenv["full_mod"] = full
@@ -137,7 +143,7 @@ class Corrector:
         corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _combat_ref(
         self,
         group: list[str] | str | None = None,
@@ -172,7 +178,7 @@ class Corrector:
         corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _remove_batch_effect(
         self,
         batch2: list[str] | str | None = None,

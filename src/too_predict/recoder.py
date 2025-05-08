@@ -11,10 +11,10 @@ import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
 import yaml
-from scanpy.get import obs_df
 from scipy import sparse
 
 import too_predict.go_utils as gt
+import too_predict.r_utils as ru
 import too_predict.transformer as tt
 import too_predict.utils as ut
 from too_predict.imputer import Imputer
@@ -46,9 +46,9 @@ class Recoder:
         self.kwargs: dict = kwargs
 
     def _counts_into_r(self) -> None:
-        ut.counts_into_r(self.adata, self.counts)
+        ru.counts_into_r(self.adata, self.counts)
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _plage(
         self, reference: Path | dict, metadata: Path | pd.DataFrame | None = None
     ) -> ad.AnnData:
@@ -202,7 +202,7 @@ class Recoder:
             var = var.merge(metadata, left_index=True, right_index=True, how="left")
         return ad.AnnData(X=vals.values.astype(np.float64), var=var, obs=self.adata.obs)
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _bisque(
         self,
         markers: Path | dict | Sequence | None = None,
@@ -240,7 +240,7 @@ class Recoder:
         else:
             if isinstance(reference, Path):
                 reference = ad.read_h5ad(reference)
-            ut.counts_into_r(reference, symbol="ref")
+            ru.counts_into_r(reference, symbol="ref")
             ut.r_null_if_none(subject_col, symbol="subject_col")
             ut.r_null_if_none(markers, symbol="markers", conversion=ro.StrVector)
             if markers is not None and not isinstance(markers, Sequence):
@@ -279,7 +279,7 @@ class Recoder:
         self.was_sparse = sparse.issparse(self.counts)
         self.counts = self.counts.toarray() if self.was_sparse else self.counts
 
-    @ut.r_cleanup
+    @ru.r_cleanup
     def _BayesPrism(
         self,
         adata: ad.AnnData,
@@ -297,8 +297,8 @@ class Recoder:
         ro.globalenv["gene_types"] = ro.StrVector(gene_type)
         ro.globalenv["to_filter"] = ro.StrVector(filtered_genes)
         ut.r_null_if_none(malignant_cell_name, "malignant")
-        ut.counts_into_r(adata, symbol="bulk", transpose=False)
-        ut.counts_into_r(reference, symbol="ref", transpose=False)
+        ru.counts_into_r(adata, symbol="bulk", transpose=False)
+        ru.counts_into_r(reference, symbol="ref", transpose=False)
         ro.r("""ref <- cleanup.genes(ref,
             gene.group = to_filter,
             species = 'hs',
@@ -324,6 +324,23 @@ class Recoder:
             X=recoded, obs=self.adata.obs, var=pd.DataFrame(index=types)
         )
         return result
+
+    @ru.r_cleanup
+    def _multideconv(self, reference: ad.AnnData | Path | None = None) -> ad.AnnData:
+        self._counts_into_r()
+        if reference is not None:
+            if isinstance(reference, Path):
+                reference = ad.read_h5ad(reference)
+            ru.counts_into_r(reference, symbol="ref")
+        # TODO: need to normalize ref
+
+        ro.globalenv["use_sc"] = reference is None
+        ro.r("""
+        result <- compute.deconvolution(
+
+
+            )
+        """)
 
     def transform(self) -> ad.AnnData:
         if self.method == "go":

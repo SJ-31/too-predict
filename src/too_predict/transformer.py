@@ -9,14 +9,14 @@ import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
-from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
-from too_predict.utils import (
-    add_gc_content,
+from too_predict.r_utils import (
     counts_into_r,
     np_from_r,
     np_to_r,
     r_cleanup,
 )
+from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
+from too_predict.utils import add_gc_content
 
 IMPLEMENTED_TRANSFORMATION = {
     "clr",
@@ -47,7 +47,7 @@ class Transformer:
 
     def fit(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
         if isinstance(data, ad.AnnData):
-            self.counts_only: bool = False
+            self.counts_only = False
             self.adata = data if self.inplace else data.copy()
             self.adata.layers["counts"] = data.X.copy()
             if sparse.issparse(data.X):

@@ -15,15 +15,13 @@ import pandas as pd
 import rpy2.robjects as ro
 import scanpy as sc
 import sklearn.metrics as sm
-from dask.distributed import Client
-from dask_jobqueue import SLURMCluster
 from pyhere import here
 from too_predict.filter import Filter
-from too_predict.imputer import IMPLEMENTED_IMPUTATION, Imputer
+from too_predict.imputer import Imputer
+from too_predict.r_utils import counts_into_r
 from too_predict.simulation import IMPLEMENTED_SIMULATION
 from too_predict.transformer import IMPLEMENTED_TRANSFORMATION, Transformer
 from too_predict.utils import (
-    adata_x_to_r,
     df_to_r,
     read_existing,
     ref_feature_lists_internal,
@@ -203,7 +201,7 @@ def main(adata, feature_set_name):
                     if feature_set_name != "all_features":
                         source("plotting.R", True)
                         df_to_r(normalized.obs, r_symbol="obs")
-                        adata_x_to_r(normalized, "counts")
+                        counts_into_r(normalized)
                         heatmap_file = here(var_dir, f"{i}_{n}_heatmap.png")
                         fncall = f"""
                         pheatmap_helper(obs=obs, counts=counts,

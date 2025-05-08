@@ -4,7 +4,7 @@ import numpy as np
 import rpy2.robjects as ro
 from scipy import stats
 
-from too_predict.utils import r_cleanup
+from too_predict.r_utils import r_cleanup
 
 IMPLEMENTED_SIMULATION = {"dirichlet", "dirichlet_scale"}
 

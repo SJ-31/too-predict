@@ -10,10 +10,8 @@ from pathlib import Path
 from typing import Callable
 
 import anndata as ad
-import anndata2ri
 import numpy as np
 import pandas as pd
-import rpy2.robjects as ro
 import scanpy as sc
 import scipy.spatial.distance as spd
 import yaml
@@ -26,11 +24,8 @@ from rpy2.rinterface_lib.sexp import (
     NALogicalType,
     NARealType,
 )
-from rpy2.robjects import RObject, numpy2ri, pandas2ri
-from rpy2.robjects.conversion import localconverter
-from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, importr
 from scipy import sparse, stats
-from sklearn.model_selection import ShuffleSplit, train_test_split
+from sklearn.model_selection import ShuffleSplit
 
 import too_predict
 
@@ -55,11 +50,6 @@ def train_test_split_ad(adata: ad.AnnData, **kwargs) -> tuple[ad.AnnData, ad.Ann
     return adata[train, :], adata[test, :]
 
 
-def register_biocparallel(workers: int, param="MulticoreParam") -> None:
-    ro.r("library(BiocParallel)")
-    ro.r(f"register({param}(workers = {workers}))")
-
-
 def get_data(path: str, must_exist: bool = True) -> Path:
     """Retrieve the path of a file in this package's `data` directory
     :param: path relative path to the desired file
@@ -69,61 +59,6 @@ def get_data(path: str, must_exist: bool = True) -> Path:
     if must_exist and not file.exists():
         raise FileNotFoundError(f"{path} doesn't exist!")
     return file.absolute()
-
-
-def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
-    with localconverter(anndata2ri.converter):
-        ro.globalenv["adata_tmp"] = adata
-        id = r_symbol if r_symbol else "sce_tmp"
-        ro.r(f"{id} <- as(adata_tmp, 'SingleCellExperiment')")
-        if to_matrix:
-            ro.r(f"assays({id})$X <- as.matrix(assays({id})$X)")
-        ro.r("rm(adata_tmp)")
-    if not r_symbol:
-        return ro.r(id)
-
-
-def np_to_r(arr: np.ndarray, r_symbol: str = "") -> None:
-    np_cv_rules = ro.default_converter + numpy2ri.converter
-    with np_cv_rules.context():
-        ro.globalenv[r_symbol] = arr
-
-
-def np_from_r(robj) -> np.ndarray:
-    np_cv_rules = ro.default_converter + numpy2ri.converter
-    with np_cv_rules.context():
-        return ro.conversion.get_conversion().rpy2py(robj)
-
-
-def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
-    with (ro.default_converter + pandas2ri.converter).context():
-        converted = ro.conversion.get_conversion().py2rpy(df)
-        if r_symbol:
-            ro.globalenv[r_symbol] = converted
-        else:
-            return converted
-
-
-def df_from_r(robj) -> pd.DataFrame:
-    with (ro.default_converter + pandas2ri.converter).context():
-        ro.globalenv["df_from_r_tmp"] = robj
-        if ro.r("class(df_from_r_tmp)")[0] not in {"data.frame"}:
-            raise ValueError("The given object is not a data.frame")
-        ro.r("rm(df_from_r_tmp)")
-        converted = ro.conversion.get_conversion().rpy2py(robj)
-        # BUG <2025-02-11 Tue>: rpy2 doesn't convert R NAs correctly
-        # df = converted.map(lambda x: np.nan if type(x) in NA_TYPES else x)
-        return converted
-
-
-def r_cleanup(fn: Callable):
-    def wrp(*args, **kwargs):
-        val = fn(*args, **kwargs)
-        ro.r("rm(list=ls())")
-        ro.r("gc()")
-        return val
-
-    return wrp
 
 
 def filter_by_obs(
@@ -154,93 +89,6 @@ def filter_by_obs(
     return adata[mask, :], to_discard
 
 
-@r_cleanup
-def dgelist2anndata(rds: str | RObject) -> ad.AnnData:
-    """Read a DGEList object stored in an rds file `rds` into an AnnData object"""
-    base = library("base")
-    if isinstance(rds, str):
-        ro.globalenv["dge"] = base.readRDS(rds)
-        adata = ad.AnnData(
-            X=sparse.csr_matrix(ro.r("t(dge$counts)")),
-            obs=df_from_r(ro.r("dge$samples")),
-            var=df_from_r(ro.r("dge$gene")),
-        )
-        adata.var.index = adata.var.iloc[:, 0]
-    return adata
-
-
-def adata_x_to_r(adata: ad.AnnData, r_symbol: str = "", layer=None):
-    if layer is not None:
-        counts = adata.layers[layer]
-    else:
-        counts = adata.X
-    if not isinstance(counts, np.ndarray):
-        counts = counts.toarray()
-    ro.globalenv["tmp_colnames"] = ro.StrVector(adata.obs.index)
-    ro.globalenv["tmp_rownames"] = ro.StrVector(adata.var.index)
-    np_to_r(np.transpose(counts), r_symbol="tmp_mat")
-    ro.r("rownames(tmp_mat) <- tmp_rownames")
-    ro.r("colnames(tmp_mat) <- tmp_colnames")
-    ro.r("rm(tmp_colnames)")
-    ro.r("rm(tmp_rownames)")
-    if r_symbol:
-        ro.globalenv[r_symbol] = ro.r("tmp_mat")
-        ro.r("rm(tmp_mat)")
-    else:
-        return ro.globalenv["tmp_mat"]
-
-
-def source(r_script: str, in_r=False) -> STAP | None:
-    """Import `r script` in src/R as a STAP"""
-    root = res.files(too_predict)
-    r_src = root.parent.joinpath("R")
-    script = r_src.joinpath(r_script)
-    if not script.exists():
-        raise FileNotFoundError(f"{r_script} doesn't exist in src/R!")
-    if in_r:
-        ro.r(f"source('{script.absolute()}')")
-    else:
-        text = script.read_text()
-        return STAP(text, Path(r_script).stem)
-
-
-def library(package: str) -> InstalledSTPackage | InstalledPackage:
-    """Load an R package into the global environment if it has not been loaded yet"""
-    check = globals().get(package)
-    if not check or type(check) not in {InstalledPackage, InstalledSTPackage}:
-        loaded = importr(package)
-        globals()[package] = loaded
-        return loaded
-    return check
-
-
-@r_cleanup
-def tximport_salmon(
-    files: list[Path], sample_names: list[str] | None = None, column="counts"
-) -> pd.DataFrame:
-    """Wrapper for importing multiple salmon files with tximport"""
-    tx2gene = pd.read_csv(get_data("tx2gene.tsv"), sep="\t")
-    df_to_r(tx2gene.loc[:, ["TXID", "GENEID"]], "tx2gene")
-    ro.globalenv["paths"] = ro.StrVector([str(f) for f in files])
-    # FIXME: would rather have tximport handle the file list automatically, but
-    #   it will raise an error if any of the files don't have the same tx
-    ro.r(f"""
-    library(tidyverse)
-    library(tximport)
-    imp <- lapply(paths, \\(x) tximport(x, "salmon", tx2gene = tx2gene,
-                                                ignoreTxVersion = TRUE))
-    df <- lapply(imp, \\(x) rownames_to_column(as.data.frame(x${column}), "id")) |>
-        reduce(\\(x, y) full_join(x, y, by = join_by(id))) |>
-        column_to_rownames("id")
-    colnames(df) <- paste0("V", seq_len(ncol(df)))
-    """)
-    genes = list(ro.r("rownames(df)"))
-    counts = np_from_r(ro.r("as.matrix(df)"))
-    sample_names = sample_names if sample_names else list(ro.r("colnames(df)"))
-    result = pd.DataFrame(counts, index=genes, columns=sample_names)
-    return result
-
-
 def symbol2ensembl(as_df: bool = False) -> dict | pd.DataFrame:
     df = pd.read_csv(get_data("mappings/ensembl_113_id_mapping.tsv"), sep="\t")
     sel = df.loc[:, ["symbol", "ensembl"]].dropna(subset="symbol").drop_duplicates()
@@ -257,42 +105,6 @@ def add_gc_content(adata: ad.AnnData, id_col: str = "GENEID") -> None:
     adata.var = adata.var.merge(
         mapping, left_on=id_col, right_on="Gene stable ID", how="left"
     )
-
-
-@r_cleanup
-def add_gene_metadata(
-    adata: ad.AnnData,
-    keycol: str = "",
-    columns=("GENENAME", "GENEID", "GENEBIOTYPE", "SEQNAME", "SEQLENGTH"),
-    ensdb_path: str = "",
-    keytpe: str = "GENEID",
-) -> None:
-    """Add gene metadata from the ensembldb object stored at `ensdb_path`"""
-    ensembldb = library("ensembldb")
-    for c in columns:
-        if c in adata.var.columns:
-            print(f"WARNING: column {c} already exists in adata.var, removing...")
-            adata.var = adata.var.drop(c, index="columns")
-    if not ensdb_path:
-        ensdb_path = str(get_data("reference/Homo_sapiens.GRCh38.113.sqlite"))
-    ro.globalenv["db"] = ensembldb.EnsDb(ensdb_path)
-    ro.globalenv["cols"] = ro.StrVector(columns)
-    if keycol:
-        keys = adata.var[keycol]
-    else:
-        keys = adata.var.index
-    ro.globalenv["keys"] = ro.StrVector(keys)
-    ro.globalenv["anno"] = ro.r(
-        f"AnnotationDbi::select(db, keys = keys, columns = cols, keytype = '{keytpe}')"
-    )
-    result: pd.DataFrame = df_from_r(ro.r("anno"))
-    if keycol:
-        result[keycol] = ro.StrVector(result[keytpe])
-    else:
-        result.index = ro.StrVector(result[keytpe])
-
-    join_on = keycol if keycol else None
-    adata.var = adata.var.join(result, on=join_on, how="left")
 
 
 def rename_genes(
@@ -895,23 +707,6 @@ class RankInterpreter:
         return requested
 
 
-def counts_into_r(
-    adata: ad.AnnData, counts: np.ndarray | None = None, symbol="counts", transpose=True
-) -> None:
-    ro.globalenv["sample_names"] = ro.StrVector(adata.obs.index.astype(str))
-    ro.globalenv["var_names"] = ro.StrVector(adata.var.index.astype(str))
-    to_send = adata.X if counts is None else counts
-    to_send = to_send.toarray() if sparse.issparse(to_send) else to_send
-    to_send = np.transpose(to_send) if transpose else to_send
-    np_to_r(to_send, r_symbol=symbol)
-    if transpose:
-        ro.r(f"rownames({symbol}) <- var_names")
-        ro.r(f"colnames({symbol}) <- sample_names")
-    else:
-        ro.r(f"colnames({symbol}) <- var_names")
-        ro.r(f"rownames({symbol}) <- sample_names")
-
-
 def write_tmp_toolkit(
     adata: ad.AnnData, outfile: str | Path, symbol_col: str = "ENTREZ"
 ) -> None:
@@ -973,13 +768,3 @@ def quantify_overlap(sets: dict, method: str) -> pd.Series:
             index=pd.MultiIndex.from_frame(long.loc[:, ["index", "variable"]]),
         ).sort_values(ascending=False)
     return result
-
-
-def r_null_if_none(obj, symbol, conversion=lambda x: x) -> None:
-    """Assign `obj` to R object `symbol` iff obj is not None. Otherwise assign
-    NULL to symbol
-    """
-    if obj is None:
-        ro.r(f"{symbol} <- NULL")
-    else:
-        ro.globalenv[symbol] = conversion(obj)
