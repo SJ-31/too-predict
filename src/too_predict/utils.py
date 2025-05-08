@@ -2,7 +2,6 @@
 
 import importlib.resources as res
 import itertools
-import math
 import pickle
 from datetime import datetime
 from functools import reduce
@@ -16,6 +15,7 @@ import scanpy as sc
 import scipy.spatial.distance as spd
 import yaml
 from joblib import Parallel, delayed
+from numpy.random import Generator
 from pyhere import here
 from rpy2.rinterface_lib.sexp import (
     NACharacterType,
@@ -40,7 +40,7 @@ NA_TYPES: set = {
 RANDOM_STATE: int = 9874  # Last modified <2025-03-05 Wed>
 # Use for CV splitters
 
-RNG = np.random.default_rng(297)  # Last modified [2025-03-25 Tue]
+RNG: Generator = np.random.default_rng(297)  # Last modified [2025-03-25 Tue]
 # Use for any relevant estimators
 
 
@@ -485,10 +485,6 @@ def hugo_ref_internal() -> pd.DataFrame:
     raise ValueError("The data file doesn't exist!")
 
 
-# [2025-03-19 Wed] Determined in `feature_selection.py` with CLR and xgboost
-ZEROS_FILE = "edgeR_median_lfc_feature_list_3000.txt"
-
-
 def get_blacklist_internal(
     name: str = "edgeR_median_lfc_feature_list_3000_ZERO.txt",
 ) -> list:
@@ -529,31 +525,6 @@ def ref_feature_lists_internal(
     return refs, features
 
 
-def comb_pair_at(j, query, n=None) -> tuple[int, int]:
-    """
-
-
-    TODO: write this in rust, accumulate and the loop might get unwieldy
-    could there also be an analytic way of calculating `f_offset`?
-    """
-    n = math.comb(j, 2) if n is None else n
-    first: int = j - 2  # Placeholder
-    if query >= n:
-        raise ValueError("The query is too large!")
-    f_offset: int = 0
-    first_cutoffs = itertools.accumulate((j - 1 - i for i in range(j - 1)))
-    previous = 0
-    for index, acc in enumerate(first_cutoffs):
-        if query < acc:
-            first = index
-            f_offset = previous
-            break
-        if index > 0:
-            previous = acc
-    second = query - f_offset + first + 1
-    return (first, second)
-
-
 def record_in_yaml(file: str | Path, record_key: str = "last_ran") -> None:
     file = Path(file) if isinstance(file, str) else file
     with open(file, "w+") as f:
@@ -579,12 +550,6 @@ def write_feat_ref_metadata():
             )
             with_hugo = with_hugo.loc[:, list(hugo.columns) + list(current.columns)]
             with_hugo.to_csv(here(dir, f"{k}_metadata.csv"), index=False)
-
-
-def filter_by_go(
-    adata: ad.AnnData, allowed_ontology=None, allowed_gos=None, id_col: str = "GENEID"
-):
-    pass
 
 
 def adata_sample_by(
@@ -768,3 +733,67 @@ def quantify_overlap(sets: dict, method: str) -> pd.Series:
             index=pd.MultiIndex.from_frame(long.loc[:, ["index", "variable"]]),
         ).sort_values(ascending=False)
     return result
+
+
+def scanorama_correct(adata: ad.AnnData, batch_key: str, scale: bool = True, **kwargs):
+    """Wrapper for Scanorama batch-effect correction
+
+    Parameters
+    ----------
+    adata : combined anndata object. Counts should be log-normalized and scaled for
+        best results
+    scale : whether or not to scale data by batch
+    batch_key : column of adata.obs containing batch information
+    """
+    import scanorama
+
+    defaults = {
+        "batch_size": 10,
+        "verbose": 2,
+        "sigma": 15,
+        "alpha": 0.1,
+        "knn": 20,
+        "approx": True,  # Use approximate nearest neighbors, speeds up runtime
+        "hvg": 3000,  # Use this many top hvgs
+        "dimred": 100,
+    }
+    defaults.update(kwargs)
+    splits = []
+    for b in adata.obs[batch_key].unique():
+        current = adata[adata.obs[batch_key] == b, :]
+        if scale:
+            sc.pp.scale(current)
+        splits.append(current)
+    corrected = scanorama.correct_scanpy(splits, **defaults)
+    return ad.concat(corrected, axis="obs", join="inner", merge="first")
+
+
+def preserving_sample(
+    adata: ad.AnnData,
+    key: str,
+    fraction: float = 0.4,
+    inplace: bool = True,
+    rng: np.random.Generator = RNG,
+    with_replacement: bool = False,
+) -> None | ad.AnnData:
+    """Helper function for sampling from `adata` in a way that preserves the
+    label distributions in `key`
+    """
+    if not with_replacement and fraction > 1:
+        raise ValueError("with_replacement must be True if adding more samples!")
+    new_counts: pd.Series = round(adata.obs[key].value_counts() * fraction, 0).astype(
+        int
+    )
+    new_counts[new_counts == 0] = 1
+    index_map: pd.Series = pd.Series(range(0, adata.shape[0]), index=adata.obs.index)
+    wanted_indices = []
+    for k, count in new_counts.items():
+        current = adata[adata.obs[key] == k, :]
+        wanted_indices.extend(
+            rng.choice(current.obs.index, size=count, replace=with_replacement)
+        )
+    mapped: np.ndarray = index_map[wanted_indices].values
+    if inplace:
+        adata = adata[mapped, :]
+    else:
+        return adata[mapped, :].copy()
