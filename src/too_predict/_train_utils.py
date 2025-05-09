@@ -332,7 +332,8 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "clr_xgb3_1000_edger_rfecv_feature_list",
-        "s": False,
+        "s": True,  # [2025-05-09 Fri] Hmmn, worse than the 3000 features
+        # suggests that your rfecv list is not good for the organoid task
     },
     # ** Recodings
     "clr_xgboost_edger_GO": {

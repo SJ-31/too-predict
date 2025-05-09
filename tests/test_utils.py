@@ -4,7 +4,7 @@ import math
 from abc import abstractmethod
 from os import replace
 from pathlib import Path
-from typing import override
+from typing import Literal, override
 
 import alibi.api.interfaces as aai
 import anndata as ad
@@ -34,6 +34,7 @@ import too_predict.explanation as te
 import too_predict.filter as fil
 import too_predict.go_utils as gu
 import too_predict.model as tm
+import too_predict.r_utils as ru
 import too_predict.recoder as rt
 import too_predict.utils as ut
 from joblib import Parallel, delayed, parallel
@@ -79,23 +80,31 @@ spc = MODELS["clr_random_forest_edger"]
 
 F, M, T, B, E, C = read_model_spec(spc)
 adata.obs.loc[:, "not_primary"] = adata.obs["Sample_Type"] != "primary"
-filtered = F.fit_transform(adata)
-transformed = T.fit_transform(filtered)
+# filtered = F.fit_transform(adata)
+# transformed = T.fit_transform(filtered)
 
-transformed.obs["foo"] = "foo"
-train, test = ut.train_test_split_ad(transformed)
+# transformed.obs["foo"] = "foo"
+# train, test = ut.train_test_split_ad(transformed)
 
-counts = adata.X.toarray()
-# #  --- CODE BLOCK ---
-# meta = ut.cell_markers_internal(meta=True)
-# reference_file = ut.cell_markers_internal(file_only=True)
-# reference = ut.cell_markers_internal()
+# counts = adata.X.toarray()
 
 
-# gs = ut.gs_internal()
+testsc = ad.read_h5ad(here(ut.get_data("tests/scr_ref/sc_ref_all.h5ad")))
 
-# over = ut.pairwise_overlaps(gs, do_parallel=True)
 
-# ut.write_pickle(over, ut.get_data("reference/gene_sets_overlap.pckl", must_exist=False))
+# corrected = scanorama_correct(testsc, "source")
 
-# over = ut.load_pickle(ut.get_data("reference/gene_sets_overlap.pckl", must_exist=False))
+
+# ref_file = here("data", "tests", "scr_ref", "HTCA_ADULT_TESTIS.rds")
+# ro.r(f"obj <- readRDS('{str(ref_file)}')")
+# mapping = ut.symbol2ensembl()
+# x = ut.np_from_r(ro.r("t(as.matrix(SeuratObject::LayerData(obj)))"))
+# obs = ut.df_from_r(ro.r("obj[[]]"))
+
+# var = ut.df_from_r(ro.r("obj[['RNA']][[]]"))
+# var.loc[:, "ensembl"] = list(map(lambda x: mapping.get(x, np.nan), var.index))
+
+# ref = ad.AnnData(X=x, obs=obs, var=var)
+# ref = ref[:, ~ref.var["ensembl"].isna()]
+# ref.var = ref.var.set_index("ensembl")
+# adata = adata[:, 1:300]
