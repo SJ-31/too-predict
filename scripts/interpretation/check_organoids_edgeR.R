@@ -436,14 +436,8 @@ max_marker_size <- 1000
 marker_sets <- markers_internal()
 marker_lengths <- map_dbl(marker_sets, length)
 marker_sets <- marker_sets[marker_lengths >= min_marker_size & marker_lengths <= max_marker_size]
-marker_meta <- markers_meta_internal() |>
-  mutate(
-    set_name = paste0(tissue, "-", cell_type),
-    set_name = case_when(from_tme ~ paste0(set_name, "-tme"), .default = set_name)
-  ) |>
-  select(-all_of(c("tissue", "cell_type", "ensembl", "from_tme"))) |>
-  group_by(set_name) |>
-  summarise(size = n(), source = dplyr::first(source))
+
+marker_meta <- markers_meta_internal()
 
 ## marker_sets <- filter_gene_sets(marker_sets,
 ##   counts = adj_counts, min_nonzero_percent = min_nonzero_percent,

@@ -464,7 +464,21 @@ nrow after: {nrow(counts) - ndupes}
 
 
 markers_internal <- function() yaml::read_yaml(as.character(ut$get_data("reference/cell_markers_custom.yaml")))
-markers_meta_internal <- function() read_tsv(as.character(ut$get_data("reference/cell_markers_custom_meta.tsv")))
+markers_meta_internal <- function(grouped = TRUE) {
+  tb <- read_tsv(as.character(ut$get_data("reference/cell_markers_custom_meta.tsv")))
+  if (grouped) {
+    tb |>
+      mutate(
+        set_name = paste0(tissue, "-", cell_type),
+        set_name = case_when(from_tme ~ paste0(set_name, "-tme"), .default = set_name)
+      ) |>
+      select(-all_of(c("tissue", "cell_type", "ensembl", "from_tme"))) |>
+      group_by(set_name) |>
+      summarise(size = n(), source = dplyr::first(source))
+  } else {
+    tb
+  }
+}
 
 gs_meta_internal <- function() as.character(ut$get_data("reference/gene_sets_custom_meta.tsv", FALSE))
 
@@ -796,6 +810,7 @@ fgsea_result2gseGO <- function(fgsea, id_col = NULL, delim = "-") {
 #' Compute the average value e.g. for a given gene set
 #'
 #' The average is taken with respect to the genes present in `reference`
+#' @param reference a tibble/dataframe with a column containing the gene information
 gene_set_average <- function(gene_sets, reference, ref_gene_col = "GENEID", ref_val_col = "logFC") {
   eff_sizes <- map_dbl(gene_sets, \(x) length(intersect(x, reference[[ref_gene_col]])))
   df <- tibble(set = names(gene_sets), gene = gene_sets, value = 1) |>
