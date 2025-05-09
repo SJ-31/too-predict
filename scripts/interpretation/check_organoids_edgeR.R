@@ -9,6 +9,7 @@ suppressMessages({
   use_condaenv("too-predict")
   source(here("src", "R", "utils.R"))
   source(here("src", "R", "plotting.R"))
+  source(here("src", "R", "enrichment.R"))
   ExperimentHub::setExperimentHubOption("CACHE", here("data", ".ExperimentHubCache"))
 })
 

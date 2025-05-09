@@ -245,3 +245,26 @@ volcano_plot <- function(tag_tb, label_col = "GENENAME", fdr_cutoff = 0.001) {
     guides(color = "none") +
     scale_color_manual(values = c("black", "red"))
 }
+
+
+#' Helper for getting enrichment plots of all gene sets in
+#'    `fgsea_df`, placing the images in plotdir
+#'
+plot_fgsea_gseavis <- function(fgsea_df, ranks, gene_sets, plotdir,
+                               suffix = "_enrichment.png") {
+  fgsea_df$id <- fgsea_df$pathway
+  converted <- fgsea_result2gseGO(fgsea_df, id_col = "id")
+
+  en_res <- GseaVis::dfGO2gseaResult(
+    enrich.df = converted, geneList = sort(ranks, decreasing = TRUE),
+    own_termSet = gene_sets, setType = "ALL"
+  )
+  tmp <- lapply(fgsea_df$pathway, \(pwy) {
+    name <- str_replace_all(pwy, " ", "_") |> str_replace_all("/", "-")
+    plot <- enrichplot::gseaplot2(en_res,
+      geneSetID = pwy, title = pwy,
+      pvalue_table = TRUE
+    )
+    ggsave(here(plotdir, glue("{name}{suffix}")), plot, height = 8, width = 12)
+  })
+}
