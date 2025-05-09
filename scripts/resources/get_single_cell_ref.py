@@ -27,7 +27,7 @@ to_ignore = {
         "HTCA_ADULT_SPLEEN.rds",
         "HTCA_ADULT_STOMACH.rds",
     ],
-    "gtex": [],
+    "gtex": ["GTEx_8_tissues_snRNAseq_immune_atlas_071421.public_obs.h5ad"],
     "cellxgene": [],
 }
 
@@ -35,7 +35,7 @@ shared_cols = ["tissue", "subject", "cell_type", "source"]
 
 
 def merge_from_files(dir: Path, ignore_list, read_fn: Callable) -> ad.AnnData:
-    files = [f for f in dir.iterdir() if f not in ignore_list]
+    files = [f for f in dir.glob("*.h5ad") if f.name not in ignore_list]
     adatas = [read_fn(f) for f in files]
     if len(adatas) > 1:
         final = ad.concat(adatas, axis="obs", join="inner", merge="first")
@@ -65,7 +65,7 @@ def cellxgene_fn(file):
         "feature_length": "SEQLENGTH",
         "feature_name": " GENENAME",
     }
-    adata.var = adata.var.rename(mapping, axis=1).loc[:, list(mapping.keys())]
+    adata.var = adata.var.rename(mapping, axis=1).loc[:, list(mapping.values())]
     adata.obs.loc[:, "source"] = list(
         map(lambda x: f"cellxgene-{x}", dataset_id_map[adata.obs["dataset_id"]])
     )
@@ -142,11 +142,18 @@ def htca_fn(file):
     return adata
 
 
+read_fns = {"htc_atlas": htca_fn, "gtex": gtex_fn, "cellxgene": cellxgene_fn}
+
+for k, v in dirs.items():
+    output = v.joinpath("all.h5ad")
+    if not output.exists():
+        merged = merge_from_files(v, to_ignore[k], read_fn=read_fns[k])
+        merged.write_h5ad(output)
+        exit()
+
+
 def get_combined(f):
-    read_fns = {"htc_atlas": htca_fn, "gtex": gtex_fn, "cellxgene": cellxgene_fn}
-    adatas = {
-        k: merge_from_files(v, to_ignore[k], read_fns[k]) for k, v in dirs.items()
-    }
+    adatas = [ad.read_h5ad(v.joinpath("all.h5ad")) for v in dirs.values()]
     final = ad.concat(adatas.values(), axis="obs", join="inner", merge="first")
     final.write_h5ad(f)
     return final
