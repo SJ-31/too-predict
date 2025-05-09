@@ -26,6 +26,7 @@ from rpy2.rinterface_lib.sexp import (
 )
 from scipy import sparse, stats
 from sklearn.model_selection import ShuffleSplit
+from sklearn.preprocessing import StandardScaler
 
 import too_predict
 
@@ -757,15 +758,22 @@ def scanorama_correct(adata: ad.AnnData, batch_key: str, scale: bool = True, **k
         "hvg": 3000,  # Use this many top hvgs
         "dimred": 100,
     }
+    if scale and sparse.issparse(adata.X):
+        adata.X = adata.X.toarray()
     defaults.update(kwargs)
     splits = []
     for b in adata.obs[batch_key].unique():
-        current = adata[adata.obs[batch_key] == b, :]
+        current = adata[adata.obs[batch_key] == b, :].copy()
         if scale:
-            sc.pp.scale(current)
+            scaler = StandardScaler(with_mean=True, with_std=True)  # necessary
+            # due to bug in scanpy.pp.scale
+            current.X = scaler.fit_transform(current.X)
         splits.append(current)
     corrected = scanorama.correct_scanpy(splits, **defaults)
-    return ad.concat(corrected, axis="obs", join="inner", merge="first")
+    result = ad.concat(corrected, axis="obs", join="inner", merge="first")
+    if not sparse.issparse(result.X):
+        result.X = sparse.csc_array(result.X)
+    return result
 
 
 def preserving_sample(
@@ -797,3 +805,27 @@ def preserving_sample(
         adata = adata[mapped, :]
     else:
         return adata[mapped, :].copy()
+
+
+def do_call(fn, pars: dict | None):
+    if pars is None:
+        return fn(**{})
+    else:
+        return fn(**pars)
+
+
+def pca_to_leiden(
+    adata, pca_pars=None, neighbor_pars=None, umap_pars=None, leiden_pars=None
+):
+    """Wrapper function for doing the standard PCA to leiden clustering in scanpy"""
+    if "X_pca" not in adata.obsm:
+        do_call(lambda **x: sc.pp.pca(adata, **x), pca_pars)
+    do_call(lambda **x: sc.pp.neighbors(adata, **x), neighbor_pars)
+    do_call(lambda **x: sc.tl.umap(adata, **x), umap_pars)
+    do_call(lambda **x: sc.tl.leiden(adata, **x), leiden_pars)
+
+
+def set_trace():
+    import IPython.core.debugger as debug
+
+    debug.set_trace()
