@@ -59,10 +59,12 @@ class Recoder:
         if isinstance(reference, Path):
             ro.r(f"gs <- yaml::read_yaml('{str(reference.absolute())}')")
         else:
-            ro.globalenv["gs"] = ro.ListVector(reference)
+            ro.globalenv["gs"] = ro.ListVector(
+                {k: ro.StrVector(v) for k, v in reference.items()}
+            )
         ro.r("params <- plageParam(exprData = counts, geneSets = gs)")
         ro.r("plage <- gsva(params)")
-        vals: np.ndarray = np.transpose(ut.np_from_r(ro.globalenv["plage"]))
+        vals: np.ndarray = np.transpose(ru.np_from_r(ro.globalenv["plage"]))
         var = pd.DataFrame(index=ro.r("rownames(plage)"))
         if metadata is not None:
             var = var.merge(metadata, left_index=True, right_index=True, how="left")
@@ -221,9 +223,11 @@ class Recoder:
             if isinstance(markers, Path):
                 ro.globalenv["marker_ref"] = str(markers.absolute())
             else:
-                ro.globalenv["marker_ref"] = ro.ListVector(markers)
+                ro.globalenv["marker_ref"] = ro.ListVector(
+                    {k: ro.StrVector(v) for k, v in markers.items()}
+                )
             ro.r("result <- bisque_marker_wrapper(counts, markers = marker_ref)")
-            matrix = ut.np_from_r(ro.r("result$bulk.props"))
+            matrix = ru.np_from_r(ro.r("result$bulk.props"))
             genes_used = pd.DataFrame(
                 {
                     "set_name": ro.r("names(result$genes.used)"),
@@ -255,7 +259,7 @@ class Recoder:
                 subject_col = subject_col)
             """)
             types = list(ro.r("rownames(result$bulk.props)"))
-            matrix = ut.np_from_r(ro.r("result$bulk.props"))
+            matrix = ru.np_from_r(ro.r("result$bulk.props"))
             result = ad.AnnData(
                 X=np.transpose(matrix),
                 var=pd.DataFrame(index=types),
@@ -318,7 +322,7 @@ class Recoder:
         samples = list(ro.r("rownames(fraction)"))
         types = list(ro.r("colnames(fraction)"))
         recoded: pd.DataFrame = pd.DataFrame(
-            data=ut.np_from_r(ro.globalenv["fraction"]), columns=types, index=samples
+            data=ru.np_from_r(ro.globalenv["fraction"]), columns=types, index=samples
         )
         result = ad.AnnData(
             X=recoded, obs=self.adata.obs, var=pd.DataFrame(index=types)
