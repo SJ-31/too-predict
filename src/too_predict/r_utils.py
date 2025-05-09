@@ -151,7 +151,7 @@ def add_gene_metadata(
     keycol: str = "",
     columns=("GENENAME", "GENEID", "GENEBIOTYPE", "SEQNAME", "SEQLENGTH"),
     ensdb_path: str = "",
-    keytpe: str = "GENEID",
+    keytype: str = "GENEID",
 ) -> None:
     """Add gene metadata from the ensembldb object stored at `ensdb_path`"""
     ensembldb = library("ensembldb")
@@ -169,13 +169,13 @@ def add_gene_metadata(
         keys = adata.var.index
     ro.globalenv["keys"] = ro.StrVector(keys)
     ro.globalenv["anno"] = ro.r(
-        f"AnnotationDbi::select(db, keys = keys, columns = cols, keytype = '{keytpe}')"
+        f"AnnotationDbi::select(db, keys = keys, columns = cols, keytype = '{keytype}')"
     )
     result: pd.DataFrame = df_from_r(ro.r("anno"))
     if keycol:
-        result[keycol] = ro.StrVector(result[keytpe])
+        result[keycol] = ro.StrVector(result[keytype])
     else:
-        result.index = ro.StrVector(result[keytpe])
+        result.index = ro.StrVector(result[keytype])
 
     join_on = keycol if keycol else None
     adata.var = adata.var.join(result, on=join_on, how="left")
