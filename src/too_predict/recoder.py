@@ -16,7 +16,6 @@ from scipy import sparse
 import too_predict.go_utils as gt
 import too_predict.r_utils as ru
 import too_predict.transformer as tt
-import too_predict.utils as ut
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 
@@ -213,7 +212,7 @@ class Recoder:
         cell_type_col: str = "cell_type",
         subject_col: str = "subject",
     ) -> ad.AnnData:
-        ut.source("utils.R", in_r=True)
+        ru.source("utils.R", in_r=True)
         self._counts_into_r()
         if mode == "marker" and markers is None:
             raise ValueError("Markers must be provided!")
@@ -245,13 +244,13 @@ class Recoder:
             if isinstance(reference, Path):
                 reference = ad.read_h5ad(reference)
             ru.counts_into_r(reference, symbol="ref")
-            ut.r_null_if_none(subject_col, symbol="subject_col")
-            ut.r_null_if_none(markers, symbol="markers", conversion=ro.StrVector)
+            ru.r_null_if_none(subject_col, symbol="subject_col")
+            ru.r_null_if_none(markers, symbol="markers", conversion=ro.StrVector)
             if markers is not None and not isinstance(markers, Sequence):
                 raise ValueError("Markers must be a sequence in reference mode!")
             ro.globalenv["cell_type_col"] = cell_type_col
             ro.globalenv["subject_col"] = subject_col
-            ut.df_to_r(reference.obs, r_symbol="ref_obs")
+            ru.df_to_r(reference.obs, r_symbol="ref_obs")
             ro.r("""
             result <- bisque_reference_wrapper(counts, ref, ref_obs = ref_obs,
                 markers = markers,
@@ -265,7 +264,7 @@ class Recoder:
                 var=pd.DataFrame(index=types),
                 obs=self.adata.obs,
             )
-            result.uns["sc.props"] = ut.df_from_r(
+            result.uns["sc.props"] = ru.df_from_r(
                 ro.r("as.data.frame(result$sc.props)")
             )
             result.obs.loc[:, "rnorm"] = list(ro.r("result$rnorm"))
@@ -300,7 +299,7 @@ class Recoder:
         ro.globalenv["cell_types"] = ro.StrVector(reference.obs[type_col])
         ro.globalenv["gene_types"] = ro.StrVector(gene_type)
         ro.globalenv["to_filter"] = ro.StrVector(filtered_genes)
-        ut.r_null_if_none(malignant_cell_name, "malignant")
+        ru.r_null_if_none(malignant_cell_name, "malignant")
         ru.counts_into_r(adata, symbol="bulk", transpose=False)
         ru.counts_into_r(reference, symbol="ref", transpose=False)
         ro.r("""ref <- cleanup.genes(ref,

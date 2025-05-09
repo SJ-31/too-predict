@@ -97,7 +97,7 @@ class Corrector:
         shrink_disp: bool = False,
         gene_subset_n: int | None = None,
     ) -> np.ndarray:
-        ut.np_to_r(np.transpose(self.counts), "counts")
+        ru.np_to_r(np.transpose(self.counts), "counts")
         ro.globalenv["batch"] = ro.StrVector(self.batch)
         ro.globalenv["full_mod"] = full_mod
         ro.globalenv["shrink"] = shrink
@@ -121,14 +121,14 @@ class Corrector:
             gene.subset.n = gene_subset_n
         )
         """)
-        corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
+        corrected = np.transpose(ru.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
     @ru.r_cleanup
     def _deseq2(
         self, group: list[str] | str | None = None, full: bool = True
     ) -> np.ndarray:
-        ut.source("correction.R", in_r=True)
+        ru.source("correction.R", in_r=True)
         ru.counts_into_r(self.adata, counts=self.counts)
         ro.r("mode(counts) <- 'integer'")
         ro.globalenv["batch"] = ro.StrVector(self.batch)
@@ -140,7 +140,7 @@ class Corrector:
         ro.r("""
         corrected <- deseq2_batch(counts, batch, group = group, full_mod = full_mod)
         """)
-        corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
+        corrected = np.transpose(ru.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
     @ru.r_cleanup
@@ -158,8 +158,8 @@ class Corrector:
         covar_mod : sample-level experimental conditions to preserve.
             Basically what you want to compare in a DE analysis after the correction
         """
-        ut.source("combat_ref.R", in_r=True)
-        ut.np_to_r(np.transpose(self.counts), "counts")
+        ru.source("combat_ref.R", in_r=True)
+        ru.np_to_r(np.transpose(self.counts), "counts")
         ro.globalenv["batch"] = ro.StrVector(self.batch)
         ro.globalenv["full_mod"] = full
         ro.globalenv["genewise_disp"] = genewise_disp
@@ -175,7 +175,7 @@ class Corrector:
         corrected <- ComBat_ref(counts, batch, group = group, covar_mod = covar_mod,
             full_mod = full_mod, genewise.disp = genewise_disp)
         """)
-        corrected = np.transpose(ut.np_from_r(ro.globalenv["corrected"]))
+        corrected = np.transpose(ru.np_from_r(ro.globalenv["corrected"]))
         return corrected
 
     @ru.r_cleanup
@@ -209,12 +209,12 @@ class Corrector:
             ro.globalenv["group"] = ro.StrVector(self._get_obs_col(group))
         else:
             ro.r("group <- NULL")
-        ut.np_to_r(logged, r_symbol="counts")
+        ru.np_to_r(logged, r_symbol="counts")
         print(message)
         ro.r("""
         corrected <- removeBatchEffect(counts, batch = batch, batch2 = batch2, group = group)
         """)
-        corrected = ut.np_from_r(ro.globalenv["corrected"])
+        corrected = ru.np_from_r(ro.globalenv["corrected"])
         self.subtracted_effect = np.transpose(logged - corrected)
         corrected = np.expm1(corrected)
         corrected[corrected < 0] = 0
