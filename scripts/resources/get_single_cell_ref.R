@@ -5,6 +5,7 @@ library(tidyverse)
 library(edgeR)
 library(glue)
 library(paletteer)
+library(SeuratDisk)
 library(reticulate)
 use_condaenv("too-predict")
 source(here("src", "R", "utils.R"))
@@ -75,6 +76,21 @@ merge_from_files <- function(name, dir, ignore_list, tissue_map, read_fn) {
     final$write_h5ad(here(dir, "all.h5ad"))
   }
 }
+
+save_seurat_adata <- function(name, dir, ignore_list) {
+  file_list <- list.files(dir) |> discard(\(x) x %in% ignore_list)
+  objs <- lapply(file_list, \(x) {
+    adata_file <- glue("{dir}/{tools::file_path_sans_ext(x)}.h5ad")
+    h5_seurat <- glue("{dir}/{tools::file_path_sans_ext(x)}.h5Seurat")
+    original <- glue("{dir}/{x}")
+    if (!file.exists(adata_file)) {
+      obj <- readRDS(original)
+      SaveH5Seurat(obj, filename = h5_seurat)
+      Convert(h5_seurat, dest = "h5ad")
+    }
+  })
+}
+
 
 ## ** HTC atlas
 
@@ -242,13 +258,15 @@ read_fns <- list(
   cellxgene = cellxgene_fn
 )
 
-all_objs <- sapply(names(dirs), \(x) {
-  merge_from_files(x, dirs[[x]],
-    ignore_list = to_ignore[[x]],
-    tissue_map = tissue_map,
-    read_fn = read_fns[[x]]
-  )
-}, simplify = FALSE, USE.NAMES = TRUE)
+save_seurat_adata("htca", dirs$htc_atlas, ignore_list = to_ignore$htc_atlas)
+
+## all_objs <- sapply(names(dirs), \(x) {
+##   merge_from_files(x, dirs[[x]],
+##     ignore_list = to_ignore[[x]],
+##     tissue_map = tissue_map,
+##     read_fn = read_fns[[x]]
+##   )
+## }, simplify = FALSE, USE.NAMES = TRUE)
 
 ## combined <- ad$concat(all_objs, axis = "obs", join = "inner", merge = "first")
 ## combined <- merge(all_objs[[1]], all_objs[2:length(all_objs)], add.cells.ids = names(all_objs))
