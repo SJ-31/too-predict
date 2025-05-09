@@ -6,7 +6,7 @@ import pickle
 from datetime import datetime
 from functools import reduce
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal, Sequence
 
 import anndata as ad
 import numpy as np
@@ -829,3 +829,61 @@ def set_trace():
     import IPython.core.debugger as debug
 
     debug.set_trace()
+
+
+def mad_outliers(
+    adata: ad.AnnData,
+    columns: str | Sequence[str] = "",
+    mode: Literal["cells", "genes"] = "cells",
+    n_mads: int | Sequence[int] = 5,
+    boolean_mode: Literal["all", "any"] = "any",
+    subset: dict[str, Sequence[str]] | None = None,
+    mask: np.ndarray | None = None,
+    col_added: str = "is_mad_outlier",
+) -> None:
+    """Remove cells/genes that differ by `n_mads`
+    This function computes the median absolute deviation (MAD) of summed expression at
+        the cell or gene level, then filters out cells/genes with
+        absolute deviation from the median > (n_mads * MAD)
+
+    Parameters
+    ----------
+    subset : only compute the mad from cells/genes satisfying the subset specification.
+        is a dictionary mapping column names in adata.obs or adata.var to permitted
+        values e.g. {"cell_type": ["macrophage", "fibroblast"]}
+    mask : only compute the mad after applying the mask to adata
+    """
+    full = adata
+    if subset is not None and mode == "cells":
+        mask = reduce(
+            lambda x, y: x & y, [adata.obs[k].isin(v) for k, v in subset.items()]
+        )
+        adata = adata[mask, :]
+    if subset is not None:
+        mask = reduce(
+            lambda x, y: x & y, [adata.var[k].isin(v) for k, v in subset.items()]
+        )
+        adata = adata[:, mask]
+    if mask is not None and mode == "cells":
+        adata = adata[mask, :]
+    elif mask is not None:
+        adata = adata[:, mask]
+
+    def get_mad(arr: pd.Series):
+        abs_diff = np.abs(arr - np.median(arr))  # Absolute deviation from median
+        mad = np.median(abs_diff)
+        return abs_diff > mad * n_mads
+
+    def reduce_fn(masks: list[np.ndarray]):
+        if boolean_mode == "any":
+            return reduce(lambda x, y: x | y, masks)
+        else:
+            return reduce(lambda x, y: x & y, masks)
+
+    if isinstance(columns, str):
+        columns = [columns]
+
+    if mode == "cells":
+        full.obs[col_added] = reduce_fn([get_mad(adata.obs[col]) for col in columns])
+    else:
+        full.var[col_added] = reduce_fn([get_mad(adata.var[col]) for col in columns])
