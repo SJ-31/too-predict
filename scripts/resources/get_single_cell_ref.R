@@ -60,16 +60,19 @@ shared_cols <- c("tissue", "subject", "cell_type", "source")
 
 # read_fn has two arguments: filename and tissue. It returns a Seurat object and should
 # also add a column "source" describing project
-merge_from_files <- function(dir, ignore_list, tissue_map, read_fn) {
-  file_list <- list.files(dir) |> discard(\(x) x %in% ignore_list)
-  fnames <- tools::file_path_sans_ext(file_list)
-  objs <- lapply(file_list, \(x) {
-    read_fn(paste0(dir, "/", x))
-  })
-  if (length(objs) > 1) {
-    ad$concat(objs, axis = "obs", join = "inner", merge = "first")
-  } else {
-    objs[[1]]
+merge_from_files <- function(name, dir, ignore_list, tissue_map, read_fn) {
+  if (!file.exists(here(dir, "all.h5ad"))) {
+    file_list <- list.files(dir) |> discard(\(x) x %in% ignore_list)
+    fnames <- tools::file_path_sans_ext(file_list)
+    objs <- lapply(file_list, \(x) {
+      read_fn(paste0(dir, "/", x))
+    })
+    if (length(objs) > 1) {
+      final <- ad$concat(objs, axis = "obs", join = "inner", merge = "first")
+    } else {
+      final <- objs[[1]]
+    }
+    final$write_h5ad(here(dir, "all.h5ad"))
   }
 }
 
@@ -96,7 +99,10 @@ htca_fn <- function(file) {
   )
   obj[["RNA"]][[]]$GENEID <- rownames(obj)
   obj[["RNA"]][[]] <- left_join(obj[["RNA"]][[]], var_meta, by = join_by(GENEID))
-  ad$AnnData(X = t(LayerData(obj)), var = obj[["RNA"]][[]], obs = obj[[]])
+  adata <- ad$AnnData(X = t(LayerData(obj)), var = obj[["RNA"]][[]], obs = obj[[]])
+  ut$preserving_sample(adata, "cell_type", 0.5)
+  print(glue("htca {file} complete"))
+  adata
 }
 
 ## ** Cellxgene
@@ -109,6 +115,7 @@ dataset_id_map <- local({
 cellxgene_fn <- function(file) {
   adata <- ad$read_h5ad(file)
   adata <- adata[, !is.na(adata$var$feature_id)]
+  ut$preserving_sample(adata, "cell_type", 0.5)
   rownames(adata$var) <- adata$var$feature_id
   mapping <- c(
     "GENEID" = "feature_id", "GENEBIOTYPE" = "feature_type", "SEQLENGTH" = "feature_length",
@@ -120,6 +127,7 @@ cellxgene_fn <- function(file) {
   adata$obs$source <- paste0("cellxgene", "-", dataset_id_map[adata$obs$dataset_id])
   adata$obs$subject <- paste0(adata$obs$dataset_id, "-", adata$obs$donor_id)
   adata$obs <- adata$obs |> select(all_of(shared_cols))
+  print(glue("cellxgene {file} complete"))
   adata
 }
 
@@ -130,6 +138,7 @@ gtex_fn <- function(file) {
   if ("counts" %in% names(adata$layers$as_dict())) {
     adata$X <- adata$layers[["counts"]]
   }
+  ut$preserving_sample(adata, "Broad cell type", 0.5)
   wanted_cols <- c(
     "tissue", "Participant ID", "Cell types level 2",
     "batch", "prep", "Tissue Site Detail", "Broad cell type",
@@ -151,6 +160,7 @@ gtex_fn <- function(file) {
     dplyr::rename_with(\(x) str_replace(str_to_upper(x), "_", "")) |>
     dplyr::rename(SEQLENGTH = "GENELENGTH", GENEID = "GENEIDS") |>
     select(SEQLENGTH, GENEID, GENENAME, GENEBIOTYPE)
+  print(glue("GTEx {file} complete"))
   adata
 }
 
@@ -232,32 +242,24 @@ read_fns <- list(
   cellxgene = cellxgene_fn
 )
 
-get_combined <- function(f) {
-  all_objs <- sapply(names(dirs), \(x) {
-    merge_from_files(dirs[[x]],
-      ignore_list = to_ignore[[x]],
-      tissue_map = tissue_map,
-      read_fn = read_fns[[x]]
-    )
-  }, simplify = FALSE, USE.NAMES = TRUE)
-  combined <- ad$concat(all_objs, axis = "obs", join = "inner", merge = "first")
-  ## combined <- merge(all_objs[[1]], all_objs[2:length(all_objs)], add.cells.ids = names(all_objs))
-  print("Merge success")
-  combined$write_h5ad(f)
-  write_csv(combined$obs, here("data", "reference", "sc_ref_all_obs.csv"))
-  combined
-}
+all_objs <- sapply(names(dirs), \(x) {
+  merge_from_files(x, dirs[[x]],
+    ignore_list = to_ignore[[x]],
+    tissue_map = tissue_map,
+    read_fn = read_fns[[x]]
+  )
+}, simplify = FALSE, USE.NAMES = TRUE)
 
-# TODO: apply scran normalization and log1p (following what the authors do in the benchmark)
+## combined <- ad$concat(all_objs, axis = "obs", join = "inner", merge = "first")
+## combined <- merge(all_objs[[1]], all_objs[2:length(all_objs)], add.cells.ids = names(all_objs))
+## print("Merge success")
 
-combined_file <- here(storage_dir, "sc_ref_all.h5ad")
-combined <- read_existing(combined_file, get_combined, ad$read_h5ad)
+## combined$write_h5ad(f)
 
-# TODO: use scGen or scANVI because you have cell identities
-## sc_gen_batch <- function() {
-##   scgen <- import("scgen")
-##   ## scgen$SCGEN$setup_anndata(combined, batch)
-## }
+## write_csv(combined$obs, here("data", "reference", "sc_ref_all_obs.csv"))
+## combined
 
-# TODO: report some correction metrics e.g. variation within clusters and
-# the nesting thing
+
+
+## combined_file <- here(storage_dir, "sc_ref_all.h5ad")
+## combined <- read_existing(combined_file, get_combined, ad$read_h5ad)
