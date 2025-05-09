@@ -57,6 +57,10 @@ def df_to_r(df: pd.DataFrame, r_symbol: str = ""):
             return converted
 
 
+def sclr(expr):
+    return list(ro.r(expr))[0]
+
+
 def df_from_r(robj) -> pd.DataFrame:
     with (ro.default_converter + pandas2ri.converter).context():
         ro.globalenv["df_from_r_tmp"] = robj
@@ -72,8 +76,9 @@ def df_from_r(robj) -> pd.DataFrame:
 def r_cleanup(fn: Callable):
     def wrp(*args, **kwargs):
         val = fn(*args, **kwargs)
-        ro.r("rm(list=ls())")
-        ro.r("gc()")
+        if not sclr("exists('NO_CLEANUP')") or not sclr("NO_CLEANUP"):
+            ro.r("rm(list=ls())")
+            ro.r("gc()")
         return val
 
     return wrp
