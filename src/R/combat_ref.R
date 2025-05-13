@@ -94,7 +94,8 @@ Please remove confounded covariates and rerun ComBat-Seq")
   cat("Estimating dispersions\n")
   ## Estimate common dispersion within each batch
   disp_common <- sapply(1:n_batch, function(i) {
-    if ((n_batches[i] <= ncol(design) - ncol(batchmod) + 1) | qr(mod[batches_ind[[i]], ])$rank < ncol(mod)) {
+    if ((n_batches[i] <= ncol(design) - ncol(batchmod) + 1) |
+      qr(mod[batches_ind[[i]], ])$rank < ncol(mod)) {
       # not enough residual degree of freedom
       estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = NULL, subset = nrow(counts))
     } else {
@@ -102,7 +103,7 @@ Please remove confounded covariates and rerun ComBat-Seq")
     }
   })
   for (i in 1:n_batch) {
-    cat("Batch ", i, " dispersion = ", disp_common[i], "\n")
+    cat("Batch ", levels(batch)[i], "(", i, ") dispersion = ", disp_common[i], "\n")
   }
   # Choose the batch with the smallest dispersion as the reference batch
   ref_batch <- 1
@@ -111,7 +112,8 @@ Please remove confounded covariates and rerun ComBat-Seq")
       ref_batch <- i
     }
   }
-  cat("Reference batch: ", ref_batch, "\n")
+  ref_batch_name <- levels(batch)[ref_batch]
+  cat("Reference batch: ", ref_batch_name, " (", ref_batch, ")\n")
   # Set reference batch as batch 1
   if (ref_batch != 1) {
     # swap disp_common
@@ -126,10 +128,11 @@ Please remove confounded covariates and rerun ComBat-Seq")
       }
     }
   }
-  # re-compute batches_ind
+  # re-compute batches_ind after swapping reference batch
   batches_ind <- lapply(1:n_batch, function(i) {
     which(batch == levels(batch)[i])
   }) # list of samples in each batch
+
   n_batches <- sapply(batches_ind, length)
   # Update the design matrix
   batchmod <- model.matrix(~batch) # colnames: levels(batch)
@@ -155,7 +158,7 @@ Please remove confounded covariates and rerun ComBat-Seq")
   } else {
     genewise_disp_lst <- lapply(1:n_batch, function(j) {
       rep(disp_common[j], nrow(counts))
-    })
+    }) # Just use the same dispersion parameter for each gene in the same batch
   }
 
   names(genewise_disp_lst) <- paste0("batch", levels(batch))

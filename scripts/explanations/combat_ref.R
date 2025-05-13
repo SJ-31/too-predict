@@ -10,6 +10,7 @@ suppressMessages({
 })
 outdir <- here("data", "output", "explanations", "batch_correction")
 utils <- import("too_predict.utils")
+ad <- import("anndata")
 train_utils <- import("too_predict._train_utils")
 NO_CLEANUP <- TRUE # REQUIRED to prevent cleanup after combat-seq call
 
@@ -136,7 +137,7 @@ ranked <- setNames(var$bc_mean_organoid_fc, rownames(var)) |>
 
 gs_meta <- read_tsv(gs_meta_internal()) |>
   bind_rows(mutate(markers_meta_internal(), category = "cell marker", set_name = paste0("marker:", set_name))) |>
-  inner_join(gene_set_average(gs, var, ref_val_col = "bc_mean_organoid"), by = join_by(set_name)) |>
+  inner_join(gene_set_average(gs, var, ref_val_col = "bc_mean_organoid_fc"), by = join_by(set_name)) |>
   rename(mean_batch_effect_fc = average)
 
 write_tsv(gs_meta, here(outdir, "gene_set_metadata.tsv"))
