@@ -8,6 +8,7 @@ suppressMessages({
   library(reticulate)
   use_condaenv("too-predict")
 })
+library(GGally)
 outdir <- here("data", "output", "explanations", "batch_correction")
 utils <- import("too_predict.utils")
 ad <- import("anndata")
@@ -130,10 +131,11 @@ write_csv(var, here(outdir, "var.csv"))
 ## ** FGSEA
 
 # Discard those with no correction
-ranked <- setNames(var$bc_mean_organoid_fc, rownames(var)) |>
-  discard(\(x) x <= 0) |>
-  sort(decreasing = TRUE)
-#
+ranked <- local({
+  sorted <- setNames(log(var$bc_mean_organoid_fc), rownames(var))
+  list(pos = sorted[sorted >= 0], neg = sorted[sorted < 0])
+})
+
 
 gs_meta <- read_tsv(gs_meta_internal()) |>
   bind_rows(mutate(markers_meta_internal(), category = "cell marker", set_name = paste0("marker:", set_name))) |>
@@ -143,19 +145,29 @@ gs_meta <- read_tsv(gs_meta_internal()) |>
 write_tsv(gs_meta, here(outdir, "gene_set_metadata.tsv"))
 
 alpha <- 0.05
-fgsea_result <- fgsea::fgsea(pathways = gs, stats = ranked)
-fgsea_result <- fgsea_result[fgsea_result$padj <= alpha, ]
+
+fgsea_result <- gene_set_analysis("fgsea", gene_sets = gs, data = ranked)
+
 dir.create(here(outdir, "fgsea"))
-plot_fgsea_gseavis(fgsea_result, ranked, gs, here(outdir, "fgsea"))
-write_tsv(fgsea_result, here(outdir, "fgsea.tsv"))
+for (n in names(fgsea_result$raw)) {
+  if (nrow(fgsea_result$raw[[n]]) > 0) {
+    plot_fgsea_gseavis(fgsea_result$raw[[n]], ranked[[n]], gs,
+      here(outdir, "fgsea"),
+      suffix = glue("_enrichment_{n}.png")
+    )
+  }
+}
+
+write_tsv(fgsea_result$tb, here(outdir, "fgsea.tsv"))
 
 
 ## ** GSA
 
-to_gsa <- t(fc[, var$bc_sd != 0]) |> `rownames<-`(var$GENEID)
+to_gsa <- t(fc[, var$bc_sd_organoid_fc != 0]) |> `rownames<-`(var$GENEID)
 gsa_result <- tryCatch(
   {
-    GSALightning::GSALight(eset = to_gsa, fac = obs$is_organoid, gs = gs, rmGSGenes = "gene", nperm = gsa_nperm)
+    GSALightning::GSALight(eset = to_gsa, fac = obs$is_organoid, gs = gs, rmGSGenes = "gene", nperm = gsa_nperm) |>
+      as.data.frame()
   },
   error = function(cnd) {
     print(glue("GSA failed, error message: {cnd}"))
@@ -197,8 +209,9 @@ biotype_box <- ggplot(adata$var, aes(
   geom_boxplot()
 ggsave(here(outdir, "biotype_fc_boxplot.png"), plot = biotype_box, width = 9, height = 8)
 
-ktest <- kruskal.test(biotype_fcs) |> tidy()
-write_csv(ktest, here(outdir, "kruskal_biotype.csv"))
+ktest <- kruskal.test(biotype_fcs) |>
+  tidy() |>
+  mutate(comment = "Test if fc differs by gene biotype")
 if (ktest$p.value <= 0.05) {
   wtest <- local({
     two_sided <- pairwise.wilcox.test(x = adata$var$bc_mean_organoid_fc, g = adata$var$GENEBIOTYPE) |>
@@ -219,3 +232,42 @@ if (ktest$p.value <= 0.05) {
   })
   write_csv(wtest, here(outdir, "wilcox_biotype.csv"))
 }
+
+## ** FC consistency between tumor types
+# You need this if you want to actually use combat_ref as a transformation
+
+# Want to give friedman.test a matrix of shape n_genes x n_tumor_types
+# to test whether or not organoid fc between genes differs between tumor types
+# genes are the subjects
+fc_organoid <- fc[obs$is_organoid, var$bc_sd_organoid_fc != 0]
+kept_ids <- var$GENEID[var$bc_sd_organoid_fc != 0]
+org_obs <- obs[obs$is_organoid, ]
+org_tumor_types <- org_obs |>
+  pluck("tumor_type") |>
+  unique()
+
+to_friedman <- lapply(org_tumor_types, \(x) {
+  cur <- fc_organoid[org_obs$tumor_type == x, ]
+  if (is.null(dim(cur))) {
+    cur <- matrix(cur, nrow = 1)
+  }
+  col <- matrix(colMeans(cur), ncol = 1, dimnames = list(kept_ids, x))
+  # Unfortunately can't think of any other way to do this
+  col
+}) |> purrr::reduce(\(x, y) cbind(x, y))
+fried_test <- friedman.test(to_friedman) |>
+  tidy() |>
+  mutate(comment = "Test if fc for a given gene differs between tumor types")
+
+fc_ttype_pairplot <- to_friedman |>
+  as.data.frame() |>
+  mutate(across(where(is.numeric), log)) |>
+  ggpairs(lower = list(continuous = wrap(ggally_points, size = 1, color = "blue")))
+
+ggsave(here(outdir, "tumor_type_lfc_pairplot.png"), plot = fc_ttype_pairplot)
+
+all_tests <- bind_rows(fried_test, ktest)
+
+## ** Write test results
+
+write_csv(all_tests, here(outdir, "omnibus_tests.csv"))
