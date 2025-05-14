@@ -935,3 +935,47 @@ seurat_subcluster_cells <- function(obj, cell_col, subcluster_col = "cell_subclu
   final[[]]$seurat_clusters <- NULL
   final
 }
+
+
+gene_set_analysis <- function(method = c("fgsea"), data,
+                              gene_sets,
+                              partition_col = "direction", p_threshold = 0.05, ...) {
+  # TODO: write more methods for this
+  if (class(data) == "list" || class(data) == "numeric") preranked <- TRUE
+  dnames <- c("pos", "neg")
+  if (class(data) == "list") {
+    if (length(intersect(dnames, names(data))) != 2) {
+      stop("Names for one-tailed test list should be c('pos', 'neg')")
+    }
+    if (length(intersect(data$pos, data$neg)) > 0) {
+      stop("One-tailed test lists should be disjoint!")
+    }
+  }
+
+  gsa_internal <- function() {
+    ## TODO: not implemented
+  }
+  result <- list()
+
+  if (method == "fgsea") {
+    if (class(data) == "list") {
+      all_results <- lapply(dnames, \(n) {
+        cur <- fgsea::fgsea(pathways = gene_sets, stats = data[[n]], scoreType = n, ...)
+        cur[cur$padj <= p_threshold, ]
+      }) |> `names<-`(dnames)
+      together <- lapply(dnames, \(n) {
+        tib <- as_tibble(all_results[[n]])
+        tib[[partition_col]] <- n
+        tib
+      }) |> bind_rows()
+      result$tb <- together
+      result$raw <- all_results
+    } else {
+      raw <- fgsea::fgsea(pathways = gene_sets, stats = data, ...)
+      raw <- raw[raw$padj <= p_threshold, ]
+      result$raw <- raw
+      result$tb <- as_tibble(result$raw) |> mutate(padj <= p_threshold)
+    }
+  }
+  result
+}

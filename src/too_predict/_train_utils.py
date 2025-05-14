@@ -304,6 +304,17 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,
+    },
+    "clr_xgb3_edger_combat_ref_no_group": {
+        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {
+            "method": "combat_ref",
+            "batch": "is_organoid",
+        },
+        "f": "edgeR_median_lfc_feature_list_3000",
         "s": False,
     },
     "clr_xgb3_edger_combat_ref": {
@@ -387,7 +398,7 @@ MODELS: dict = {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": rt.Recoder("plage", reference=get_common(), metadata=marker_meta),
-        "s": False,
+        "s": True,
     },
     "clr_xgboost_bisquemarker": {
         "m": PredBase(XGBEstimator(max_depth=3)),
@@ -399,7 +410,7 @@ MODELS: dict = {
         "m": PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": rt.Recoder("bisque_marker", markers=get_common()),
-        "s": False,
+        "s": True,
     },
 }
 
