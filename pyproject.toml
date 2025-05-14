@@ -21,6 +21,8 @@ dependencies = [
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
   "pyod>=2.0.3",
+  "pypalettes",
+  "marsilea",
   "pytest>=8.3.4",
   "gseapy",
   "scib",
