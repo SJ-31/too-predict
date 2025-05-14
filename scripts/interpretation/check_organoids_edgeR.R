@@ -275,6 +275,7 @@ if (enrichment_analyses$ora) {
 ## ** Gene set enrichment analysis (FGSEA)
 # Operates on pre-ranked genes i.e. uses results from edgeR above
 
+
 fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir, meta = NULL) {
   library(fgsea)
   fgsea_results <- sapply(names(top_tags), \(n) {
@@ -282,27 +283,30 @@ fgsea_helper <- function(gene_sets, alpha = 0.05, plotdir, meta = NULL) {
     sorted <- lfc_filter(tb) |> arrange(logFC)
     warning(glue("There are {sum(is.na(sorted$GENEID))} genes with missing ENSEMBL ids!"))
     sorted <- filter(sorted, !is.na(GENEID))
-    ranked <- setNames(sorted$logFC, sorted$GENEID)
-    result <- fgsea(pathways = gene_sets, stats = ranked)
-    result <- result[result$padj <= alpha, ]
-
-    result$id <- result$pathway
-    converted <- fgsea_result2gseGO(result, id_col = "id")
-
-    en_res <- GseaVis::dfGO2gseaResult(
-      enrich.df = converted, geneList = sort(ranked, decreasing = TRUE),
-      own_termSet = gene_sets, setType = "ALL"
+    ranked <- local({
+      tmp <- setNames(sorted$logFC, sorted$GENEID)
+      list(pos = tmp[tmp >= 0], neg = tmp[tmp < 0])
+    })
+    result_lst <- gene_set_analysis(
+      method = "fgsea", data = ranked, gene_sets = gene_sets,
+      p_threshold = 0.05
     )
 
     ndir <- here(plotdir, n)
     dir.create(ndir)
-    tmp <- lapply(result$pathway, \(pwy) {
-      name <- str_replace_all(pwy, " ", "_") |> str_replace_all("/", "-")
-      plot <- enrichplot::gseaplot2(en_res, geneSetID = pwy, title = pwy, pvalue_table = TRUE)
-      ggsave(here(ndir, glue("{name}_enrichment.png")), plot, height = 8, width = 12)
-    })
+
+    for (n in names(result_lst$raw)) {
+      current <- result_lst$raw[[n]]
+      if (!is.null(current) && nrow(current) > 0) {
+        plot_fgsea_gseavis(current, ranked[[n]],
+          gene_sets = gene_sets, plotdir = ndir,
+          suffix = glue("_enrichment_{n}.png")
+        )
+      }
+    }
+
     avg_lfc <- gene_set_average(gene_sets = gene_sets, reference = tb) |> rename(mean_lfc = average)
-    fgsea_tb <- result |>
+    fgsea_tb <- result_lst$tb |>
       mutate(leadingEdge = map_chr(leadingEdge, \(x) paste0(x, collapse = ";"))) |>
       inner_join(avg_lfc, by = join_by(x$pathway == y$set_name))
     if (!is.null(meta)) {
@@ -409,10 +413,10 @@ if (enrichment_analyses$plage && !file.exists(here(outdir_gs, "plage_decideTests
 
 summarize_gs <- list()
 summarize_gs[["FGSEA organoid up-regulated"]] <- fgsea_gene_sets$sample_type |>
-  filter(mean_lfc > 0) |>
+  filter(direction == "pos") |>
   rename(set_name = pathway)
 summarize_gs[["FGSEA primary up-regulated"]] <- fgsea_gene_sets$sample_type |>
-  filter(mean_lfc < 0) |>
+  filter(direction == "neg") |>
   rename(set_name = pathway)
 summarize_gs[["GSA organoid up-regulated"]] <- select(gsa, set_name, `p-value:up-regulated in organoid`) |>
   rename(padj = `p-value:up-regulated in organoid`)
