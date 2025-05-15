@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
+from adjustText import adjust_text
 from matplotlib.figure import Figure
 from pypalettes import load_cmap
 
@@ -37,7 +38,6 @@ def marker_auroc_score(
     markers: Sequence,
     label_col: str,
     marker_col: str | None = None,
-    style: Literal["ovr", "ovo"] = "ovr",
 ) -> pd.DataFrame:
     labels: pd.Series = adata.obs[label_col]
     counts: pd.Series = labels.value_counts()
@@ -75,8 +75,70 @@ def marker_auroc_score(
     df.loc[:, "AUROC"] = frac * (df["rank_sum"] - rhs)
     df.loc[:, "z"] = (df["AUROC"] - 0.5) / df["sigma"]
     df.loc[:, "pval"] = stats.norm.sf(np.abs(df["z"])) * 2
-    df.loc[:, "padj"] = stats.false_discovery_control(df["pval"], method="bh")
+
+    nan_indices = df["pval"].isna()
+    df.loc[:, "padj"] = np.full(df.shape[0], np.nan)
+    df.loc[~nan_indices, "padj"] = stats.false_discovery_control(
+        df["pval"][~nan_indices], method="bh"
+    )
     return df.loc[:, ["AUROC", "z", "pval", "padj"]]
+
+
+def plot_aurocs(
+    dfs: dict[str, pd.DataFrame] | list[pd.DataFrame],
+    palette: str | None = None,
+    id_col: str = "GENEID",
+    fc_col: str = "logFC",
+    auroc_col: str = "AUROC",
+) -> tuple[Figure, dict]:
+    if isinstance(dfs, list):
+        dfs = dict(zip(range(len(dfs)), dfs))
+    if palette is None:
+        cmap: dict = tp.rand_cmap_d(dfs.keys())
+    else:
+        colors = load_cmap(palette).colors
+        if len(colors) < len(dfs):
+            raise ValueError("The provided palette has too few colors!")
+        cmap = {k: colors[i] for i, k in enumerate(dfs.keys())}
+    fig, ax = plt.subplots()
+    paretos = {}
+    ax.set_ylim(bottom=0, top=1)
+    all_texts = []
+    for dataset, df in dfs.items():
+        color = cmap[dataset]
+        pfront: pd.DataFrame = maximal_points(df, auroc_col, fc_col, id_col)
+        paretos[dataset] = pfront.index
+        lighter = tp.adjust_lightness(color, 0.7)
+        darker = tp.adjust_lightness(color, 0.4)
+        cvec = []
+        for id in df[id_col]:
+            if id in pfront.index:
+                cvec.append(color)
+            else:
+                cvec.append(darker)
+        for name, point in pfront.iterrows():
+            xy = (point[fc_col], point[auroc_col])
+            anno = ax.annotate(
+                name,
+                xy=xy,
+                bbox={"edgecolor": color, "facecolor": "white"},
+            )
+            all_texts.append(anno)
+        ax.plot(pfront[fc_col], pfront[auroc_col], c=lighter, ls="--")
+        ax.scatter(x=df[fc_col], y=df[auroc_col], c=cvec, label=dataset)
+    adjust_text(
+        all_texts,
+        min_arrow_len=2,
+        only_move={"text": "xy", "static": "xy", "explode": "x", "pull": "xy"},
+        arrowprops=dict(arrowstyle="-", color="k", lw=0.5),
+    )
+    ax.spines[["right", "top"]].set_visible(False)
+    ax.legend(
+        title="Dataset", loc="lower right", title_fontproperties={"weight": "bold"}
+    )
+    ax.set_ylabel(auroc_col)
+    ax.set_xlabel(fc_col)
+    return fig, paretos
 
 
 class MetaMarkers:
