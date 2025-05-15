@@ -12,9 +12,12 @@ ut <- import("too_predict.utils")
 
 source(here("src", "R", "combat_ref.R"))
 
+adata <- ut$training_data_internal_test()
+adata <- adata[, 1:200]
+
 stype <- adata$obs$Sample_Type
 stype <- replace(stype, is.na(stype), "organoid")
-counts <- t(adata$X)
+counts <- t(as.matrix(adata$X))
 
 source(here("src", "R", "correction.R"))
 counts <- as.matrix(counts)
@@ -43,8 +46,7 @@ combat_ref_runs <- lapply(1:100, \(x) {
   )
   matrix(c(mean(r1 - r2), mean(r3 - r1)), ncol = 2, nrow = 1)
 }) |>
-  bind_rows() |>
-  as.data.frame() |>
-  `colnames<-`(c("old", "new_fn"))
+  rbind() |>
+  as.data.frame()
 cf_file <- here("data", "tests", "combat_ref_result.rds")
 saveRDS(combat_ref_runs, cf_file)
