@@ -1,10 +1,12 @@
 #!/usr/bin/env ipython
+import colorsys
 from collections.abc import Iterable
 from typing import Literal, Sequence, overload
 
 import anndata as ad
 import marsilea as ma
 import marsilea.plotter as mp
+import matplotlib.colors as mc
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,6 +17,16 @@ import seaborn as sns
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from pypalettes import load_cmap
+
+
+def adjust_lightness(color, amount=0.5):
+    # Credit: @Ian Hincks & @FLekschas
+    try:
+        c = mc.cnames[color]
+    except:
+        c = color
+    c = colorsys.rgb_to_hls(*mc.to_rgb(c))
+    return colorsys.hls_to_rgb(c[0], max(0, min(1, amount * c[1])), c[2])
 
 
 def plot_diagonal_matrix(matrix: pd.DataFrame, ax: Axes, **kwargs) -> None:
@@ -326,8 +338,8 @@ def mp_plot(
     if var_groupings is not None and isinstance(var_groupings, str):
         var_groupings = [var_groupings]
     if var_groupings is not None:
-        vals = list(var[var_groupings[0]][vmask])
-        v_order = set(vals)
+        vals_first = list(var[var_groupings[0]][vmask])
+        v_order = set(vals_first)
         v_cmap: dict = cmaps.get("grouping_var", rand_cmap_d(v_order))
         var_chunk = mp.Chunk(
             list(v_order),
@@ -336,7 +348,7 @@ def mp_plot(
             align="center",
         )
         m.add_top(var_chunk, pad=0.1)
-        m.group_cols(vals, order=v_order, spacing=var_spacing)
+        m.group_cols(vals_first, order=v_order, spacing=var_spacing)
     if var_groupings is not None and len(var_groupings) > 1:
         for vals in var_groupings[1:]:
             values = list(adata.var[vals])
@@ -348,11 +360,11 @@ def mp_plot(
     if sample_groupings is not None and isinstance(sample_groupings, str):
         sample_groupings = [sample_groupings]
     if sample_groupings is not None:
-        svals = list(adata.obs[sample_groupings[0]])
-        order = set(svals)
+        svals_first = list(adata.obs[sample_groupings[0]])
+        order = set(svals_first)
         chnk = mp.Chunk(list(order), rotation=0, align="right")
         m.add_left(chnk, pad=0.1)
-        m.group_rows(svals, order=order, spacing=obs_spacing)
+        m.group_rows(svals_first, order=order, spacing=obs_spacing)
     if sample_groupings is not None and len(sample_groupings) > 1:
         for svals in sample_groupings[1:]:
             values = list(adata.obs[svals])
