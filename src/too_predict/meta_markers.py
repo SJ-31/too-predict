@@ -3,10 +3,32 @@
 from typing import Literal, Sequence
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from matplotlib.figure import Figure
+from pypalettes import load_cmap
+
+import too_predict.plotting as tp
+
+# Python implementation of MetaMarkers [1]
+# References
+#
+
+
+# Pareto frontier is the set of all points that are not "dominated" by another
+# point. Basically the maxima (or minima) of a point set. Here, we consider AUROC and lfc
+# original authors do it by sorting on the two values, which seems dubious
+def maximal_points(df: pd.DataFrame, x: str, y: str, ids: str) -> pd.DataFrame:
+    pfront = []
+    to_sort = df.loc[:, [x, y]].set_index(df[ids]).sort_values(x, ascending=False)
+    maximum_y = -np.inf
+    for point in to_sort.iterrows():
+        if point[1][y] > maximum_y:
+            maximum_y = point[1][y]
+            pfront.append(point[0])
+    return to_sort.loc[to_sort.index.isin(pfront), :]
 
 
 def marker_auroc_score(
