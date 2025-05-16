@@ -4,6 +4,7 @@ from typing import Sequence
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import rpy2.robjects as ro
 from inmoose import pycombat
 from rpy2.robjects import default_converter, numpy2ri
