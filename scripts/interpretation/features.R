@@ -1,11 +1,17 @@
+library(ComplexHeatmap)
 library(here)
 library(glue)
 library(ggVennDiagram)
 library(tidyverse)
+library(reticulate)
+use_condaenv("too-predict")
 library(ggridges)
 
 source(here("src", "R", "utils.R"))
 source(here("src", "R", "plotting.R"))
+
+rs <- import("too_predict._rust_helpers")
+
 
 fs_dir <- here("data", "output", "feature_selection")
 fs_lists <- here(fs_dir, "feature_lists")
@@ -23,7 +29,7 @@ minfo <- read_csv(here(fs_dir, "mutual_info.csv")) |>
   filter(!is.na(feature)) |>
   inner_join(gene_meta, by = join_by(x$feature == y$GENEID)) |>
   rename(GENEID = feature)
-edger <- read_tsv(here(fs_dir, "edgeR_top_types_backup.tsv"))
+edger <- read_tsv(here(fs_dir, "edgeR_top_types.tsv"))
 
 # pct_dropout_by_counts: Percentage of cells the feature doesn't appear in
 max_dropout_pct <- 10 # Don't want genes that are missing in > 90% of samples
@@ -76,8 +82,76 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
     pluck("GENEID")
   writeLines(features, here(fs_lists, glue("{x}_feature_list_{n_features}.txt")))
   features
-}) |> `names<-`(names(feature_tbs))
+}) |>
+  `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
+
+## ** edgeR by type
+# Instead of aggregating by median lfc, will get disjoint feature sets for each tumor
+# type
+ttypes <- colnames(edger) |>
+  keep(\(x) str_detect(x, "logFC_tumor_type")) |>
+  str_remove("logFC_tumor_type")
+n_per <- 70
+seen <- c()
+pybuiltins <- import_builtins()
+type_overlap_list <- list()
+edger_type_flist <- lapply(ttypes, \(type) {
+  fc_col <- glue("logFC_tumor_type{type}")
+  sorted <- arrange(edger, desc(abs(!!as.symbol(fc_col)))) |>
+    mutate(from = type)
+  type_overlap_list[[type]] <<- pybuiltins$set(sorted$GENEID[1:n_per])
+  filtered <- sorted |>
+    filter(!GENEID %in% seen) |>
+    slice_head(n = n_per)
+  seen <<- c(seen, sorted$GENEID[1:n_per])
+  filtered
+}) |>
+  bind_rows()
+overlaps <- rs$pairwise_overlaps(type_overlap_list, FALSE) |>
+  lapply(\(x) {
+    tibble(first = x[[1]][[1]], second = x[[1]][[2]], overlap = x[[2]])
+  }) |>
+  bind_rows() |>
+  arrange(desc(overlap))
+writeLines(edger_type_flist$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type.txt")))
+# [2025-05-19 Mon] 725 features in common with top 3000 median list
+#     417 in common with the top one thousand
+
+## ** edgeR by type, considering organoid differences
+# Like the above, but do not accept features that are heavily DE in an
+# ovp (organoid vs primary) comparison
+ovp_tb <- read_tsv(here("data", "output", "chula_organoid_comparison", "de_enrichment", "sample_type_top_tags.tsv"))
+seen_ovp <- c()
+edger_type_flist_ovp <- lapply(ttypes, \(type) {
+  fc_col <- glue("logFC_tumor_type{type}")
+  sorted <- arrange(edger, desc(abs(!!as.symbol(fc_col)))) |>
+    filter(!GENEID %in% seen) |>
+    mutate(from = type) |>
+    inner_join(ovp_tb, by = join_by(GENEID), suffix = c("", ".ovp")) |>
+    mutate(
+      logFC = replace(logFC, logFC == 0, 0.000001),
+      de_ratio = abs(!!as.symbol(fc_col)) / abs(logFC)
+    )
+  passing_p <- sorted |>
+    filter(PValue.ovp >= 0.01) |>
+    slice_head(n = n_per)
+  if (nrow(passing_p) != n_per) {
+    remaining <- n_per - nrow(passing_p)
+    sorted <- sorted |>
+      arrange(desc(de_ratio)) |>
+      slice_head(n = remaining)
+    final <- bind_rows(sorted, passing_p)
+  } else {
+    final <- passing_p
+  }
+  seen_ovp <<- c(seen_ovp, final$GENEID)
+  final
+}) |>
+  bind_rows()
+writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp.txt")))
+
+## ** Gene ontology
 
 n_ontology <- 500
 go_top_n <- vtb_go |>
@@ -127,12 +201,6 @@ jaccard <- vegan::vegdist(type_x_feature, method = "jaccard") |>
   pivot_longer(-x, names_to = "y", values_to = "value") |>
   mutate(value = round(value, 2))
 
-## distinct_orderings(jaccard, c("x", "y")) |>
-##   ggplot(aes(x = as.factor(x), y = as.factor(y), fill = value)) +
-##   geom_tile()
-
-## ggplot(jaccard, aes(x = name, y = y, fill = value)) +
-##   geom_tile() #
 
 ## * Get features for ALR
 n_alr <- 20 # Number of alr features
@@ -145,7 +213,8 @@ bottom_n_features <- lapply(names(feature_tbs), \(x) {
     pluck("GENEID")
   writeLines(features, here(ref_lists, glue("{x}_feature_list_lowest_{n_alr}.txt")))
   features
-}) |> `names<-`(names(feature_tbs))
+}) |>
+  `names<-`(names(feature_tbs))
 
 feature_venn_b <- ggVennDiagram(bottom_n_features)
 ggsave(here(fs_dir, "lowest_features_overlap.png"), feature_venn_b)
@@ -244,9 +313,3 @@ dist_heatmap <- function(dist, vars, var_name = "feature") {
     ylab(var_name)
 }
 dist_heatmap(fc_dist, lfc_groups)
-
-
-# Need a function to plot dist
-
-
-## --- CODE BLOCK ---
