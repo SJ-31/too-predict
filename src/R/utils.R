@@ -958,9 +958,11 @@ gene_set_analysis <- function(method = c("fgsea"), data,
   result <- list()
 
   if (method == "fgsea") {
+    # FGSEA expects ranks sorted in increasing order
     if (class(data) == "list") {
       all_results <- lapply(dnames, \(n) {
-        cur <- fgsea::fgsea(pathways = gene_sets, stats = data[[n]], scoreType = n, ...)
+        sorted <- sort(data[[n]], decreasing = FALSE)
+        cur <- fgsea::fgsea(pathways = gene_sets, stats = sorted, scoreType = n, ...)
         cur[cur$padj <= p_threshold, ]
       }) |> `names<-`(dnames)
       together <- lapply(dnames, \(n) {
@@ -971,6 +973,7 @@ gene_set_analysis <- function(method = c("fgsea"), data,
       result$tb <- together
       result$raw <- all_results
     } else {
+      data <- sort(data, decreasing = FALSE)
       raw <- fgsea::fgsea(pathways = gene_sets, stats = data, ...)
       raw <- raw[raw$padj <= p_threshold, ]
       result$raw <- raw

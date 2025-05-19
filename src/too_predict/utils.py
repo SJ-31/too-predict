@@ -15,6 +15,7 @@ import scanpy as sc
 import scipy.spatial.distance as spd
 import yaml
 from joblib import Parallel, delayed
+from numba import jit
 from numpy.random import Generator
 from pyhere import here
 from rpy2.rinterface_lib.sexp import (
@@ -686,19 +687,13 @@ def write_tmp_toolkit(
     df.to_csv(outfile, index_label="Entrez_Gene_Id", sep="\t")
 
 
-def pairwise_overlaps(
-    sets: dict, as_matrix: bool = False, do_parallel=False
-) -> pd.Series | pd.DataFrame:
+@jit(cache=True)
+def pairwise_overlaps(sets: dict, as_matrix: bool = False) -> pd.Series | pd.DataFrame:
     combs = itertools.combinations(sets.keys(), 2)
-
-    def helper(x):
-        return np.array([x[0], x[1], len(sets[x[0]] & sets[x[1]])])
-
-    if not do_parallel:
-        overlaps = np.array(list(map(helper, combs)))
-    else:
-        par = Parallel()
-        overlaps = np.array(par(delayed(helper)(x) for x in combs))
+    result = []
+    for comb in combs:
+        result.append(np.array([comb[0], comb[1], len(sets[comb[0]] & sets[comb[1]])]))
+    overlaps = np.array(result)
     df = pd.DataFrame(overlaps, columns=["x", "y", "intersection"])
     df.loc[:, "intersection"] = df["intersection"].astype(np.int64)
     if as_matrix:

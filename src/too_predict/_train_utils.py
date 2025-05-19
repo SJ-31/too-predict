@@ -61,6 +61,20 @@ MODELS: dict = {
         "f": "mutual_info_feature_list_3000",
         "s": True,
     },
+    "clr_xgboost_edger_per_type": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type",
+        "s": False,
+    },
+    "clr_xgboost_edger_per_type_ovp": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_ovp",
+        "s": False,
+    },
     "clr_xgboost_edger_low_variance_ref": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
@@ -119,6 +133,14 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "l": "edgeR_median_lfc_feature_list_3000-high_organoid_lfc.txt",
+        "s": True,
+    },
+    "clr_xgboost_edger_3000_organoid_edger_blacklist_v2": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "l": "organoid_vs_primary_lfc-1000.txt",
         "s": True,
     },
     "clr_xgboost_edger": {
@@ -315,7 +337,7 @@ MODELS: dict = {
             "batch": "is_organoid",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,
+        "s": True,
     },
     "clr_xgb3_edger_combat_ref": {
         "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),

@@ -68,6 +68,8 @@ def cross_validate_helper(
         return
     adata = ADATA.copy()
     filter, model, transformer, balancer, encoder, corrector = read_model_spec(spec)
+    print(f"{spec=}")
+    print(f"{model=}")
     try:
         if gc is not None:
             result_dir: Path = here(OUTDIR, f"{result_dir_str}_by_group_{gc}")
