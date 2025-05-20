@@ -4,6 +4,8 @@ suppressMessages({
   library(glue)
   library(tidyverse)
   library(zellkonverter)
+  library(httr2)
+  library(data.table)
   library(scRNAseq)
   library(edgeR)
 })
@@ -24,7 +26,6 @@ if (sys.nframe() == 0) {
 
 library(reticulate)
 use_condaenv("too-predict")
-source(here("src", "R", "utils.R"))
 source(here("src", "R", "utils.R"))
 
 utils <- import("too_predict.utils")
@@ -172,22 +173,78 @@ ovp_blacklist <- ovp_tb |>
   filter(PValue >= 0.01) |>
   pull(GENEID)
 
-# TODO: must harmonize your labels for primary site with whatever this thing uses
-
-wanted_tissues <- c("")
-
 tmp <- cell_markers |>
   inner_join(edgeR_top, by = join_by(x$ensembl == y$GENEID)) |>
   filter(!ensembl %in% ovp_blacklist)
 
+hpa_wanted_cols <- c(
+  "eg", # Ensembl
+  "evih", # HPA evidence
+  "rnats", # RNA tissue specificity
+  "rnatd", # RNA tissue distribution
+  "rnatss", # RNA tissue specificity score
+  "rnatsm", # RNA tissue specific nTPM
+  "rnacas", # RNA cancer specificity
+  "rnacad", # RNA cancer distribution
+  "rnacass", # RNA cancer specificity score
+  "rnacasm" # RNA cancer specific FPKM
+)
 
-# TODO: get hpa tissue-enriched genes
-query <- "tissue_specificity_rna:cerebral cortex;Tissue enriched"
-# HPA also has tissue-enriched genes...
-hq <- get_hpa_query(query, format = "tsv", columns = hpa_wanted_cols, compress = "no")
+# Key to elevated expression levels
+## Tissue enriched: At least four-fold higher mRNA level in heart compared to any other tissues.
+## Group enriched: At least four-fold higher average mRNA level in a group of 2-5 tissues compared to any other tissue.
+## Tissue enhanced: At least four-fold higher mRNA level in heart compared to the average level in all other tissues.
 
-tb <- request(hq) |>
-  req_perform() |>
-  resp_body_string() |>
-  fread() |>
-  as_tibble()
+# Prefer group enriched or tissue enhanced
+
+query <- "tissue_category_rna:Bone marrow;Tissue enriched"
+
+tissues_to_get <- c(
+  "tongue", "stomach", "skeletal muscle", "heart muscle", "intestine",
+  "liver", "kidney", "prostate", "breast", "adrenal gland",
+  "retina", "lymphoid tissue", "salivary gland",
+  "urinary bladder", "bone marrow", "pancreas", "brain", "skin",
+  "esophagus", "testis"
+)
+
+tissue2primary_site <- c(
+  "tongue" = "mouth_tongue",
+  "skeletal muscle" = "bones_joints_articular_cartilage",
+  "heart muscle" = "heart_mediastinum_and_pleura",
+  "retina" = "eye",
+  "urinary bladder" = "bladder",
+  "bone marrow" = "hematopoietic_and_reticuloendothelial_systems",
+  "salivary gland" = "mouth_tongue",
+  "lymphoid tissue" = "lymph_nodes",
+  "adrenal gland" = "adrenal gland"
+)
+
+hpa_lookup <- slowly(\(qstring) {
+  hpa_query <- get_hpa_query(qstring, format = "tsv", columns = hpa_wanted_cols, compress = "no")
+  tryCatch(expr = {
+    request(hpa_query) |>
+      req_perform() |>
+      resp_body_string() |>
+      fread() |>
+      as_tibble()
+  }, error = \(cnd) NULL)
+}, rate_delay(pause = 1))
+
+
+hpa_tissue_file <- here("data", "reference", "hpa_tissue_enriched_2025-5-20.csv")
+hpa_tissues <- read_existing(hpa_tissue_file, \(f) {
+  hpa_tissues <- lapply(tissues_to_get, \(t) {
+    query_str <- glue("tissue_category_rna:{t};Group enriched,Tissue enhanced")
+    tb <- hpa_lookup(query_str)
+    if (!is.null(tb)) {
+      tb |> mutate(tissue = t)
+    }
+  }) |>
+    bind_rows() |>
+    mutate(
+      primary_site = tissue2primary_site[tissue],
+      primary_site = case_match(primary_site, NA ~ tissue, .default = primary_site)
+    )
+  write_csv(hpa_tissues, f)
+  hpa_tissues
+}, read_csv)
