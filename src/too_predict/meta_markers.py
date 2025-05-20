@@ -38,10 +38,12 @@ def maximal_points(df: pd.DataFrame, x: str, y: str, ids: str) -> pd.DataFrame:
 
 def marker_auroc_score(
     adata: ad.AnnData,
-    target: str,
+    target: str | int,
     markers: Sequence,
-    label_col: str,
+    label_col: str | None = None,
+    labels: np.ndarray | None = None,
     marker_col: str | None = None,
+    expr_all: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Compute auROC scores for markers
 
@@ -60,22 +62,24 @@ def marker_auroc_score(
     -----
 
     """
-    encoder: LabelEncoder = LabelEncoder()
-    labels: np.ndarray = encoder.fit_transform(adata.obs[label_col])
-    target: int = encoder.transform([target])[0]
+    if labels is None and label_col:
+        encoder: LabelEncoder = LabelEncoder()
+        labels = encoder.fit_transform(adata.obs[label_col])
+        target = encoder.transform([target])[0]
+    elif labels is None and label_col is None:
+        raise ValueError("Either labels or label_col must be provided!")
     counts: pd.Series = pd.Series(labels).value_counts()
-    mmask = (
-        adata.var[marker_col].isin(markers)
-        if marker_col is not None
-        else adata.var.index.isin(markers)
-    )
-    expr_all: np.ndarray = adata.X[:, mmask.values].toarray()
+    if expr_all is None:
+        mmask = (
+            adata.var[marker_col].isin(markers)
+            if marker_col is not None
+            else adata.var.index.isin(markers)
+        )
+        expr_all = adata.X[:, mmask.values].toarray()
 
     pmask: np.ndarray = labels == target
-
     n_pos: int = pmask.sum()
     n_neg: int = counts.sum() - n_pos
-
     rhs: float = (n_pos * (n_pos + 1)) / 2
     rs, tc = _get_ranks(
         np.array(range(len(markers))), expr_all, labels, target, n_pos, n_neg
@@ -213,11 +217,16 @@ class MetaMarkers:
         self,
         datasets: list[ad.AnnData] | dict[str, ad.AnnData],
         label_col: str,
-        subset: Sequence | None = None,  # Only calculate markers for these
+        marker_col: str | None = None,
+        subset: Sequence | None = None,  # Only calculate markers from samples with
+        # these labels
         known_markers: dict | None | pd.DataFrame = None,
     ) -> None:
         self.marker_df: pd.DataFrame
         self.datasets: dict[str, ad.AnnData]
+        self.markers: list = []
+        self.label_col: str = label_col
+        self.marker_col: str | None = marker_col
         if known_markers is not None and isinstance(known_markers, dict):
             self.marker_df = (
                 pd.DataFrame(
@@ -229,19 +238,55 @@ class MetaMarkers:
         elif known_markers is not None and isinstance(known_markers, pd.DataFrame):
             self.marker_df = known_markers
         else:
-            self.marker_df = pd.DataFrame(
-                columns="target", index=pd.Index(name="gene_id")
-            )
+            self.marker_df = pd.DataFrame(columns=["target"])
         if isinstance(datasets, list):
             self.datasets = {f"dataset_{i}": datasets[i] for i in range(len(datasets))}
         else:
             self.datasets = datasets
 
+    def add_markers(self, to_add: Sequence) -> None:
+        self.markers.extend(to_add)
+        self.markers = list(set(self.markers))
+
     def find_markers(self, method: Literal["edgeR", "scanpy"], **kwargs) -> None: ...
 
-    # def calc_auroc(self, target: str | None = None):
-    #     if
-    # for d in self.
+    def calc_auroc(self, dataset: str, target: str | None = None) -> pd.DataFrame:
+        adata: ad.AnnData = self.datasets[dataset]
+        mmask = (
+            adata.var[self.marker_col].isin(self.markers)
+            if self.marker_col is not None
+            else adata.var.index.isin(self.markers)
+        )
+        expr_all = adata.X[:, mmask].toarray()
+
+        encoder: LabelEncoder = LabelEncoder()
+        labels = adata.obs[self.label_col]
+        encoded = encoder.fit_transform(labels)
+        results = []
+        if target is None:
+            for label in labels.unique():
+                t = encoder.transform([label])[0]
+                result = marker_auroc_score(
+                    adata,
+                    t,
+                    markers=self.markers,
+                    labels=encoded,
+                    expr_all=expr_all,
+                )
+                result.loc[:, "target"] = label
+                results.append(result)
+            return pd.concat(results)
+        else:
+            t = encoder.transform([target])[0]
+            result = marker_auroc_score(
+                adata,
+                t,
+                markers=self.markers,
+                labels=encoded,
+                expr_all=expr_all,
+            )
+            result.loc[:, "target"] = target
+            return result
 
     def plot_auroc(
         self,
