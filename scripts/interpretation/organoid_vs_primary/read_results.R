@@ -15,6 +15,7 @@ contrasts <- list(
   paad = "PAAD.organoid - PAAD.primary",
   chol = "CHOL.organoid - CHOL.primary"
 )
+ttypes <- c("lihc", "chol", "coad_read", "paad")
 
 ensembl2symbol <- read_tsv(here("data", "mappings", "ensembl_113_id_mapping.tsv")) |>
   distinct(ensembl, .keep_all = TRUE)
@@ -92,9 +93,13 @@ upset_helper <- function(tb_list, filename, target_col = "GENENAME", direction_c
   has_neg <- validate(to_upset_neg)
   if (has_pos) {
     mt_pos <- make_comb_mat(to_upset_pos)
+  } else {
+    mt_pos <- NULL
   }
   if (has_neg) {
     mt_neg <- make_comb_mat(to_upset_neg)
+  } else {
+    mt_neg <- NULL
   }
   if (!(has_pos || has_neg)) {
     return(NULL)
@@ -112,16 +117,17 @@ upset_helper <- function(tb_list, filename, target_col = "GENENAME", direction_c
   # PNG doesn't work here for some reason
   draw(ht)
   dev.off()
+  list(plot = ht, mt_pos = mt_pos, mt_neg = mt_neg)
 }
 
-upset_helper(list_modify(top_tags, sample_type = zap()), filename = "de_gene_upset_no_filter.pdf")
+upset_res <- upset_helper(list_modify(top_tags, sample_type = zap()), filename = "de_gene_upset_no_filter.pdf")
 
 
 # Shared characteristics of uniquely downreg genes
 # Interpretation
 unique_downreg <- local({
   to_get <- list(paad = "0010", coad_read = "1000", lihc = "0100", chol = "0001")
-  lst <- sapply(to_get, \(x) extract_comb(mt_neg, x), simplify = FALSE, USE.NAMES = TRUE)
+  lst <- sapply(to_get, \(x) extract_comb(upset_res$mt_neg, x), simplify = FALSE, USE.NAMES = TRUE)
   tibble(tumor_type = names(lst), GENENAME = lst) |>
     unnest(GENENAME) |>
     left_join(select(ensembl2symbol, ensembl, symbol), by = join_by(x$GENENAME == y$symbol)) |>
@@ -130,20 +136,38 @@ unique_downreg <- local({
 ud_families <- table(unique_downreg$tumor_type, unique_downreg$family)
 
 
-top_tags_all <- list_modify(top_tags, sample_type = zap()) |>
-  lmap(\(x) mutate(x[[1]], tumor_type = names(x[1]))) |>
-  bind_rows()
 
-# TODO: you should include only the genes that are not DE between any of the tumor
-# types in primary samples. Then you'd know that the significant famlies below
-# are DE as a result of the organoid treatment
+common_expr <- local({
+  genes <- top_tags$sample_type$GENEID |> unique()
+  for (t in ttypes) {
+    tb <- read_tsv(here(outdir_o, glue("{str_to_upper(t)}_ovr_primary_top_tags.tsv")))
+    cur <- tb |>
+      filter(PValue > 0.05) |>
+      pull(GENEID)
+    genes <- intersect(cur, genes)
+  }
+  lst <- list_modify(top_tags, sample_type = zap())
+  lst |>
+    lmap(\(x) {
+      name <- names(x[1])
+      mutate(x[[1]], tumor_type = name) |>
+        filter(GENEID %in% genes)
+    }) |>
+    `names<-`(names(lst))
+}) # Genes that are DE between organoid-primary but not DE
+# in any tumor types for primary
+
+upset_helper(common_expr, filename = "de_gene_upset.pdf")
+
+# Test if gene family is significantly associated with which genes are DE
 chi_square_fams <- read_existing(here(outdir_o, "chisq_org_families.rds"), \(f) {
   results <- list()
+  tb <- bind_rows(common_expr)
   directions <- list(
-    downregulated = filter(top_tags_all, logFC < 0),
-    upregulated = filter(top_tags_all, logFC > 0)
+    downregulated = filter(tb, logFC < 0),
+    upregulated = filter(tb, logFC > 0)
   )
-  fams <- unique(top_tags_all$family)
+  fams <- unique(tb$family)
   for (n in names(directions)) {
     test_fams <- lapply(fams, \(fam) {
       tab <- table(directions[[n]]$tumor_type, directions[[n]]$family == fam)
@@ -165,6 +189,49 @@ chi_square_fams <- read_existing(here(outdir_o, "chisq_org_families.rds"), \(f) 
 }, readRDS)
 
 
+# Data col contains the the nx2 contingency matrix
+# TRUE are the number of genes that are downregulated/upregulated in the
+# primary vs organoid comparison
+chi2_sig_down <- chi_square_fams$downregulated |>
+  filter(p.value <= 0.05) |>
+  filter(map_lgl(data, \(d) sum(d$`TRUE`) > 50))
+
+# TODO: check the overlap with genes DE between organoids and what is informative
+# for primary tumors
+# Maximize absolute primary ovr, minimize
+edgeR_top <- read_tsv(here("data", "output", "feature_selection", "edgeR_top_types.tsv"))
+
+# Problematic ones are LIHC and CHOL, so...
+tmp <- select(edgeR_top, "GENEID", "logFC_tumor_typeLIHC") |>
+  inner_join(top_tags$sample_type, by = join_by(GENEID)) |>
+  mutate(abs_primary_ovr = abs(logFC_tumor_typeLIHC), abs_org_vs_primary = abs(logFC))
+
+## ** OVR consistency
+
+# Ideally lfc should be correlated, which indicates that the relationships in gene
+# expression are preserved by the organoids. But probably won't be observed
+# due to differences in organoid culture
+ovrs <- sapply(ttypes, \(t) {
+  p_ovr <- read_tsv(here(outdir_o, glue("{str_to_upper(t)}_ovr_primary_top_tags.tsv"))) |>
+    distinct(GENEID, .keep_all = TRUE) |>
+    filter(PValue <= 0.05)
+  o_ovr <- read_tsv(here(outdir_o, glue("{str_to_upper(t)}_ovr_organoid_top_tags.tsv"))) |>
+    distinct(GENEID, .keep_all = TRUE) |>
+    filter(PValue <= 0.05)
+  joined <- inner_join(p_ovr, o_ovr, by = join_by(GENEID), suffix = c(".primary", ".organoid"))
+  joined
+},
+simplify = FALSE, USE.NAMES = TRUE
+)
+
+# Though really if it's not preserved for one ttype, likely not going to be for others
+ovr_corrs <- lmap(ovrs, \(x) {
+  cor.test(x[[1]]$logFC.primary, x[[1]]$logFC.organoid) |>
+    tidy() |>
+    mutate(tumor_type = names(x[1]))
+}) |>
+  bind_rows()
+
 
 ## * BC
 bc_top_tags <- inner_join(top_tags$sample_type, batch_var, by = join_by(GENEID))
@@ -181,6 +248,7 @@ bc_corr_plot <- ggplot(bc_top_tags, aes(x = logFC, y = log(bc_mean_organoid_fc),
 ggsave(here(outdir_o, "bc_fc_correlation.png"), bc_corr_plot, width = 13)
 
 
+
 ## * Gene set overlaps
 
 fgsea <- sapply(names(contrasts), \(x) {
@@ -188,11 +256,6 @@ fgsea <- sapply(names(contrasts), \(x) {
     mutate(direction = as.numeric(case_match(direction, "pos" ~ 1, "neg" ~ -1)))
 }, simplify = FALSE, USE.NAMES = TRUE)
 
-to_upset_pos <- get_to_upset(list_modify(fgsea, sample_type = zap()), "pathway", "pos", "direction")
-to_upset_neg <- get_to_upset(list_modify(fgsea, sample_type = zap()), "pathway", "neg", "direction")
-## mt_pos <- make_comb_mat(to_upset_pos)
-# [2025-05-16 Fri] Only two pathways are upregulated
-mt_neg <- make_comb_mat(to_upset_neg)
-png(here(outdir_o, "de_pathway_upset.png"), width = 8, height = 8, units = "in", res = 1080)
-UpSet(mt_neg, row_title = "Downregulated pathways")
-dev.off()
+upset_helper(list_modify(fgsea, sample_type = zap()), "de_pathway_upset_no_filter.pdf",
+  target_col = "pathway", direction_col = "direction"
+)
