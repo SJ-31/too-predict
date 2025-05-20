@@ -40,6 +40,7 @@ import too_predict.recoder as rt
 import too_predict.utils as ut
 from joblib import Parallel, delayed, parallel
 from matplotlib.figure import Figure
+from numba import jit
 from pyhere import here
 from rpy2.robjects.packages import importr
 from scipy import sparse
@@ -71,9 +72,3 @@ adata = adata[
 ]
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
-
-C.batch_key = "not_primary"
-corre = C.fit_transform(filtered)
-
-
-train, test = ut.train_test_split_ad(filtered)
