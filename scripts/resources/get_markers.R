@@ -22,9 +22,9 @@ source_tbs <- list()
 symbol2ensembl <- local({
   grch38_ref <- read_tsv(here("data", "reference", "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv")) |>
     filter(!is.na(gene_name)) |>
-    rename(symbol = gene_name, ensembl = gene_id)
+    dplyr::rename(symbol = gene_name, ensembl = gene_id)
   hgnc_ref <- read_tsv(here("data", "hgnc_complete_set_2025-3-19.tsv")) |>
-    rename(ensembl = ensembl_gene_id) |>
+    dplyr::rename(ensembl = ensembl_gene_id) |>
     filter(!is.na(symbol) & !is.na(ensembl) & !(symbol %in% grch38_ref$symbol))
   bind_rows(hgnc_ref, grch38_ref) |>
     select(symbol, ensembl) |>
@@ -234,7 +234,7 @@ source_tbs$panglaodb <- panglaodb |>
   }), from_tme = FALSE) |>
   unnest(cols = c(data)) |>
   ungroup() |>
-  rename(cell_type = "cell type") |>
+  dplyr::rename(cell_type = "cell type") |>
   select(all_of(wanted_cols))
 
 
@@ -342,7 +342,7 @@ hpa_tb <- read_existing(files$hpa_all, get_hpa, read_csv) |> mutate(cell_type = 
 source_tbs$hpa <- hpa_tb |>
   filter(`RNA cancer specificity` %in% c("Low cancer specificity", "Not detected")) |>
   mutate(tissue = str_replace(query_tissue, " ", "_"), from_tme = FALSE) |>
-  rename(ensembl = Ensembl) |>
+  dplyr::rename(ensembl = Ensembl) |>
   select(all_of(wanted_cols))
 # NOTE: [2025-04-21 Mon] Ideally you would  also use this resource to
 # find marker genes for TME-associated
@@ -419,6 +419,41 @@ cell_tb <- local({
     filter(map_dbl(data, nrow) >= min_markers) |>
     mutate(data = lapply(data, \(x) unique(x$ensembl)), marker_count = map_dbl(data, \(x) length(x)))
 })
+
+## combined |> filter(!from_tme & tissue != "common") |>
+
+tissue2ttype <- c(
+  "blood" = "DLBC",
+  "common" = NULL, "adipose_tissue" = NULL, "ascites" = NULL,
+  "belly" = "STAD",
+  "bile_duct" = NULL, "biliary_tract" = NULL, "bladder" = NULL,
+  "blood_vessel" = "DLBC", "bone" = c("AML", "LCML"),
+  "bone_marrow" = c("AML", "LCML"),
+  "brain" = c("LGG", "GBB"),
+  "breast" = "BRCA", "colon" = "COAD-READ",
+  "embryo" = NULL, "endocrine_organ" = NULL,
+  "endometrium" = "UCEC", "esophagus" = NULL, "eye" = "UVM",
+  "gall_bladder" = NULL,
+  "gastrointestinal_tract" = NULL,
+  "gut" = "COAD-READ", "intestine" = "COAD-READ",
+  "kidney" = c("KIRC", "KICH", "KIRP"),
+  "liver" = "LIHC", "lung" = c("LUAD", "LUSC"),
+  "lymph" = NULL, "lymph_node" = NULL,
+  "lymphoid_tissue" = NULL,
+  "muscle" = "SARC",
+  "nasopharynx" = NULL, "neck" = "HNSC", "nose" = NULL, "oral_cavity" = NULL,
+  "ovary" = "OV",
+  "pancreas" = "PAAD", "pharynx" = NULL, "prostate" = "PRAD",
+  "salivary_gland" = NULL, "skin" = "SKCM", "soft_tissue" = "MESO", "spleen" = NULL,
+  "stomach" = "STAD", "suprarenal_gland" = NULL, "testis" = NULL, "thyroid" = "THCA",
+  "tongue" = NULL, "tonsil" = NULL, "undefined" = NULL,
+  "uterine_cervix" = c("UVM", "UCEC"), "uterus" = c("UVM", "UCEC"),
+  "heart" = NULL, "adrenal_glands" = "ACC",
+  "thyroid_gland" = NULL,
+  "heart_muscle" = "SARC",
+  "skeletal_muscle" = "SARC",
+)
+
 cell_list <- setNames(cell_tb$data, cell_tb$cell_type)
 
 
@@ -450,6 +485,7 @@ for (j in seq_along(new_list)) {
     }
   }
 }
+
 
 new_list <- new_list[map_dbl(new_list, length) >= min_markers]
 overlap_tb <- as_tibble(overlap_tracker)
