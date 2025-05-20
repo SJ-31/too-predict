@@ -63,6 +63,7 @@ def cross_validate_helper(
     impute,
     feature_set,
     skip: bool = False,
+    which: tuple = ("CV", "additional"),
 ):
     if skip:
         return
@@ -96,7 +97,7 @@ def cross_validate_helper(
                     adata
                 )  # [2025-04-30 Wed] NOTE: temporary
                 # Should apply the correction during validation
-        if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV:
+        if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV and "CV" in which:
             track_meta = result_dir.joinpath(".metadata")
             track_meta.mkdir(exist_ok=True)
             results = model.cross_validate(
@@ -112,7 +113,7 @@ def cross_validate_helper(
             write_results(results, result_dir, lc, cm_prefix="fold_")
         result_dir2 = result_dir.joinpath("additional_splits")
         result_dir2.mkdir(exist_ok=True, parents=True)
-        if not here(result_dir2, f"{lc}-misc.csv").exists():
+        if not here(result_dir2, f"{lc}-misc.csv").exists() and "additional" in which:
             results2 = model.holdout(
                 adata,
                 ADDITIONAL_SPLITS,
@@ -161,7 +162,13 @@ if __name__ == "__main__":
 
     with joblib.parallel_backend(backend):
         for name, data in MODELS.items():
-            t, i, skip, f = data.get("t"), data.get("i"), data.get("s"), data.get("f")
+            t, i, skip, f, which = (
+                data.get("t"),
+                data.get("i"),
+                data.get("s"),
+                data.get("f"),
+                data.get("w", ("CV", "additional")),
+            )
             cross_validate_helper(
                 lc=label_class,
                 gc=None,
@@ -171,4 +178,5 @@ if __name__ == "__main__":
                 impute=i,
                 feature_set=f,
                 skip=skip,
+                which=which,
             )
