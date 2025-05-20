@@ -428,6 +428,31 @@ def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
     sc.pp.filter_cells(adata, min_counts=5000)
     sc.pp.filter_genes(adata, min_cells=min_samples)
     sc.pp.filter_genes(adata, min_counts=200)
+    if label == "primary_site":
+        adata.obs.loc[:, "primary_site"] = adata.obs["primary_site"].replace(
+            {
+                "bones_joints_and_articular_cartilage_of_limbs": "bones_joints_articular_cartilage",
+                "bones_joints_and_articular_cartilage_of_other_and_unspecified_sites": "bones_joints_articular_cartilage",
+                "oropharynx": "hypo_oropharynx",
+                "hypopharynx": "hypo_oropharynx",
+                "other_and_unspecified_parts_of_mouth": "mouth_tongue",
+                "base_of_tongue": "mouth_tongue",
+                "tonsil": "mouth_tongue",
+                "gum": "mouth_tongue",
+                "floor_of_mouth": "mouth_tongue",
+                "lip": "mouth_tongue",
+                "palate": "mouth_tongue",
+                "other_and_ill_defined_sites_in_lip_oral_cavity_and_pharynx": "mouth_tongue",
+                "other_and_ill_defined_sites": "unknown",
+                "rectum": "colorectal",
+                "colon": "colorectal",
+                "rectosigmoid_junction": "colorectal",
+                "uterus_nos": "uterus_ovary",
+                "ovary": "uterus_ovary",
+                "corpus_uteri": "uterus_ovary",
+                "cervix_uteri": "uterus_ovary",
+            }
+        )
     adata, discarded_types = filter_by_obs(adata, [label], min=50)
     print(f"Discarded {label}: {discarded_types}")
     print(f"Final shape after filtering: {adata.shape}")
