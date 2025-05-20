@@ -207,7 +207,7 @@ biotype_box <- ggplot(adata$var, aes(
   fill = broad_biotype
 )) +
   geom_boxplot()
-ggsave(here(outdir, "biotype_fc_boxplot.png"), plot = biotype_box, width = 9, height = 8)
+ggsave(here(outdir, "biotype_fc_boxplot.png"), plot = biotype_box, width = 15, height = 8)
 
 ktest <- kruskal.test(biotype_fcs) |>
   tidy() |>
@@ -258,6 +258,7 @@ to_friedman <- lapply(org_tumor_types, \(x) {
 fried_test <- friedman.test(to_friedman) |>
   tidy() |>
   mutate(comment = "Test if fc for a given gene differs between tumor types")
+
 
 fc_ttype_pairplot <- to_friedman |>
   as.data.frame() |>

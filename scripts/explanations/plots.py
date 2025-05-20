@@ -1,6 +1,8 @@
 #!/usr/bin/env ipython
 
+import pandas as pd
 import scanpy as sc
+import too_predict.plotting as tp
 import too_predict.utils as ut
 from pyhere import here
 from too_predict._train_utils import MODELS, read_model_spec
@@ -33,7 +35,7 @@ def get_project_str(project_id):
 
 def plot_helper(model_key, adata, style, subset, y, colors):
     spec = MODELS[model_key]
-    F, M, T, B, E = read_model_spec(spec)
+    F, M, T, B, E, _ = read_model_spec(spec)
     adata = F.fit_transform(adata)
     adata = T.fit_transform(adata)
     adata.obs.loc[:, "from_chula"] = adata.obs["Project_ID"].str.contains("CHULA")
@@ -66,6 +68,55 @@ def parse_args():
     return args
 
 
+def plot_de_enrichment(adata):
+    wanted_ttype = ["PAAD", "COAD_READ", "LIHC", "CHOL"]
+    wanted_stype = ["primary", "organoid"]
+    adata = adata[
+        (
+            adata.obs["Sample_Type"].isin(wanted_stype)
+            & adata.obs["tumor_type"].isin(wanted_ttype)
+        )
+        | adata.obs["Project_ID"].str.contains("CHULA") :,
+    ]
+    organoid_compare_dir = here("data", "output", "chula_organoid_comparison")
+
+    de_enrich_dir = here(organoid_compare_dir, "de_enrichment")
+    de_df = pd.read_csv(here(de_enrich_dir, "sample_type_top_tags.tsv"), sep="\t")
+    de_df.loc[:, "absLogFC"] = de_df["logFC"].abs()
+
+    sig_pathways = list()
+
+    gsa_df = pd.read_csv(here(de_enrich_dir, "gene_sets", "gsa.tsv"), sep="\t")
+    gs = ut.gs_internal()
+
+    filtered = gsa_df.query(
+        "(`p-value:up-regulated in primary` <= 0.05) | (`p-value:up-regulated in organoid` <= 0.05)"
+    )
+    sig_pathways.extend(filtered["set_name"][:10])
+
+    n = 20
+    top_n = (
+        de_df.sort_values("absLogFC", axis=0, ascending=False)
+        .dropna(subset="GENENAME", axis="index")["GENEID"][:n]
+        .to_list()
+    )
+
+    heatmap = tp.mp_plot(
+        adata,
+        genes=top_n,
+        gene_symbols_to_show="GENENAME",
+        method="heatmap",
+        sample_groupings=["Project_ID", "Sample_Type"],
+        var_spacing=0.01,
+        var_groupings="GENEBIOTYPE",
+        height=9,
+        width=9,
+    )
+    heatmap.figure.savefig(
+        here(organoid_compare_dir, "expr_heatmap.png"), bbox_inches="tight"
+    )
+
+
 if __name__ == "__main__":
     args = parse_args()
     to_plot = {
@@ -80,8 +131,10 @@ if __name__ == "__main__":
         adata = ut.training_data_internal_test()
     else:
         adata = ut.training_data_internal()
+    adata = adata[~adata.obs["Sample_Type"].isna(), :]
 
     for name, data in to_plot.items():
+        # Plot some count data
         plot_helper(
             name,
             adata,
@@ -90,3 +143,4 @@ if __name__ == "__main__":
             y=data.get("y", "tumor_type"),
             colors=data.get("colors"),
         )
+    plot_de_enrichment(adata)
