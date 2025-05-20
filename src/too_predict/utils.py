@@ -433,6 +433,7 @@ def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
             {
                 "bones_joints_and_articular_cartilage_of_limbs": "bones_joints_articular_cartilage",
                 "bones_joints_and_articular_cartilage_of_other_and_unspecified_sites": "bones_joints_articular_cartilage",
+                # The above includes muscle
                 "oropharynx": "hypo_oropharynx",
                 "hypopharynx": "hypo_oropharynx",
                 "other_and_unspecified_parts_of_mouth": "mouth_tongue",

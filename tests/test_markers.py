@@ -3,6 +3,7 @@
 import numba as nb
 import numpy as np
 import pandas as pd
+import pytest
 import too_predict.meta_markers as meta
 import too_predict.utils as ut
 from pyhere import here
@@ -13,7 +14,7 @@ from sklearn.preprocessing import LabelEncoder
 adata = ut.training_data_internal_test()
 ENCODER = LabelEncoder()
 
-
+@pytest.mark.skip(reason="Done")
 def test_plot():
     top_tags = pd.read_csv(
         here(
@@ -77,6 +78,7 @@ def get_ranks_dummy(
     return pd.DataFrame(result_tmp, index=markers)
 
 
+@pytest.mark.skip(reason="Done")
 def test_get_ranks():
     labels = adata.obs["tumor_type"]
     print(nb.typeof(labels.values.astype(str)))

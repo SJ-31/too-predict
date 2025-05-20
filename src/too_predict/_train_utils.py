@@ -66,13 +66,27 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type",
-        "s": False,
+        "s": True,
     },
     "clr_xgboost_edger_per_type_ovp": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp",
+        "s": True,
+    },
+    "clr_xgboost_edger_per_type_ovp_ratio_only": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_ovp_ratio_only",
+        "s": True,
+    },
+    "clr_xgboost_edger_tissue_markers": {
+        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "",
         "s": False,
     },
     "clr_xgboost_edger_low_variance_ref": {

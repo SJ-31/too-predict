@@ -388,6 +388,13 @@ group_by_into_list <- function(tb, name_col, elem_col, min_size = NULL,
   }
 }
 
+get_hpa_query <- function(query, ...) {
+  base_url <- "www.proteinatlas.org/api/search_download.php?"
+  string <- url_query_build(list(search = query, ...),
+    .multi = "comma"
+  )
+  paste0(base_url, string)
+}
 
 show_reticulate_error <- function(expr) {
   captured <- substitute(expr)
