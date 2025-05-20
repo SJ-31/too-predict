@@ -252,8 +252,8 @@ class MetaMarkers:
 
     def calc_auroc(self, dataset: str, target: str | None = None) -> pd.DataFrame:
         adata: ad.AnnData = self.datasets[dataset]
-        mmask = (
-            adata.var[self.marker_col].isin(self.markers)
+        mmask: np.ndarray = (
+            adata.var[self.marker_col].isin(self.markers).values
             if self.marker_col is not None
             else adata.var.index.isin(self.markers)
         )
