@@ -1,15 +1,19 @@
 #!/usr/bin/env ipython
 
-from typing import Literal, Sequence
+from collections.abc import Sequence
+from typing import Literal
 
 import anndata as ad
 import matplotlib.pyplot as plt
+import numba as nb
+import numba.types as nt
 import numpy as np
 import pandas as pd
 import scipy.stats as stats
 from adjustText import adjust_text
 from matplotlib.figure import Figure
 from pypalettes import load_cmap
+from sklearn.preprocessing import LabelEncoder
 
 import too_predict.plotting as tp
 
@@ -39,34 +43,44 @@ def marker_auroc_score(
     label_col: str,
     marker_col: str | None = None,
 ) -> pd.DataFrame:
-    labels: pd.Series = adata.obs[label_col]
-    counts: pd.Series = labels.value_counts()
+    """Compute auROC scores for markers
+
+    Parameters
+    ----------
+    target : the class instance which the classifier is attempting to predict with
+        markers' expression values
+    marker_col : column in adata.var corresponding to markers
+    label_col : column in adata.obs containing the classes
+
+    Returns
+    -------
+    Dataframe with auROC scores for each markers, pvalues and adjusted pvalues
+
+    Notes
+    -----
+
+    """
+    encoder: LabelEncoder = LabelEncoder()
+    labels: np.ndarray = encoder.fit_transform(adata.obs[label_col])
+    target: int = encoder.transform([target])[0]
+    counts: pd.Series = pd.Series(labels).value_counts()
     mmask = (
         adata.var[marker_col].isin(markers)
         if marker_col is not None
         else adata.var.index.isin(markers)
     )
     expr_all: np.ndarray = adata.X[:, mmask.values].toarray()
-    pmask: np.ndarray = adata.obs[label_col] == target
+
+    pmask: np.ndarray = labels == target
 
     n_pos: int = pmask.sum()
     n_neg: int = counts.sum() - n_pos
 
     rhs: float = (n_pos * (n_pos + 1)) / 2
-    result_tmp: dict = {"rank_sum": [], "tie_correction": []}
-    for i, _ in enumerate(markers):
-        expr: pd.Series = pd.Series(expr_all[:, i], index=labels)
-        # Rank by expression in ascending order
-        ranks = np.argwhere(expr.sort_values().index == target).flatten()
-        result_tmp["rank_sum"].append(ranks.sum())
-
-        unique_expr: pd.Series = expr.value_counts()
-        tie_correct: float = (
-            np.array([(v**3) - v for v in unique_expr])
-            / ((n_pos + n_neg) * (n_pos + n_neg + 1))
-        ).sum()
-        result_tmp["tie_correction"].append(tie_correct)
-    df = pd.DataFrame(result_tmp, index=markers)
+    rs, tc = _get_ranks(
+        np.array(range(len(markers))), expr_all, labels, target, n_pos, n_neg
+    )
+    df = pd.DataFrame({"rank_sum": rs, "tie_correction": tc}, index=markers)
 
     df.loc[:, "sigma"] = np.sqrt(
         (n_pos * n_neg) / 12 * (n_pos + 1 - df["tie_correction"])
@@ -84,6 +98,44 @@ def marker_auroc_score(
     return df.loc[:, ["AUROC", "z", "pval", "padj"]]
 
 
+@nb.jit(
+    nt.Tuple((nb.float64[:], nb.float64[:]))(
+        nb.int64[:],
+        nb.float64[:, :],
+        nt.int64[:],
+        nt.int64,
+        nb.int64,
+        nb.int64,
+    ),
+    nopython=True,
+)
+def _get_ranks(
+    markers: np.ndarray,
+    all_expression: np.ndarray,
+    labels: np.ndarray,
+    target: int,
+    n_pos: int,
+    n_neg: int,
+):
+    n_markers = len(markers)
+    ranks_sum = np.zeros(n_markers)
+    tie_correction = np.zeros(n_markers)
+    for i in markers:
+        expr: np.ndarray = all_expression[:, i]
+        sorted_indices = np.argsort(expr)
+        # Rank by expression in ascending order
+        ranks = np.argwhere(labels[sorted_indices] == target).flatten()
+        uniques = np.unique(expr)
+        unique_counts = np.array([(expr == u).sum() for u in uniques])
+        tie_correct = (
+            np.array([v**3 - v for v in unique_counts])
+            / ((n_pos + n_neg) * (n_pos + n_neg + 1))
+        ).sum()
+        ranks_sum[i] = ranks.sum()
+        tie_correction[i] = tie_correct
+    return ranks_sum, tie_correction
+
+
 def plot_aurocs(
     dfs: dict[str, pd.DataFrame] | list[pd.DataFrame],
     palette: str | None = None,
@@ -91,6 +143,21 @@ def plot_aurocs(
     fc_col: str = "logFC",
     auroc_col: str = "AUROC",
 ) -> tuple[Figure, dict]:
+    """Plot the Pareto frontier of markers from several datasets
+
+    Parameters
+    ----------
+    dfs : dataframe of marker auROC scores from a single classification task e.g.
+        from "marker_auroc_score"
+
+    Returns
+    -------
+    Matplotlib figure
+
+    Notes
+    -----
+
+    """
     if isinstance(dfs, list):
         dfs = dict(zip(range(len(dfs)), dfs))
     if palette is None:
@@ -145,9 +212,12 @@ class MetaMarkers:
     def __init__(
         self,
         datasets: list[ad.AnnData] | dict[str, ad.AnnData],
+        label_col: str,
+        subset: Sequence | None = None,  # Only calculate markers for these
         known_markers: dict | None | pd.DataFrame = None,
     ) -> None:
         self.marker_df: pd.DataFrame
+        self.datasets: dict[str, ad.AnnData]
         if known_markers is not None and isinstance(known_markers, dict):
             self.marker_df = (
                 pd.DataFrame(
@@ -162,8 +232,16 @@ class MetaMarkers:
             self.marker_df = pd.DataFrame(
                 columns="target", index=pd.Index(name="gene_id")
             )
+        if isinstance(datasets, list):
+            self.datasets = {f"dataset_{i}": datasets[i] for i in range(len(datasets))}
+        else:
+            self.datasets = datasets
 
     def find_markers(self, method: Literal["edgeR", "scanpy"], **kwargs) -> None: ...
+
+    # def calc_auroc(self, target: str | None = None):
+    #     if
+    # for d in self.
 
     def plot_auroc(
         self,
