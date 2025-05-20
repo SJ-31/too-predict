@@ -463,9 +463,23 @@ nrow after: {nrow(counts) - ndupes}
 }
 
 
-markers_internal <- function() yaml::read_yaml(as.character(ut$get_data("reference/cell_markers_custom.yaml")))
+markers_internal <- function() {
+  path <- "reference/cell_markers_custom.yaml"
+  tryCatch(yaml::read_yaml(as.character(ut$get_data(path))),
+    error = \(cnd) {
+      yaml::read_yaml(here("data", path))
+    }
+  )
+}
+
 markers_meta_internal <- function(grouped = TRUE) {
-  tb <- read_tsv(as.character(ut$get_data("reference/cell_markers_custom_meta.tsv")))
+  path <- "reference/cell_markers_custom_meta.tsv"
+  tb <- tryCatch(
+    read_tsv(as.character(ut$get_data(path))),
+    error = \(cnd) {
+      read_tsv(here("data", path))
+    }
+  )
   if (grouped) {
     tb |>
       mutate(
