@@ -81,20 +81,47 @@ get_to_upset <- function(tb_list, target_col, direction, direction_col = "logFC"
 }
 
 # Upset plot of top most downreg DE genes
-to_upset_pos <- get_to_upset(list_modify(top_tags, sample_type = zap()), "GENENAME", "pos")
-to_upset_neg <- get_to_upset(list_modify(top_tags, sample_type = zap()), "GENENAME", "neg")
-mt_pos <- make_comb_mat(to_upset_pos)
-mt_neg <- make_comb_mat(to_upset_neg)
+upset_helper <- function(tb_list, filename, target_col = "GENENAME", direction_col = "logFC") {
+  validate <- function(lst) {
+    !any(map_dbl(lst, length) == 0)
+  }
+  to_upset_pos <- get_to_upset(tb_list, target_col, "pos", direction_col = direction_col)
 
-png(here(outdir_o, "de_gene_upset.png"), width = 10, height = 15, units = "in", res = 1080)
-UpSet(mt_pos, row_title = "Upregulated DE genes") %v%
-  UpSet(mt_neg, row_title = "Downregulated DE genes")
-dev.off()
+  to_upset_neg <- get_to_upset(tb_list, target_col, "neg", direction_col = direction_col)
+  has_pos <- validate(to_upset_pos)
+  has_neg <- validate(to_upset_neg)
+  if (has_pos) {
+    mt_pos <- make_comb_mat(to_upset_pos)
+  }
+  if (has_neg) {
+    mt_neg <- make_comb_mat(to_upset_neg)
+  }
+  if (!(has_pos || has_neg)) {
+    return(NULL)
+  }
+
+  if (has_pos && has_neg) {
+    ht <- UpSet(mt_pos, row_title = "Upregulated DE genes") %v%
+      UpSet(mt_neg, row_title = "Downregulated DE genes")
+  } else if (has_pos) {
+    ht <- UpSet(mt_pos, row_title = "Upregulated DE genes")
+  } else if (has_neg) {
+    ht <- UpSet(mt_neg, row_title = "Upregulated DE genes")
+  }
+  pdf(here(outdir_o, filename), width = 10, height = 15)
+  # PNG doesn't work here for some reason
+  draw(ht)
+  dev.off()
+}
+
+upset_helper(list_modify(top_tags, sample_type = zap()), filename = "de_gene_upset_no_filter.pdf")
+
 
 # Shared characteristics of uniquely downreg genes
+# Interpretation
 unique_downreg <- local({
   to_get <- list(paad = "0010", coad_read = "1000", lihc = "0100", chol = "0001")
-  lst <- sapply(to_get, \(x) extract_comb(mt, x), simplify = FALSE, USE.NAMES = TRUE)
+  lst <- sapply(to_get, \(x) extract_comb(mt_neg, x), simplify = FALSE, USE.NAMES = TRUE)
   tibble(tumor_type = names(lst), GENENAME = lst) |>
     unnest(GENENAME) |>
     left_join(select(ensembl2symbol, ensembl, symbol), by = join_by(x$GENENAME == y$symbol)) |>
