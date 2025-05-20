@@ -21,27 +21,28 @@ if (sys.nframe() == 0) {
     suffix <- "_GO"
   }
 }
+
 library(reticulate)
 use_condaenv("too-predict")
 source(here("src", "R", "utils.R"))
+source(here("src", "R", "utils.R"))
 
-pyutils <- new.env()
-source_python(here("src", "too_predict", "utils.py"), envir = pyutils)
+utils <- import("too_predict.utils")
 outdir <- here("data", "output", "feature_selection")
 if (args$test) {
   print("Using test subset")
   outdir <- here(outdir, "test")
   dir.create(outdir, recursive = TRUE)
-  adata <- pyutils$training_data_internal_test()
+  adata <- utils$training_data_internal_test()
 } else {
-  adata <- pyutils$training_data_internal()
+  adata <- utils$training_data_internal()
 }
 if (args$recode_go) {
-  adata <- pyutils$recode_to_go(adata)
+  adata <- utils$recode_to_go(adata)
 }
 
 data <- AnnData2SCE(adata)
-rm(pyutils)
+rm(utils)
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
 # for their effects
@@ -107,7 +108,7 @@ aldex_average_file <- here(outdir, "ALDEx2_averaged_effect.tsv")
 
 ## * With edgeR
 
-# Goal: finding the top DEGs in each class
+# Goal: finding the top DEGs in each class with one-vs-rest
 get_edgeR <- function(f) {
   dge <- DGEList(counts = counts, samples = colData(data), genes = rowData(data))
   normLibSizes(dge)
@@ -142,6 +143,51 @@ get_edgeR <- function(f) {
 edgeR_top_file <- here(outdir, glue("edgeR_top_types{suffix}.tsv"))
 edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
 
-## * CoDACore
+## * CoDACore TODO
 
-## TODO
+## * Calculate aurocs
+
+gene_auroc <- read_existing(
+  here(outdir, "gene_auROC_scores.csv"),
+  \(f) {
+    tmeta <- import("too_predict.meta_markers")
+    MM <- tmeta$MetaMarkers(
+      datasets = list(main = adata), label_col = "tumor_type",
+      marker_col = "GENEID"
+    )
+    MM$add_markers(adata$var$GENEID)
+    aurocs <- MM$calc_auroc("main")
+    write_csv(aurocs, file)
+  }, read_csv
+)
+
+## * Marker-based
+
+cell_markers <- markers_meta_internal(grouped = FALSE)
+tissues <- unique(cell_markers$tissue)
+
+# Clearly need to consider organoid vs primary
+ovp_tb <- read_tsv(here("data", "output", "chula_organoid_comparison", "de_enrichment", "sample_type_top_tags.tsv"))
+ovp_blacklist <- ovp_tb |>
+  filter(PValue >= 0.01) |>
+  pull(GENEID)
+
+# TODO: must harmonize your labels for primary site with whatever this thing uses
+
+wanted_tissues <- c("")
+
+tmp <- cell_markers |>
+  inner_join(edgeR_top, by = join_by(x$ensembl == y$GENEID)) |>
+  filter(!ensembl %in% ovp_blacklist)
+
+
+# TODO: get hpa tissue-enriched genes
+query <- "tissue_specificity_rna:cerebral cortex;Tissue enriched"
+# HPA also has tissue-enriched genes...
+hq <- get_hpa_query(query, format = "tsv", columns = hpa_wanted_cols, compress = "no")
+
+tb <- request(hq) |>
+  req_perform() |>
+  resp_body_string() |>
+  fread() |>
+  as_tibble()
