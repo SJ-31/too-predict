@@ -142,6 +142,7 @@ pheatmap_helper <- function(obs = NULL,
   }, pheatmap_kwargs)
 }
 
+# BUG: this isn't working properly [2025-05-22 Thu]
 plot_confusion_matrix <- function(cm, x = "x", y = "y", v = "value",
                                   diagonal = TRUE, null_zeros = TRUE,
                                   x_label = NULL, y_label = NULL,
@@ -168,7 +169,7 @@ plot_confusion_matrix <- function(cm, x = "x", y = "y", v = "value",
   }
   plot <- ggplot(cm, aes(
     x = as.factor(!!as.symbol(x)), y = as.factor(!!as.symbol(y)),
-    fill = !!as.symbol("value")
+    fill = !!as.symbol(v)
   )) +
     geom_tile() +
     theme_minimal() +
