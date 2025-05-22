@@ -157,13 +157,28 @@ gene_auroc <- read_existing(
       marker_col = "GENEID"
     )
     MM$add_markers(adata$var$GENEID)
-    aurocs <- MM$calc_auroc("main")
-    write_csv(aurocs, file)
+    aurocs <- show_reticulate_error(MM$calc_auroc("main"))
+    write_csv(aurocs, f)
+  }, read_csv
+)
+
+gene_auroc_organoid <- read_existing(
+  here(outdir, "gene_auROC_scores_chula_organoid.csv"),
+  \(f) {
+    tmeta <- import("too_predict.meta_markers")
+    organoids <- adata[str_detect(adata$obs$Project_ID, "CHULA"), ]
+    MM <- tmeta$MetaMarkers(
+      datasets = list(main = organoids), label_col = "tumor_type",
+      marker_col = "GENEID"
+    )
+    MM$add_markers(adata$var$GENEID)
+    aurocs <- show_reticulate_error(MM$calc_auroc("main"))
+    write_csv(aurocs, f)
   }, read_csv
 )
 
 ## * Marker-based
-
+## --- CODE BLOCK ---
 cell_markers <- markers_meta_internal(grouped = FALSE)
 tissues <- unique(cell_markers$tissue)
 
