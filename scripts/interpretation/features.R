@@ -121,8 +121,14 @@ writeLines(edger_type_flist$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type.
 ## ** edgeR by type, considering organoid differences
 # Like the above, but do not accept features that are heavily DE in an
 # ovp (organoid vs primary) comparison
+## --- CODE BLOCK ---
 ovp_tb <- read_tsv(here("data", "output", "chula_organoid_comparison", "de_enrichment", "sample_type_top_tags.tsv"))
 seen_ovp <- c()
+with_p_value <- TRUE
+# [2025-05-19 Mon] TODO: figure out why using only the ratio method fails
+blacklist <- ovp_tb |>
+  filter(PValue >= 0.01) |>
+  pull(GENEID)
 edger_type_flist_ovp <- lapply(ttypes, \(type) {
   fc_col <- glue("logFC_tumor_type{type}")
   sorted <- arrange(edger, desc(abs(!!as.symbol(fc_col)))) |>
@@ -133,23 +139,30 @@ edger_type_flist_ovp <- lapply(ttypes, \(type) {
       logFC = replace(logFC, logFC == 0, 0.000001),
       de_ratio = abs(!!as.symbol(fc_col)) / abs(logFC)
     )
-  passing_p <- sorted |>
-    filter(PValue.ovp >= 0.01) |>
-    slice_head(n = n_per)
-  if (nrow(passing_p) != n_per) {
-    remaining <- n_per - nrow(passing_p)
-    sorted <- sorted |>
-      arrange(desc(de_ratio)) |>
-      slice_head(n = remaining)
-    final <- bind_rows(sorted, passing_p)
+  if (with_p_value) {
+    passing_p <- sorted |>
+      filter(!GENEID %in% blacklist) |>
+      slice_head(n = n_per)
+    if (nrow(passing_p) != n_per) {
+      remaining <- n_per - nrow(passing_p)
+      sorted <- sorted |> slice_max(order_by = de_ratio, n = remaining, with_ties = FALSE)
+      final <- bind_rows(sorted, passing_p)
+    } else {
+      final <- passing_p
+    }
   } else {
-    final <- passing_p
+    final <- sorted |> slice_max(order_by = de_ratio, n = n_per, with_ties = FALSE)
   }
   seen_ovp <<- c(seen_ovp, final$GENEID)
   final
 }) |>
   bind_rows()
-writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp.txt")))
+if (with_p_value) {
+  writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp.txt")))
+} else {
+  writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp_ratio_only.txt")))
+}
+## --- CODE BLOCK ---
 
 ## ** Gene ontology
 
