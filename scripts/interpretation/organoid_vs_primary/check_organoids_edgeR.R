@@ -13,7 +13,6 @@ suppressMessages({
   ExperimentHub::setExperimentHubOption("CACHE", here("data", ".ExperimentHubCache"))
 })
 
-
 ## --- CODE BLOCK ---
 
 tf <- import("too_predict.filter")
@@ -102,15 +101,31 @@ contrasts <- list(
   paad = makeContrasts("PAAD.organoid - PAAD.primary", levels = mm), # 4
   chol = makeContrasts("CHOL.organoid - CHOL.primary", levels = mm) # 5
 )
+# Add primary ovr
+n_types <- nlevels(dge$samples$tumor_type)
+frac <- 1 / (n_types - 1)
+for (stype in c("primary", "organoid")) {
+  for (t in levels(dge$samples$tumor_type)) {
+    others <- levels(dge$samples$tumor_type) |> discard(\(x) x == t)
+    others <- paste0(others, ".", stype)
+    mean_str <- paste0(frac, "*", others, collapse = "+")
+    string <- glue("{t}.{stype} - ({mean_str})")
+    contrasts[[glue("{t}_ovr_{stype}")]] <- makeContrasts(string, levels = mm)
+  }
+}
 
 # Explanation
 # 1 highlights the differences between primary and organoid samples,
 #   while adjusting for tumor-type specific differences
-# The other contrasts find DE genes between sample types within a specific tumor type
+# The other contrasts 2-5 find DE genes between sample types within a specific tumor type
+# Contrasts 6 onwards are ovr contrasts for each tumor type in primary
+# EX: lihc_vs_rest_primary = c(0, -1 / 3, 0, -1 / 3, 0, 1, 0, -1 / 3),
+#   Alternatively: lihc_vs_rest_primary = LIHC.primary - (1/3*CHOL.primary + 1/3...)
 
 # For contrast 1, positive LFC are genes that are up in organoid over primary overall
-# For contrasts 2-5, positive LFC are genes that are up in
+# Contrasts 2-5: positive LFC are genes that are up in
 #   organoid over primary in that ttype
+
 ADDED_COLS <- c("logFC", "logCPM", "F", "PValue", "FDR", "unshrunk.logFC")
 
 de_summary_file <- here(outdir_o, "de_summary.tsv")
@@ -125,7 +140,6 @@ do_de <- function(output) {
     "mean_counts", "log1p_mean_counts", "pct_dropout_by_counts", "total_counts",
     "log1p_total_counts", "n_cells", "n_counts"
   )
-
   fit <- glmQLFit(dge, mm, robust = TRUE)
   decided <<- list()
   top_tags <<- sapply(names(contrasts), \(n) {
@@ -184,7 +198,7 @@ fdr_cutoff <- 0.01
 tmp <- lapply(names(top_tags), \(x) {
   cur_tags <- top_tags[[x]]
   vplot <- volcano_plot(cur_tags, fdr_cutoff = fdr_cutoff) + labs(title = x)
-  vplot_name <- here(outdir_o, glue("{x}_volcano.png"))
+  vplot_name <- here(outdir_o, "cpm_volcano", glue("{x}_volcano.png"))
   ggsave(vplot_name, plot = vplot, height = 8, width = 8)
 
   if (x == "sample_type") {
@@ -198,7 +212,7 @@ tmp <- lapply(names(top_tags), \(x) {
     cpm = adj_counts, dge = dge, tag_tb = cur_tags,
     p_value = 0.05
   ) + scale_color_paletteer_c("ggthemes::Red-Green Diverging") + labs(title = x)
-  lfc_plot_name <- here(outdir_o, glue("{x}_cpm_comparison.png"))
+  lfc_plot_name <- here(outdir_o, "cpm_volcano", glue("{x}_cpm_comparison.png"))
   ggsave(lfc_plot_name, plot = lfc_plot, height = 8, width = 8)
 })
 
