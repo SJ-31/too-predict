@@ -73,7 +73,8 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp",
-        "s": True,
+        "s": False,
+        "w": ("additional"),
     },
     "clr_xgboost_edger_per_type_ovp_ratio_only": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
@@ -87,7 +88,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "",
-        "s": False,
+        "s": True,
     },
     "clr_xgboost_edger_low_variance_ref": {
         "m": tm.PredBase(model=tm.XGBEstimator()),
@@ -474,6 +475,23 @@ ADDITIONAL_SPLITS: dict = {
     "GEO": lambda x: (
         x[~x.obs["Project_ID"].str.contains("GSE"), :],
         x[x.obs["Project_ID"].str.contains("GSE"), :],
+    ),
+    "CHULA_NO_CPTAC": lambda x: (
+        x[
+            ~(
+                x.obs["Project_ID"].str.contains("CHULA")
+                | x.obs["Project_ID"].str.contains("CPTAC")
+            )
+        ],
+        x[x.obs["Project_ID"].str.contains("CHULA"), :],
+    ),
+    "NO_ORGANOID": lambda x: (
+        x[x.obs["Sample_Type"] != "organoid", :],
+        x[x.obs["Sample_Type"] == "organoid", :],
+    ),
+    "CHULA_NO_ORGANOID": lambda x: (
+        x[x.obs["Sample_Type"] != "organoid", :],
+        x[x.obs["Project_ID"].str.contains("CHULA"), :],
     ),
 }
 
