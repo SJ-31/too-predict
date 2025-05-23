@@ -13,8 +13,12 @@ test <- FALSE
 if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
-  parser <- add_option(parser, c("-t", "--test"),
-    type = "logical", help = "test", default = FALSE,
+  parser <- add_option(
+    parser,
+    c("-t", "--test"),
+    type = "logical",
+    help = "test",
+    default = FALSE,
     action = "store_true"
   )
   args <- parse_args(parser)
@@ -48,7 +52,8 @@ to_ignore <- list(
 tissue_mapping <- list(
   htc_atlas = local({
     files <- list.files(dirs$htc_atlas) |> as.list()
-    tissues <- str_to_lower(files) |> str_extract("htca_adult_(.*).rds", group = 1)
+    tissues <- str_to_lower(files) |>
+      str_extract("htca_adult_(.*).rds", group = 1)
     setNames(files, tissues)
   }),
   gtex = list(),
@@ -95,27 +100,44 @@ save_seurat_adata <- function(name, dir, ignore_list) {
 ## ** HTC atlas
 
 symbol2ensembl <- local({
-  tb <- read_tsv(here("data", "mappings", "ensembl_113_id_mapping.tsv")) |> distinct(ensembl, .keep_all = TRUE)
+  tb <- read_tsv(here("data", "mappings", "ensembl_113_id_mapping.tsv")) |>
+    distinct(ensembl, .keep_all = TRUE)
   setNames(tb$ensembl, tb$symbol)
 })
 
-ensdb <- EnsDb(as.character(ut$get_data("reference/Homo_sapiens.GRCh38.113.sqlite")))
+ensdb <- EnsDb(as.character(ut$get_data(
+  "reference/Homo_sapiens.GRCh38.113.sqlite"
+)))
 
 htca_fn <- function(file) {
   obj <- readRDS(file)
   obj[[]]$source <- paste0("htca-", obj[[]]$Project)
   obj[[]] <- obj[[]] |>
-    dplyr::rename(tissue = Tissue, subject = Sample_ID, cell_type = Cell_Type) |>
+    dplyr::rename(
+      tissue = Tissue,
+      subject = Sample_ID,
+      cell_type = Cell_Type
+    ) |>
     select(all_of(shared_cols))
   obj[["RNA"]][[]]$GENENAME <- rownames(obj[["RNA"]][[]])
   obj <- rename_seurat_features(obj, symbol2ensembl, mapping = TRUE)
-  var_meta <- AnnotationDbi::select(ensdb,
-    keys = rownames(obj), columns = c("GENEBIOTYPE", "SEQLENGTH"),
+  var_meta <- AnnotationDbi::select(
+    ensdb,
+    keys = rownames(obj),
+    columns = c("GENEBIOTYPE", "SEQLENGTH"),
     keytype = "GENEID"
   )
   obj[["RNA"]][[]]$GENEID <- rownames(obj)
-  obj[["RNA"]][[]] <- left_join(obj[["RNA"]][[]], var_meta, by = join_by(GENEID))
-  adata <- ad$AnnData(X = t(LayerData(obj)), var = obj[["RNA"]][[]], obs = obj[[]])
+  obj[["RNA"]][[]] <- left_join(
+    obj[["RNA"]][[]],
+    var_meta,
+    by = join_by(GENEID)
+  )
+  adata <- ad$AnnData(
+    X = t(LayerData(obj)),
+    var = obj[["RNA"]][[]],
+    obs = obj[[]]
+  )
   ut$preserving_sample(adata, "cell_type", 0.5)
   print(glue("htca {file} complete"))
   adata
@@ -134,13 +156,19 @@ cellxgene_fn <- function(file) {
   ut$preserving_sample(adata, "cell_type", 0.5)
   rownames(adata$var) <- adata$var$feature_id
   mapping <- c(
-    "GENEID" = "feature_id", "GENEBIOTYPE" = "feature_type", "SEQLENGTH" = "feature_length",
+    "GENEID" = "feature_id",
+    "GENEBIOTYPE" = "feature_type",
+    "SEQLENGTH" = "feature_length",
     "GENENAME" = "feature_name"
   )
   adata$var <- adata$var |>
     dplyr::rename(all_of(mapping)) |>
     select(all_of(names(mapping)))
-  adata$obs$source <- paste0("cellxgene", "-", dataset_id_map[adata$obs$dataset_id])
+  adata$obs$source <- paste0(
+    "cellxgene",
+    "-",
+    dataset_id_map[adata$obs$dataset_id]
+  )
   adata$obs$subject <- paste0(adata$obs$dataset_id, "-", adata$obs$donor_id)
   adata$obs <- adata$obs |> select(all_of(shared_cols))
   print(glue("cellxgene {file} complete"))
@@ -156,9 +184,18 @@ gtex_fn <- function(file) {
   }
   ut$preserving_sample(adata, "Broad cell type", 0.5)
   wanted_cols <- c(
-    "tissue", "Participant ID", "Cell types level 2",
-    "batch", "prep", "Tissue Site Detail", "Broad cell type",
-    "Granular cell type", "Tissue composition", "PercentMito", "PercentRibo", "scrublet"
+    "tissue",
+    "Participant ID",
+    "Cell types level 2",
+    "batch",
+    "prep",
+    "Tissue Site Detail",
+    "Broad cell type",
+    "Granular cell type",
+    "Tissue composition",
+    "PercentMito",
+    "PercentRibo",
+    "scrublet"
   )
   adata$obsp <- NULL
   adata$obsm <- NULL
@@ -192,16 +229,33 @@ get_celldex <- function() {
   # lf for label.fine, lm for label.main
   wanted_cells <- list(
     hpca_lf = c(
-      "T_cell:gamma-delta", "T_cell:Treg:Naive", "Endothelial_cells:blood_vessel",
+      "T_cell:gamma-delta",
+      "T_cell:Treg:Naive",
+      "Endothelial_cells:blood_vessel",
       "Endothelial_cells:lymphatic"
     ),
     hpca_lm = c(
-      "MSC", "Neurons", "Neutrophils", "Macrophage", "Monocyte", "B_cell",
-      "NK_cell", "Platelets"
+      "MSC",
+      "Neurons",
+      "Neutrophils",
+      "Macrophage",
+      "Monocyte",
+      "B_cell",
+      "NK_cell",
+      "Platelets"
     ),
     encode_lm = c(
-      "Adipocytes", "DC", "CD4+ T-cells", "CD8+ T-cells", "B-cells",
-      "Eosinophils", "Macrophages", "Monocytes", "Neurons", "Neutrophils", "Pericytes",
+      "Adipocytes",
+      "DC",
+      "CD4+ T-cells",
+      "CD8+ T-cells",
+      "B-cells",
+      "Eosinophils",
+      "Macrophages",
+      "Monocytes",
+      "Neurons",
+      "Neutrophils",
+      "Pericytes",
       "NK cells"
     ),
     encode_lf = c("Tregs")
@@ -211,7 +265,8 @@ get_celldex <- function() {
   encode <- BlueprintEncodeData(ensembl = TRUE)
   # Can't use DICE due to incompatible reference genome
 
-  hpca_mask <- (colData(hpca)$label.fine %in% wanted_cells$hpca_lf) | (colData(hpca)$label.main %in% wanted_cells$hpca_lm)
+  hpca_mask <- (colData(hpca)$label.fine %in% wanted_cells$hpca_lf) |
+    (colData(hpca)$label.main %in% wanted_cells$hpca_lm)
   encode_mask <- (colData(encode)$label.fine %in% wanted_cells$encode_lf) |
     (colData(encode)$label.main %in% wanted_cells$encode_lm)
 
@@ -221,27 +276,35 @@ get_celldex <- function() {
   colData(encode_f)$source <- "encode"
   colData(hpca_f)$source <- "hpca"
   together <- cbind(encode_f, hpca_f)
-  colData(together)$cell_type <- with(colData(together), case_when(
-    str_to_lower(label.fine) %in% c("t_cell:treg:naive", "tregs") ~ "treg",
-    str_to_lower(label.fine) %in% c("t_cell:gamma-delta") ~ "gamma_delta_t_cell",
-    str_to_lower(label.fine) %in% c("endothelial_cells:blood_vessel") ~ "vascular_endothelial_cell",
-    str_to_lower(label.fine) %in% c("endothelial_cells:lymphatic") ~ "lymphatic_endothelial_cell",
-    str_to_lower(label.main) %in% c("neutrophils") ~ "neutrophil",
-    str_to_lower(label.main) %in% c("monocytes", "monocyte") ~ "monocyte",
-    str_to_lower(label.main) %in% c("cd4+ t-cells") ~ "cd4+_t_cell",
-    str_to_lower(label.main) %in% c("cd8+ t-cells") ~ "cd8+_t_cell",
-    str_to_lower(label.main) %in% c("nk cells", "nk_cell") ~ "natural_killer_cell",
-    str_to_lower(label.main) %in% c("b-cells", "b_cell") ~ "b_cell",
-    str_to_lower(label.main) %in% c("macrophages", "macrophage") ~ "macrophage",
-    str_to_lower(label.main) %in% c("dc") ~ "dendritic_cell",
-    str_to_lower(label.main) %in% c("eosinophils") ~ "eosinophil",
-    str_to_lower(label.main) %in% c("adipocytes") ~ "adipocyte",
-    str_to_lower(label.main) %in% c("neurons") ~ "neuron",
-    str_to_lower(label.main) %in% c("pericytes") ~ "pericyte",
-    str_to_lower(label.main) %in% c("platelets") ~ "platelet",
-    str_to_lower(label.main) %in% c("msc") ~ "mesenchymal_stem_cell",
-    TRUE ~ str_to_lower(label.main)
-  ))
+  colData(together)$cell_type <- with(
+    colData(together),
+    case_when(
+      str_to_lower(label.fine) %in% c("t_cell:treg:naive", "tregs") ~ "treg",
+      str_to_lower(label.fine) %in% c("t_cell:gamma-delta") ~
+        "gamma_delta_t_cell",
+      str_to_lower(label.fine) %in% c("endothelial_cells:blood_vessel") ~
+        "vascular_endothelial_cell",
+      str_to_lower(label.fine) %in% c("endothelial_cells:lymphatic") ~
+        "lymphatic_endothelial_cell",
+      str_to_lower(label.main) %in% c("neutrophils") ~ "neutrophil",
+      str_to_lower(label.main) %in% c("monocytes", "monocyte") ~ "monocyte",
+      str_to_lower(label.main) %in% c("cd4+ t-cells") ~ "cd4+_t_cell",
+      str_to_lower(label.main) %in% c("cd8+ t-cells") ~ "cd8+_t_cell",
+      str_to_lower(label.main) %in% c("nk cells", "nk_cell") ~
+        "natural_killer_cell",
+      str_to_lower(label.main) %in% c("b-cells", "b_cell") ~ "b_cell",
+      str_to_lower(label.main) %in% c("macrophages", "macrophage") ~
+        "macrophage",
+      str_to_lower(label.main) %in% c("dc") ~ "dendritic_cell",
+      str_to_lower(label.main) %in% c("eosinophils") ~ "eosinophil",
+      str_to_lower(label.main) %in% c("adipocytes") ~ "adipocyte",
+      str_to_lower(label.main) %in% c("neurons") ~ "neuron",
+      str_to_lower(label.main) %in% c("pericytes") ~ "pericyte",
+      str_to_lower(label.main) %in% c("platelets") ~ "platelet",
+      str_to_lower(label.main) %in% c("msc") ~ "mesenchymal_stem_cell",
+      TRUE ~ str_to_lower(label.main)
+    )
+  )
 }
 
 
@@ -276,8 +339,6 @@ save_seurat_adata("htca", dirs$htc_atlas, ignore_list = to_ignore$htc_atlas)
 
 ## write_csv(combined$obs, here("data", "reference", "sc_ref_all_obs.csv"))
 ## combined
-
-
 
 ## combined_file <- here(storage_dir, "sc_ref_all.h5ad")
 ## combined <- read_existing(combined_file, get_combined, ad$read_h5ad)
