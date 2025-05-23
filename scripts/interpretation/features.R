@@ -45,13 +45,21 @@ vtb <- vtb |>
   filter(!is.na(GENEID)) |>
   mutate(value = variance)
 edger <- edger |> filter(pct_dropout_by_counts <= max_dropout_pct)
-edger$median_lfc <- apply(select(edger, contains("logFC_tumor_type")), 1, median)
+edger$median_lfc <- apply(
+  select(edger, contains("logFC_tumor_type")),
+  1,
+  median
+)
 edger <- edger |>
   relocate(median_lfc, .after = SEQNAME) |>
   filter(!is.na(GENEID)) |>
   mutate(value = abs(median_lfc))
 
-feature_tbs <- list(edgeR_median_lfc = edger, variance = vtb, mutual_info = minfo)
+feature_tbs <- list(
+  edgeR_median_lfc = edger,
+  variance = vtb,
+  mutual_info = minfo
+)
 
 ## * Visualize feature distribution
 
@@ -80,7 +88,10 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
     arrange(desc(value)) |>
     head(n = n_features) |>
     pluck("GENEID")
-  writeLines(features, here(fs_lists, glue("{x}_feature_list_{n_features}.txt")))
+  writeLines(
+    features,
+    here(fs_lists, glue("{x}_feature_list_{n_features}.txt"))
+  )
   features
 }) |>
   `names<-`(names(feature_tbs))
@@ -114,7 +125,10 @@ overlaps <- rs$pairwise_overlaps(type_overlap_list, FALSE) |>
   }) |>
   bind_rows() |>
   arrange(desc(overlap))
-writeLines(edger_type_flist$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type.txt")))
+writeLines(
+  edger_type_flist$GENEID,
+  here(fs_lists, glue("edgeR_{n_per}_per_type.txt"))
+)
 # [2025-05-19 Mon] 725 features in common with top 3000 median list
 #     417 in common with the top one thousand
 
@@ -122,13 +136,37 @@ writeLines(edger_type_flist$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type.
 # Like the above, but do not accept features that are heavily DE in an
 # ovp (organoid vs primary) comparison
 ## --- CODE BLOCK ---
-ovp_tb <- read_tsv(here("data", "output", "chula_organoid_comparison", "de_enrichment", "sample_type_top_tags.tsv"))
+ovp_tb <- read_tsv(here(
+  "data",
+  "output",
+  "chula_organoid_comparison",
+  "de_enrichment",
+  "sample_type_top_tags.tsv"
+))
+tissue_enriched <- read_csv(here(
+  "data",
+  "reference",
+  "hpa_tissue_enriched_2025-5-20.csv"
+)) |>
+  mutate(tissue = str_replace_all(tissue, " ", "_"))
+
+
 seen_ovp <- c()
 with_p_value <- TRUE
 # [2025-05-19 Mon] TODO: figure out why using only the ratio method fails
+with_tissue_enriched <- TRUE
+source(here("data", "mappings", "misc_mappings.R"))
 blacklist <- ovp_tb |>
   filter(PValue >= 0.01) |>
   pull(GENEID)
+if (with_tissue_enriched) {
+  add_name <- "tissue_enriched"
+}
+if (!with_p_value) {
+  add_name <- glue("{add_name}_ratio_only")
+}
+ovp_fs_file <- here(fs_lists, glue("edgeR_{n_per}_per_type_ovp_{add_name}.txt"))
+
 edger_type_flist_ovp <- lapply(ttypes, \(type) {
   fc_col <- glue("logFC_tumor_type{type}")
   sorted <- arrange(edger, desc(abs(!!as.symbol(fc_col)))) |>
@@ -139,30 +177,50 @@ edger_type_flist_ovp <- lapply(ttypes, \(type) {
       logFC = replace(logFC, logFC == 0, 0.000001),
       de_ratio = abs(!!as.symbol(fc_col)) / abs(logFC)
     )
+  if (with_tissue_enriched) {
+    # Prioritize genes that are tissue enriched
+    cur_tissue_enriched <- tissue_enriched |>
+      filter(tissue %in% ttype2tissue[[type]]) |>
+      pull(Ensembl)
+    sorted <- left_join(
+      sorted,
+      tissue_enriched,
+      by = join_by(x$GENEID == y$Ensembl)
+    ) |>
+      mutate(
+        is_tissue_enriched = case_when(
+          GENEID %in% cur_tissue_enriched ~ 1,
+          .default = 0
+        )
+      ) |>
+      arrange(desc(is_tissue_enriched), desc(abs(!!as.symbol(fc_col))))
+    print(table(sorted$is_tissue_enriched))
+  }
   if (with_p_value) {
+    # Only keep non-DE genes in the organoid_vs_primary comparison
     passing_p <- sorted |>
       filter(!GENEID %in% blacklist) |>
       slice_head(n = n_per)
     if (nrow(passing_p) != n_per) {
       remaining <- n_per - nrow(passing_p)
-      sorted <- sorted |> slice_max(order_by = de_ratio, n = remaining, with_ties = FALSE)
+      sorted <- sorted |>
+        slice_max(order_by = de_ratio, n = remaining, with_ties = FALSE)
       final <- bind_rows(sorted, passing_p)
     } else {
       final <- passing_p
     }
   } else {
-    final <- sorted |> slice_max(order_by = de_ratio, n = n_per, with_ties = FALSE)
+    final <- sorted |>
+      slice_max(order_by = de_ratio, n = n_per, with_ties = FALSE)
   }
   seen_ovp <<- c(seen_ovp, final$GENEID)
   final
 }) |>
   bind_rows()
-if (with_p_value) {
-  writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp.txt")))
-} else {
-  writeLines(edger_type_flist_ovp$GENEID, here(fs_lists, glue("edgeR_{n_per}_per_type_ovp_ratio_only.txt")))
-}
+writeLines(edger_type_flist_ovp$GENEID, ovp_fs_file)
 ## --- CODE BLOCK ---
+
+stop("Done")
 
 ## ** Gene ontology
 
@@ -171,19 +229,21 @@ go_top_n <- vtb_go |>
   group_by(`GO domain`) |>
   nest() |>
   filter(!is.na(`GO domain`)) |>
-  mutate(data = lapply(data, \(x) head(arrange(x, desc(variance)), n = n_ontology))) |>
+  mutate(
+    data = lapply(data, \(x) head(arrange(x, desc(variance)), n = n_ontology))
+  ) |>
   unnest(cols = c(data)) |>
   ungroup()
 
 ## head(n = n_ontology)
 
-writeLines(
-  go_top_n$`GO term accession`,
-  here(ref_lists, glue("variance_go_feature_list_{n_ontology * 3}.txt"))
-)
-write_csv(go_top_n, here(fs_dir, glue("variance_go_{n_ontology * 3}.csv")))
+## writeLines(
+##   go_top_n$`GO term accession`,
+##   here(ref_lists, glue("variance_go_feature_list_{n_ontology * 3}.txt"))
+## )
+## write_csv(go_top_n, here(fs_dir, glue("variance_go_{n_ontology * 3}.csv")))
 
-ggsave(here(fs_dir, glue("selected_ml_features_overlap_{n_features}.png")), feature_venn)
+## ggsave(here(fs_dir, glue("selected_ml_features_overlap_{n_features}.png")), feature_venn)
 
 ## ** Overlap between top DE genes between tumor types
 top_n_de <- round(n_features / length(tumor_types))
@@ -195,7 +255,8 @@ top_by_types <- lapply(tumor_types, \(x) {
   if (col %in% colnames(edger)) {
     subset <- edger[, "GENEID"]
     subset[[x]] <- 1
-    subset[order(abs(edger[[col]]), decreasing = TRUE), ][1:top_n_de, ] |> distinct(GENEID, .keep_all = TRUE)
+    subset[order(abs(edger[[col]]), decreasing = TRUE), ][1:top_n_de, ] |>
+      distinct(GENEID, .keep_all = TRUE)
   }
 }) |>
   discard(is.null) |>
@@ -224,7 +285,10 @@ bottom_n_features <- lapply(names(feature_tbs), \(x) {
     arrange(value) |>
     head(n = n_alr) |>
     pluck("GENEID")
-  writeLines(features, here(ref_lists, glue("{x}_feature_list_lowest_{n_alr}.txt")))
+  writeLines(
+    features,
+    here(ref_lists, glue("{x}_feature_list_lowest_{n_alr}.txt"))
+  )
   features
 }) |>
   `names<-`(names(feature_tbs))
@@ -235,18 +299,26 @@ ggsave(here(fs_dir, "lowest_features_overlap.png"), feature_venn_b)
 ## * Normalization metrics plotting
 n_metrics <- read_csv(here(n_dir, "label_metrics.csv")) |>
   mutate(across(where(is.double), scale)) |>
-  pivot_longer(cols = where(is.double), names_to = "metric", values_to = "value")
+  pivot_longer(
+    cols = where(is.double),
+    names_to = "metric",
+    values_to = "value"
+  )
 
 n_metrics <- n_metrics |> filter(!grepl("feature", normalization))
 
-n_metric_plot <- ggplot(n_metrics, aes(x = feature_set, y = value, fill = normalization)) +
+n_metric_plot <- ggplot(
+  n_metrics,
+  aes(x = feature_set, y = value, fill = normalization)
+) +
   geom_bar(stat = "identity", position = "dodge") +
   facet_wrap(~metric)
 n_metric_plot
 ggsave(here(n_dir, "metrics.png"), n_metric_plot)
 
 metric_rankings <- list(
-  silhouette_score = TRUE, davies_bouldin_score = FALSE,
+  silhouette_score = TRUE,
+  davies_bouldin_score = FALSE,
   calinski_harabasz_score = TRUE
 )
 
@@ -261,7 +333,12 @@ write_csv(ranked$table, here(n_dir, "ranked_combinations.csv"))
 
 ## * Organoid features
 
-orf <- read_csv(here("data", "output", "organoid_feature_selection", "chula_tcga_dge.csv"))
+orf <- read_csv(here(
+  "data",
+  "output",
+  "organoid_feature_selection",
+  "chula_tcga_dge.csv"
+))
 # Find common
 log_fcs <- orf |> select(GENEID, contains("logFC"))
 
@@ -300,14 +377,25 @@ get_edger_go <- function() {
     top_n
   }) |>
     unlist()
-  writeLines(combined_gos, here(fs_lists, glue("edgeR_go_feature_list_{n_type}.txt")))
+  writeLines(
+    combined_gos,
+    here(fs_lists, glue("edgeR_go_feature_list_{n_type}.txt"))
+  )
 
   # Plot jaccard similarity to visualize overlap
   fc_x_go <- as_tibble(tracker) |>
     pivot_longer(everything()) |>
-    pivot_wider(names_from = value, id_cols = name, values_fn = \(x) 1, values_fill = 0)
+    pivot_wider(
+      names_from = value,
+      id_cols = name,
+      values_fn = \(x) 1,
+      values_fill = 0
+    )
 
-  fc_dist <- vegan::vegdist(select(fc_x_go, where(is.numeric)), method = "jaccard")
+  fc_dist <- vegan::vegdist(
+    select(fc_x_go, where(is.numeric)),
+    method = "jaccard"
+  )
 }
 
 dist_heatmap <- function(dist, vars, var_name = "feature") {
