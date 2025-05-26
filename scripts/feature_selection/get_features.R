@@ -12,7 +12,6 @@ source(here("src", "R", "plotting.R"))
 
 rs <- import("too_predict._rust_helpers")
 
-
 fs_dir <- here("data", "output", "feature_selection")
 fs_lists <- here(fs_dir, "feature_lists")
 ref_lists <- here(fs_dir, "reference_lists")
@@ -60,6 +59,7 @@ feature_tbs <- list(
   variance = vtb,
   mutual_info = minfo
 )
+
 
 ## * Visualize feature distribution
 
