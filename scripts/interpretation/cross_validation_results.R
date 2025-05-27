@@ -110,13 +110,13 @@ get_report <- function(label) {
   getter_fn(label, "-report", \(x) x)
 }
 
-
 roc <- get_rocs(LABEL)
-pr <- get_prec_recall(LABEL) |> mutate(class = str_replace_all(class, "-", "_"))
+pr <- get_prec_recall(LABEL)
 misc <- get_misc(LABEL)
 report <- get_report(LABEL) |> mutate(class = str_replace_all(class, "-", "_"))
 if (!is.null(pr)) {
   pr_auc <- pr |>
+    mutate(class = str_replace_all(class, "-", "_")) |>
     group_by(class, model, !!as.symbol(VAR)) |>
     summarise(prc_auc = unique(auc)) |>
     ungroup()
@@ -172,7 +172,7 @@ get_tests <- function() {
   write_csv(wilcox_tt, here(OUTDIR, glue("wilcox_{LABEL}.csv")))
 }
 
-get_tests()
+try(get_tests())
 
 ## --- CODE BLOCK ---
 
@@ -208,7 +208,14 @@ combined <- local({
     inner_join(x, y, by = c("model", VAR))
   })
 })
+
 write_csv(combined, here(OUTDIR, glue("combined_metrics_{LABEL}.csv")))
+combined |>
+  group_by(model) |>
+  select(-fold) |>
+  summarize(across(where(is.numeric), mean)) |>
+  write_csv(here(OUTDIR, glue("combined_metrics_{LABEl}_folded.csv")))
+
 
 max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
 models <- unique(combined$model)
