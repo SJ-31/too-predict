@@ -99,7 +99,8 @@ def marker_auroc_score(
     df.loc[~nan_indices, "padj"] = stats.false_discovery_control(
         df["pval"][~nan_indices], method="bh"
     )
-    return df.loc[:, ["AUROC", "z", "pval", "padj"]]
+    df = df.reset_index(names="gene")
+    return df.loc[:, ["gene", "AUROC", "z", "pval", "padj"]]
 
 
 @nb.jit(
