@@ -1,10 +1,17 @@
 #!/usr/bin/env ipython
+from pathlib import Path
 from typing import Callable
 
+import anndata
+import anndata as ad
+import numpy as np
+import pandas as pd
 from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import ShuffleSplit
 from sklearn.tree import DecisionTreeClassifier
 
+import too_predict.evaluation as te
 import too_predict.model as tm
 import too_predict.recoder as rt
 from too_predict.corrector import Corrector
@@ -18,6 +25,7 @@ from too_predict.utils import (
     cell_markers_internal,
     get_blacklist_internal,
     ref_feature_lists_internal,
+    train_test_split_ad,
 )
 
 REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
@@ -44,10 +52,13 @@ def get_common():
 # k : kwargs to transformer
 # l : feature blacklist
 
+# model, filter, transformation values must be functions of no arguments that return
+# the object
+
 MODELS: dict = {
     # ** Qsmooth
     "qsmooth_xgboost_edger_1000": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "qsmooth",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
@@ -55,43 +66,61 @@ MODELS: dict = {
     },
     # ** CLR models
     "clr_random_forest_minfo": {
-        "m": tm.RandomForestPred(),
+        "m": lambda: tm.RandomForestPred(),
         "t": "clr",
         "i": "plus_one",
         "f": "mutual_info_feature_list_3000",
         "s": True,
     },
     "clr_xgboost_edger_per_type": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type",
         "s": True,
     },
     "clr_xgboost_edger_per_type_ovp": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp",
-        "s": False,
+        "s": True,
         "w": ("additional"),
     },
+    "clr_xgboost_edger_per_type_ovp_t_enriched": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_ovp_tissue_enriched",
+        "s": True,
+        "w": ("additional"),
+    },
+    "clr_xgboost_auroc_per_type_ovp": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "auroc_70_per_type_blacklist",
+        "s": True,
+        "w": ("additional"),
+        # [2025-05-26 Mon] This has the good results for CGCI and CPTAC, but
+        # it looks like fold changes are still superior for prediction purposes
+    },
     "clr_xgboost_edger_per_type_ovp_ratio_only": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_ratio_only",
         "s": True,
     },
     "clr_xgboost_edger_tissue_markers": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "",
         "s": True,
     },
     "clr_xgboost_edger_low_variance_ref": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -99,7 +128,7 @@ MODELS: dict = {
         "s": True,  # [2025-04-08 Tue]
     },
     "clr_xgboost_edger_smote": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -107,14 +136,14 @@ MODELS: dict = {
         "s": True,
     },
     "clr_lr_edger_3000": {
-        "m": tm.PredBase(model=LogisticRegression(solver="saga")),
+        "m": lambda: tm.PredBase(model=LogisticRegression(solver="saga")),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-08 Tue]
     },
     "clr_xgboost_edger_1000_undersample": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
@@ -122,28 +151,28 @@ MODELS: dict = {
         "s": True,  # [2025-04-08 Tue]
     },
     "clr_xgb3_edger": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-08 Tue] Surprisingly good
     },
     "clr_xgb3_edger_rfecv": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "clr_xgb3_1000_edger_rfecv_feature_list",
         "s": True,  # [2025-05-07 Wed] Only 783 features, not bad
     },
     "clr_xgb3_1000_edger": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "s": True,
     },
     "clr_xgboost_edger_1000_organoid_edger_blacklist": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
@@ -151,7 +180,7 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgboost_edger_3000_organoid_edger_blacklist_v2": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -159,14 +188,14 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgboost_edger": {
-        "m": tm.PredBase(model=tm.XGBEstimator(), make_dense=True),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(), make_dense=True),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
     "batch_xgboost_lg_edger": {  # [2025-03-27 Thu] TODO: choose a fast m for `outer`
-        "m": tm.BatchBase(
+        "m": lambda: tm.BatchBase(
             inner=tm.XGBEstimator(max_depth=3),
             outer_y="Sample_Type",
             categorical_support=False,
@@ -178,21 +207,21 @@ MODELS: dict = {
         "s": True,
     },
     "clr_ebm_edger": {
-        "m": tm.PredBase(model=ExplainableBoostingClassifier(n_jobs=-2)),
+        "m": lambda: tm.PredBase(model=ExplainableBoostingClassifier(n_jobs=-2)),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-03-27 Thu] Want to try this out badly, but it's so slow
     },
     "clr_dt_edger": {  # A surrogate model
-        "m": tm.PredBase(model=DecisionTreeClassifier()),
+        "m": lambda: tm.PredBase(model=DecisionTreeClassifier()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "S": True,
     },
     "clr_random_forest_edger": {
-        "m": tm.PredBase(model=RandomForestClassifier()),
+        "m": lambda: tm.PredBase(model=RandomForestClassifier()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
@@ -200,7 +229,7 @@ MODELS: dict = {
     },
     # ** ALR models
     "alr_xgboost_low_variance_1000": {
-        "m": tm.AlrBase(
+        "m": lambda: tm.AlrBase(
             tm.XGBEstimator(),
             references=REF_LISTS["variance_feature_list_lowest_20"],
         ),
@@ -210,7 +239,7 @@ MODELS: dict = {
         "s": True,
     },
     "alr_xgboost_edger_lowest_1000": {
-        "m": tm.AlrBase(
+        "m": lambda: tm.AlrBase(
             tm.XGBEstimator(),
             references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
         ),
@@ -220,7 +249,7 @@ MODELS: dict = {
         "s": True,  # BUG: this one has value errors for some reason
     },
     "alr_xgboost_edger_lowest_1000_only_5": {
-        "m": tm.AlrBase(
+        "m": lambda: tm.AlrBase(
             tm.XGBEstimator(),
             references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
             n_refs=5,
@@ -230,7 +259,7 @@ MODELS: dict = {
         "r": "edgeR_median_lfc_feature_list_lowest_20",
     },
     "alr_random_forest_low_variance": {
-        "m": tm.AlrBase(
+        "m": lambda: tm.AlrBase(
             RandomForestClassifier(random_state=RANDOM_STATE),
             references=REF_LISTS["variance_feature_list_lowest_20"],
         ),
@@ -240,7 +269,7 @@ MODELS: dict = {
         "s": True,
     },
     "alr_random_forest_edger_lfc": {
-        "m": tm.AlrBase(
+        "m": lambda: tm.AlrBase(
             RandomForestClassifier(random_state=RANDOM_STATE),
             references=REF_LISTS["edgeR_median_lfc_feature_list_lowest_20"],
         ),
@@ -250,28 +279,28 @@ MODELS: dict = {
         "s": True,
     },
     "tmm_random_forest_edger": {
-        "m": tm.RandomForestPred(),
+        "m": lambda: tm.RandomForestPred(),
         "t": "tmm",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
     "tpm_random_forest_edger": {
-        "m": tm.RandomForestPred(),
+        "m": lambda: tm.RandomForestPred(),
         "t": "tpm",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
     "fpkm_random_forest_edger": {
-        "m": tm.PredBase(RandomForestClassifier(random_state=RANDOM_STATE)),
+        "m": lambda: tm.PredBase(RandomForestClassifier(random_state=RANDOM_STATE)),
         "t": "fpkm",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
     "dirichlet_random_forest_edger": {
-        "m": tm.SimPred(
+        "m": lambda: tm.SimPred(
             RandomForestClassifier(random_state=RANDOM_STATE), method="dirichlet"
         ),
         "t": "none",
@@ -280,14 +309,14 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgb3_pulp_lfc": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "pulp_scanpy_minimized_lfc_ratio",
         "s": True,
     },
     "clr_xgb3_pulp_euclidean": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "pulp_euclidean_edgeR_3000_subset",
@@ -295,7 +324,7 @@ MODELS: dict = {
     },
     # ** With correction
     "clr_xgb3_edger_pycombat_seq": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "c": {
             "method": "pycombat_seq",
@@ -307,7 +336,7 @@ MODELS: dict = {
         "s": True,  # [2025-04-25 Fri] Way too slow
     },
     "clr_xgb3_edger_combat_seq": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "c": {
             "method": "combat_seq",
@@ -320,7 +349,7 @@ MODELS: dict = {
         # organoids as combat ref
     },
     "clr_xgb3_edger_rbe": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "c": {
@@ -332,7 +361,7 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgb3_edger_deseq2": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "c": {
@@ -344,7 +373,7 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgb3_edger_combat_ref_no_group": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "c": {
@@ -355,7 +384,7 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgb3_edger_combat_ref": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "c": {
@@ -371,7 +400,7 @@ MODELS: dict = {
         # data leakage
     },
     "clr_xgb3_edger_combat_ref_rfecv": {
-        "m": tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "c": {
@@ -385,7 +414,7 @@ MODELS: dict = {
     },
     # ** Recodings
     "clr_xgboost_edger_GO": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_go_feature_list_40",
@@ -393,60 +422,60 @@ MODELS: dict = {
         "s": True,
     },
     "clr_xgboost_variance_GO": {
-        "m": tm.PredBase(model=tm.XGBEstimator()),
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
         "e": "GO",
         "f": "variance_go_feature_list_1500",
         "s": True,
     },
-    "clr_xgboost_go_level_4_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+    "clr_xgboost_go_level_4_sum": lambda: {
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("go", id_col="GENEID", level=4),
+        "e": lambda: rt.Recoder("go", id_col="GENEID", level=4),
         "s": True,  # [2025-04-09 Wed]
     },
-    "clr_xgboost_go_level_3_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+    "clr_xgboost_go_level_3_sum": lambda: {
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("go", id_col="GENEID", level=3),
+        "e": lambda: rt.Recoder("go", id_col="GENEID", level=3),
         "s": True,  #  [2025-04-09 Wed]
     },
-    "clr_xgboost_go_level_2_sum": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+    "clr_xgboost_go_level_2_sum": lambda: {
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("go", id_col="GENEID", level=2),
+        "e": lambda: rt.Recoder("go", id_col="GENEID", level=2),
         "s": True,
     },
     # *** Marker-only
     "clr_xgboost_plage": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("plage", reference=marker_file, metadata=marker_meta),
+        "e": lambda: rt.Recoder("plage", reference=marker_file, metadata=marker_meta),
         "s": True,
     },
     "clr_xgboost_gsva": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("gsva", reference=marker_file, metadata=marker_meta),
+        "e": lambda: rt.Recoder("gsva", reference=marker_file, metadata=marker_meta),
         "s": True,  # [2025-04-29 Tue] Out of memory
     },
     "clr_xgboost_plage_common": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("plage", reference=get_common(), metadata=marker_meta),
+        "e": lambda: rt.Recoder("plage", reference=get_common(), metadata=marker_meta),
         "s": True,
     },
     "clr_xgboost_bisquemarker": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("bisque_marker", markers=marker_file),
+        "e": lambda: rt.Recoder("bisque_marker", markers=marker_file),
         "s": True,
     },
     "clr_xgboost_bisquemarker_common": {
-        "m": PredBase(XGBEstimator(max_depth=3)),
+        "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
-        "e": rt.Recoder("bisque_marker", markers=get_common()),
+        "e": lambda: rt.Recoder("bisque_marker", markers=get_common()),
         "s": True,
     },
 }
@@ -507,7 +536,10 @@ def read_model_spec(
     rt.Recoder | None,
     Corrector | None,
 ]:
-    M: PredBase = spec.get("m")
+    try:
+        M: PredBase = spec.get("m")()
+    except TypeError:
+        raise ValueError("The model value must be a callable producing the model")
     references = spec.get("r")
     features = spec.get("f")
     encoding = spec.get("e")
@@ -518,6 +550,9 @@ def read_model_spec(
         C = Corrector(**ckwargs)
     else:
         C = None
+
+    if encoding is not None and isinstance(encoding, str):
+        encoding = encoding()
 
     if encoding is not None:
         fcol = "accession"
