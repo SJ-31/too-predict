@@ -24,3 +24,38 @@ auroc_tb <- read_csv(here(
   "feature_selection",
   "gene_auROC_scores.csv"
 ))
+
+auroc_o_tb <- read_csv(here(
+  "data",
+  "output",
+  "feature_selection",
+  "gene_auROC_scores_chula_organoid.csv"
+))
+
+together <- inner_join(auroc_o_tb, auroc_tb, by = join_by(gene, target))
+
+## together |>
+##   filter(target == "PAAD") |>
+##   ggplot(aes(x = AUROC.x, y = AUROC.y)) +
+##   geom_point()
+
+ttypes <- unique(auroc_tb$target)
+blacklist <- ovp_tb |>
+  filter(PValue >= 0.01) |>
+  pull(GENEID)
+
+n_per <- 70
+filtered <- auroc_tb |> filter(!gene %in% blacklist)
+seen <- c()
+features <- lapply(ttypes, \(type) {
+  current <- filtered |>
+    filter(target == type & !gene %in% seen) |>
+    slice_max(order_by = AUROC, n = n_per, with_ties = FALSE)
+  seen <<- c(seen, current$gene)
+  current$gene
+}) |>
+  unlist()
+writeLines(
+  features,
+  here(fs_lists, glue("auroc_{n_per}_per_type_blacklist.txt"))
+)
