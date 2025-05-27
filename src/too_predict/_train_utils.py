@@ -526,6 +526,73 @@ ADDITIONAL_SPLITS: dict = {
 
 
 # * Helper functions
+#
+def organoid_test_task(
+    adata: ad.AnnData,
+    model_spec: dict,
+    outdir: Path | None = None,
+    correct_before: bool = True,
+    organoid_col: str = "is_organoid",
+    label_col: str = "tumor_type",
+    with_randoms: bool = True,
+    **kwargs,
+) -> dict:
+    """Test model's ability to generalize to organoid samples
+
+    For a given tumor type `A`, which has both primary and organoid samples available,
+        train the model on a train set that excludes the organoid samples of `A`, then
+        test on the organoid samples of `A`
+    We want the model to learn to separate tumor types in primary samples, AND to
+        distinguish between organoid and primary samples such that if it finds
+        an organoid sample, it alters the tumor type separation criteria
+
+    Parameters
+    ----------
+    organoid_col : Boolean column that is True if a sample is an organoid sample
+    label_col : Factor/string column containing the tumor types
+    with_randoms : True if the test set should include some random other samples, and
+        not just the organoid samples for the given tumor type
+    """
+    filter, model, transformer, balancer, encoder, corrector = read_model_spec(
+        model_spec
+    )
+    if encoder is not None:
+        adata = encoder.fit_transform(adata)
+    if filter is not None:
+        adata = filter.fit_transform(adata)
+    if transformer is not None:
+        adata = transformer.fit_transform(adata)
+    if correct_before and corrector is not None:
+        adata = corrector.fit_transform(adata)
+    crosses = pd.crosstab(adata.obs[label_col], adata.obs[organoid_col])
+    n: int = adata.shape[0]
+    filtered = crosses.loc[crosses[True] > 0, :]
+    split_fns: dict = {}
+    for ttype in filtered.index.tolist():
+        mask = (adata.obs[label_col] == ttype) & adata.obs[organoid_col]
+        if with_randoms:
+            splitter = ShuffleSplit(n_splits=1, **kwargs)
+            tmp = adata[~mask, :]
+            train, test = next(splitter.split(np.zeros(tmp.shape)))
+            test_indices = np.array(
+                list(map(lambda x: x in test, range(adata.shape[0])))
+            )
+            split_fns[f"{ttype}_excluded"] = lambda x: (adata[train, :], adata[mask, :])
+        else:
+            split_fns[f"{ttype}_excluded"] = lambda x: (
+                adata[~mask, :],
+                adata[mask | test_indices, :],
+            )
+        p_train = (~mask).sum() / n
+        p_test = mask.sum() / n
+        split_prop = (p_train, p_test, p_train + p_test)
+        print(f"{ttype} {split_prop=}")
+    result: dict = te.holdout(model, adata, split_fns=split_fns, label_col=label_col)
+    if outdir is not None:
+        te.write_cross_val(result, outdir=outdir)
+    return result
+
+
 def read_model_spec(
     spec: dict,
 ) -> tuple[
