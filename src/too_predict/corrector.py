@@ -1,17 +1,17 @@
 #!/usr/bin/env ipython
 
-from typing import Sequence
+from typing import Literal, Sequence, override
 
 import anndata as ad
 import numpy as np
-import pandas as pd
 import rpy2.robjects as ro
 from inmoose import pycombat
-from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse
 
+import too_predict.model as tm
 import too_predict.r_utils as ru
 import too_predict.utils as ut
+from too_predict.transformer import Transformer
 
 IMPLEMENTED_CORRECTION = {
     "pycombat_seq",
@@ -216,7 +216,6 @@ class Corrector:
         corrected <- removeBatchEffect(counts, batch = batch, batch2 = batch2, group = group)
         """)
         corrected = ru.np_from_r(ro.globalenv["corrected"])
-        self.subtracted_effect = np.transpose(logged - corrected)
         corrected = np.expm1(corrected)
         corrected[corrected < 0] = 0
         corrected = corrected.astype(np.int64)
@@ -244,3 +243,62 @@ class Corrector:
     def fit_transform(self, data: ad.AnnData) -> ad.AnnData | None | np.ndarray:
         self.fit(data)
         return self.transform()
+
+
+class PredWithCorrection(tm.PredBase):
+    def __init__(
+        self,
+        model: tm.PredBase,
+        corrector: Corrector,
+        transformer: Transformer,
+        how: Literal["fc_mean", "none"],
+        give_direct: bool = True,  # Give the underlying model the corrected count
+        # data directly, instead of the approximation (i.e. the `how` parameter)
+        **kwargs,
+    ) -> None:
+        super().__init__(model=model, **kwargs)
+        self.give_direct: bool = give_direct
+        self.corrector: Corrector = corrector
+        self.transformer: Transformer = transformer
+        self.genewise_params: np.ndarray
+        self.how: str = how
+
+    # NOTE: this doesn't work at all
+    def _fc_mean_adjust(self, original: ad.AnnData) -> ad.AnnData:
+        new = original.copy()
+        adj = new.X / self.genewise_params
+        new.X = adj.toarray() if sparse.issparse(adj) else adj
+        return new
+
+    def _transform(self, original: ad.AnnData) -> ad.AnnData:
+        if self.how == "fc_mean":
+            adj = self._fc_mean_adjust(original)
+        elif self.how == "none":
+            adj = original
+        else:
+            raise ValueError("Not implemented!")
+        adj: ad.AnnData = self.transformer.fit_transform(adj)
+        return adj
+
+    @override
+    def fit(self, X: ad.AnnData, y="tumor_type") -> None:
+        corrected = self.corrector.fit_transform(X)
+        if self.how == "fc_mean":
+            self.genewise_params = np.mean(X.X / corrected.X, axis=0)
+            self.genewise_params[np.isnan(self.genewise_params)] = 0
+        if self.give_direct:
+            corrected = self.transformer.fit_transform(corrected)
+            self.model.fit(corrected, y)
+        else:
+            x = self._transform(X)
+            self.model.fit(x, y)
+
+    @override
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        x = self._transform(X)
+        return self.model.predict(x)
+
+    @override
+    def predict_proba(self, X: ad.AnnData) -> np.ndarray:
+        x = self._transform(X)
+        return self.model.predict_proba(x)
