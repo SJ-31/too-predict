@@ -14,16 +14,23 @@ import scipy.optimize as opt
 import seaborn as sns
 import sklearn.feature_selection as fs
 import too_predict._rust_helpers as rh
+import too_predict.evaluation as te
 import too_predict.go_utils as gu
 import too_predict.utils as ut
 from joblib import Parallel, delayed
 from pyhere import here
 from scipy import sparse
 from scipy.stats import mode
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import LabelEncoder
+from sklearn.linear_model import LogisticRegressionCV
+from sklearn.model_selection import (
+    StratifiedKFold,
+    cross_val_score,
+    cross_validate,
+    train_test_split,
+)
+from sklearn.preprocessing import StandardScaler
 from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
-from too_predict.evaluation import cross_validate, write_cross_val
+from too_predict.evaluation import sklearn_cv_coefs, write_cross_val
 from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
@@ -137,6 +144,71 @@ def tree_importance(adata, classifier: PredBase, outdir):
     x2 = transformer.fit_transform(x2)
     cv_results_2 = cross_validate(classifier, x2, label_col="tumor_type")
     write_cross_val(cv_results_2, outdir, "cv_after", "_cv_after")
+
+
+# ** Filtering organoid-vs-primary DE genes
+#
+def ovp_filter(adata):
+    ovp_top_tags = pd.read_csv(
+        here(
+            "data",
+            "output",
+            "chula_organoid_comparison",
+            "de_enrichment",
+            "sample_type_top_tags.tsv",
+        ),
+        sep="\t",
+    )
+    chosen_model = "clr_xgb3_1000_edger"
+    F, model_fn, T, B, R, C = read_model_spec(MODELS[chosen_model])
+    M = model_fn()
+    blacklist = ovp_top_tags.query("PValue <= 0.05")["GENEID"].to_list()
+    filtered = adata[:, ~adata.var["GENEID"].isin(blacklist)]
+    filtered = T.fit_transform(filtered)
+    outdir = here(OUTDIR, "ovp_filter")
+    outdir.mkdir(exist_ok=True)
+
+    # With rfecv
+    rfecv = fs.RFECV(estimator=M, step=1, cv=StratifiedKFold(5))
+    counts = filtered.X.toarray()
+    labels = filtered.obs["tumor_type"]
+    rfecv.fit(counts, labels)
+    x_train, x_test, y_train, y_test = train_test_split(counts, labels)
+    cv_score = cross_val_score(M, x_train, y_train)
+    print(cv_score)
+
+    df = pd.DataFrame({"GENEID": filtered.var["GENEID"], "ranking": rfecv.ranking_})
+    df.to_csv(outdir.joinpath("rfecv_importances.csv"), index=False)
+    score_df = pd.DataFrame(rfecv.cv_results_)
+    score_df.to_csv(outdir.joinpath("rfecv_cv_results.csv"), index=False)
+
+    # Linear model
+    scaler = StandardScaler()  # Required by L2 penalty
+    counts = filtered.X.toarray()
+    counts = scaler.fit_transform(counts)
+
+    lm = LogisticRegressionCV(
+        solver="saga",
+        penalty="elasticnet",
+        cv=5,
+        l1_ratios=[0, 0.5, 1],  # Try Ridge, balanced, Lasso
+    )
+
+    cross_val = cross_validate(lm, counts, labels)
+    avg = cross_val["test_score"].mean()
+    print(f"logistic regression {avg=} acc")
+    print(cross_val["test_score"])
+
+    coef_stdev = te.agg_lr_coefs(cross_val, filtered.var["GENEID"]).reset_index()
+
+    first = cross_val["estimator"][0]
+    coeffs = pd.DataFrame(
+        np.transpose(first.coefs_),
+        columns=first.classes_,
+        index=filtered.var["GENEID"],
+    ).reset_index()
+    coeffs.to_csv(outdir.joinpath("lm_coefs_final.csv"), index=False)
+    coef_stdev.to_csv(outdir.joinpath("lm_coef_std.csv"), index=False)
 
 
 # ** Removing redundant features
@@ -296,12 +368,6 @@ def optimization_scanpy(adata):
     dist_file.write_text("\n".join(dist_solution))
 
 
-# [2025-04-10 Thu] Strategy 2:
-# Find the n-sized subset of genes that minimizes euclidean distance between
-# an organoid vs. primary sample.
-# Randomly sample from
-
-
 # * Run
 
 
@@ -358,4 +424,5 @@ if __name__ == "__main__":
         #     adata, PredBase(model=XGBEstimator(importance_type="gain")), outdir
         # )
         # importance score with gain are the average gain across all trees
-        optimization_scanpy(adata)
+        # optimization_scanpy(adata)
+        ovp_filter(adata)

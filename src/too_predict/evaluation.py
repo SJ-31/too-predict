@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import anndata as ad
 import numpy as np
@@ -494,3 +495,31 @@ def summarize_studies(study: optuna.Study, objective_name: str) -> pd.DataFrame:
         tmp["n"].append(trial.number)
         tmp[vkey].append(trial.value)
     return pd.DataFrame(tmp)
+
+
+def agg_lr_coefs(
+    cv_results: dict,
+    feature_names: Sequence | None = None,
+    scale: bool = False,
+    X: np.ndarray | None = None,
+    agg_fn: Literal["std", "var"] = "std",
+) -> pd.DataFrame:
+    tmp = {}
+    if "estimator" not in cv_results:
+        raise ValueError("cross_validate must be run with return_estimator=True")
+    classes = cv_results["estimator"][0].classes_
+    for cls in classes:
+        vals = []
+        for j, est in enumerate(cv_results["estimator"]):
+            coef = est.coef_[j, :]
+            if scale and X is not None:
+                coef = coef * est.transform(X).std(axis=0)
+            elif scale and X is None:
+                raise ValueError("X must be provided if scale")
+            vals.append(coef)
+        if agg_fn == "std":
+            agg = np.array(vals).std(axis=0)
+        elif agg_fn == "var":
+            agg = np.array(vals).var(axis=0)
+        tmp[cls] = agg
+    return pd.DataFrame(tmp, index=feature_names)
