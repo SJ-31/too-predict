@@ -1,7 +1,7 @@
 #!/usr/bin/env ipython
 import pickle
 from functools import partial
-from typing import Callable, override
+from typing import Callable, Literal, override
 
 import anndata as ad
 import numpy as np
@@ -684,3 +684,62 @@ class XGBEstimator:
     @property
     def classes_(self):
         return self.encoder.inverse_transform(self.model.classes_)
+
+
+class PredWithCorrection(PredBase):
+    def __init__(
+        self,
+        model: PredBase,
+        corrector: Corrector,
+        transformer: Transformer,
+        how: Literal["fc_mean", "none"],
+        give_direct: bool = True,  # Give the underlying model the corrected count
+        # data directly, instead of the approximation (i.e. the `how` parameter)
+        **kwargs,
+    ) -> None:
+        super().__init__(model=model, **kwargs)
+        self.give_direct: bool = give_direct
+        self.corrector: Corrector = corrector
+        self.transformer: Transformer = transformer
+        self.genewise_params: np.ndarray
+        self.how: str = how
+
+    # NOTE: this doesn't work at all
+    def _fc_mean_adjust(self, original: ad.AnnData) -> ad.AnnData:
+        new = original.copy()
+        adj = new.X / self.genewise_params
+        new.X = adj.toarray() if sparse.issparse(adj) else adj
+        return new
+
+    def _transform(self, original: ad.AnnData) -> ad.AnnData:
+        if self.how == "fc_mean":
+            adj = self._fc_mean_adjust(original)
+        elif self.how == "none":
+            adj = original
+        else:
+            raise ValueError("Not implemented!")
+        adj: ad.AnnData = self.transformer.fit_transform(adj)
+        return adj
+
+    @override
+    def fit(self, X: ad.AnnData, y="tumor_type") -> None:
+        corrected = self.corrector.fit_transform(X)
+        if self.how == "fc_mean":
+            self.genewise_params = np.mean(X.X / corrected.X, axis=0)
+            self.genewise_params[np.isnan(self.genewise_params)] = 0
+        if self.give_direct:
+            corrected = self.transformer.fit_transform(corrected)
+            self.model.fit(corrected, y)
+        else:
+            x = self._transform(X)
+            self.model.fit(x, y)
+
+    @override
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        x = self._transform(X)
+        return self.model.predict(x)
+
+    @override
+    def predict_proba(self, X: ad.AnnData) -> np.ndarray:
+        x = self._transform(X)
+        return self.model.predict_proba(x)
