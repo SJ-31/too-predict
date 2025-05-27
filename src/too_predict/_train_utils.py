@@ -65,6 +65,20 @@ MODELS: dict = {
         "s": True,
     },
     # ** CLR models
+    "clr_xgb3_pulp_lfc": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "pulp_scanpy_minimized_lfc_ratio",
+        "s": True,
+    },
+    "clr_xgb3_pulp_euclidean": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "pulp_euclidean_edgeR_3000_subset",
+        "s": True,
+    },
     "clr_random_forest_minfo": {
         "m": lambda: tm.RandomForestPred(),
         "t": "clr",
@@ -84,7 +98,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp",
-        "s": True,
+        "s": False,
         "w": ("additional"),
     },
     "clr_xgboost_edger_per_type_ovp_t_enriched": {
@@ -92,7 +106,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_tissue_enriched",
-        "s": True,
+        "s": False,
         "w": ("additional"),
     },
     "clr_xgboost_auroc_per_type_ovp": {
@@ -140,7 +154,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": True,  # [2025-04-08 Tue]
+        "s": False,  # [2025-04-08 Tue]
     },
     "clr_xgboost_edger_1000_undersample": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
@@ -148,14 +162,14 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "b": Balancer(method="RandomUnderSampler", sampling_strategy="not minority"),
-        "s": True,  # [2025-04-08 Tue]
+        "s": False,  # [2025-04-08 Tue]
     },
     "clr_xgb3_edger": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": True,  # [2025-04-08 Tue] Surprisingly good
+        "s": False,  # [2025-04-08 Tue] Surprisingly good
     },
     "clr_xgb3_edger_rfecv": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -308,20 +322,6 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
     },
-    "clr_xgb3_pulp_lfc": {
-        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
-        "t": "clr",
-        "i": "plus_one",
-        "f": "pulp_scanpy_minimized_lfc_ratio",
-        "s": True,
-    },
-    "clr_xgb3_pulp_euclidean": {
-        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
-        "t": "clr",
-        "i": "plus_one",
-        "f": "pulp_euclidean_edgeR_3000_subset",
-        "s": True,
-    },
     # ** With correction
     "clr_xgb3_edger_pycombat_seq": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -398,6 +398,19 @@ MODELS: dict = {
         # [2025-04-29 Tue] Okay looks like this only works if the batch correction is
         # able to use information from the organoid samples, which constitutes
         # data leakage
+    },
+    "clr_xgb3_edger_combat_ref_org_rbatch": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
+        "t": "clr",
+        "i": "plus_one",
+        "c": {
+            "method": "combat_ref",
+            "batch": "is_organoid",
+            "group": "tumor_type",
+            "reference_batch": "TRUE",
+        },
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "s": True,
     },
     "clr_xgb3_edger_combat_ref_rfecv": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),

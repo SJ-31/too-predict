@@ -141,6 +141,7 @@ class PredBase:
         split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
         balancer: Balancer | None = None,
         corrector: Corrector | None = None,
+        transformer: Transformer | None = None,
         label_col="tumor_type",
     ) -> dict:
         return holdout(
@@ -149,6 +150,7 @@ class PredBase:
             split_fns=split_fns,
             balancer=balancer,
             corrector=corrector,
+            transformer=transformer,
             label_col=label_col,
         )
 

@@ -353,6 +353,7 @@ def holdout(
     adata: ad.AnnData,
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
     balancer: Balancer | None = None,
+    transformer: Transformer | None = None,
     corrector: Corrector | None = None,
     label_col="tumor_type",
 ) -> dict:
@@ -392,6 +393,9 @@ def holdout(
             x_train = corrector.fit_transform(x_train)
         if balancer is not None:
             x_train = balancer.fit_transform(x_train, y=label_col)
+        if transformer is not None:
+            x_train = transformer.fit_transform(x_train)
+            x_test = transformer.fit_transform(x_test)
         model.fit(x_train, y=label_col)
         proba = model.predict_proba(x_test)
         y_true = x_test.obs[label_col]

@@ -119,6 +119,7 @@ def cross_validate_helper(
                 ADDITIONAL_SPLITS,
                 label_col=lc,
                 balancer=balancer,
+                transformer=transformer,
                 corrector=None,  # [2025-04-30 Wed] NOTE: temporary
             )
             write_results(results2, result_dir2, lc)
