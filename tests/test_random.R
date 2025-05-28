@@ -19,8 +19,8 @@ ut <- import("too_predict.utils")
 ad <- import("anndata")
 
 
-adata <- ut$training_data_internal_test()
-adata <- adata[, 1:200]
+## adata <- ut$training_data_internal_test()
+## adata <- adata[, 1:200]
 
-stype <- adata$obs$Sample_Type
-stype <- replace(stype, is.na(stype), "organoid")
+## stype <- adata$obs$Sample_Type
+## stype <- replace(stype, is.na(stype), "organoid")

@@ -163,6 +163,10 @@ if __name__ == "__main__":
 
     with joblib.parallel_backend(backend):
         for name, data in MODELS.items():
+            if not isinstance(data, dict):
+                print(name)
+                print(data)
+                raise ValueError("not a dict")
             t, i, skip, f, which = (
                 data.get("t"),
                 data.get("i"),

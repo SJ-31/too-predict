@@ -93,12 +93,27 @@ MODELS: dict = {
         "f": "edgeR_70_per_type",
         "s": True,
     },
+    "xgboost_edger_per_type": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": None,
+        "i": "plus_one",
+        "f": "edgeR_70_per_type",
+        "s": True,
+    },
     "clr_xgboost_edger_per_type_ovp": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
-        "f": "edgeR_70_per_type_ovp",
-        "s": False,
+        "f": "edgeR_70_per_type_ovp_",
+        "s": True,
+        "w": ("additional"),
+    },
+    "xgboost_edger_per_type_ovp": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": None,
+        "i": None,
+        "f": "edgeR_70_per_type_ovp_",
+        "s": True,
         "w": ("additional"),
     },
     "clr_xgboost_edger_per_type_ovp_t_enriched": {
@@ -106,7 +121,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_tissue_enriched",
-        "s": False,
+        "s": True,
         "w": ("additional"),
     },
     "clr_xgboost_auroc_per_type_ovp": {
@@ -154,7 +169,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,  # [2025-04-08 Tue]
+        "s": True,  # [2025-04-08 Tue]
     },
     "clr_xgboost_edger_1000_undersample": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
@@ -162,14 +177,14 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
         "b": Balancer(method="RandomUnderSampler", sampling_strategy="not minority"),
-        "s": False,  # [2025-04-08 Tue]
+        "s": True,  # [2025-04-08 Tue]
     },
     "clr_xgb3_edger": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,  # [2025-04-08 Tue] Surprisingly good
+        "s": True,  # [2025-04-08 Tue] Surprisingly good
     },
     "clr_xgb3_edger_rfecv": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -232,7 +247,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_1000",
-        "S": True,
+        "s": True,
     },
     "clr_random_forest_edger": {
         "m": lambda: tm.PredBase(model=RandomForestClassifier()),
@@ -393,7 +408,7 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": True,  # [2025-04-28 Mon] Now this works well, let's see if it'll work
+        "s": False,  # [2025-04-28 Mon] Now this works well, let's see if it'll work
         # if you don't correct beforehand
         # [2025-04-29 Tue] Okay looks like this only works if the batch correction is
         # able to use information from the organoid samples, which constitutes
@@ -407,7 +422,7 @@ MODELS: dict = {
             "method": "combat_ref",
             "batch": "is_organoid",
             "group": "tumor_type",
-            "reference_batch": "TRUE",
+            "reference_batch": "True",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
@@ -442,19 +457,19 @@ MODELS: dict = {
         "f": "variance_go_feature_list_1500",
         "s": True,
     },
-    "clr_xgboost_go_level_4_sum": lambda: {
+    "clr_xgboost_go_level_4_sum": {
         "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": lambda: rt.Recoder("go", id_col="GENEID", level=4),
         "s": True,  # [2025-04-09 Wed]
     },
-    "clr_xgboost_go_level_3_sum": lambda: {
+    "clr_xgboost_go_level_3_sum": {
         "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": lambda: rt.Recoder("go", id_col="GENEID", level=3),
         "s": True,  #  [2025-04-09 Wed]
     },
-    "clr_xgboost_go_level_2_sum": lambda: {
+    "clr_xgboost_go_level_2_sum": {
         "m": lambda: PredBase(XGBEstimator(max_depth=3)),
         "i": "plus_one",
         "e": lambda: rt.Recoder("go", id_col="GENEID", level=2),
