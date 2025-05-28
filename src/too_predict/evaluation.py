@@ -7,8 +7,10 @@ import anndata as ad
 import numpy as np
 import optuna
 import pandas as pd
+import rpy2
 import sklearn.metrics as me
 import sklearn.model_selection as ms
+from rpy2.rinterface_lib.embedded import RRuntimeError
 
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
@@ -424,7 +426,12 @@ def holdout(
     }
     cms = {}
     for set_label, split_fn in split_fns.items():
-        cur = helper(split_fn, adata)
+        try:
+            cur = helper(split_fn, adata)
+        except RRuntimeError as e:
+            print("Error in R runtime: ", e)
+            print("ignoring...")
+            continue
         cms[set_label] = cur["cm"]
         for m in misc_tmp.keys():
             if m == "test_set":
