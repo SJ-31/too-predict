@@ -41,6 +41,7 @@ class RangeFinder:
         premature_stop: bool = False,
         min_label_within_p: float | None | dict = None,
         report_n: int = 3,
+        max_features: int | None = None,
         mask_method: Literal["binary", "mean", "median"] = "mean",
     ) -> None:
         self.labels: Sequence
@@ -68,6 +69,7 @@ class RangeFinder:
         self.min_lwp: float | None | dict = (
             min_label_within_p  # Minimum percent of labels that must be in a range to be considered informative
         )
+        self.max_features: int | None = max_features
         self.report_n: int = 3
         self.impurity_cutoff: float = purity_cutoff  # Accept ranges with Gini impurity
         # below this value
@@ -93,9 +95,13 @@ class RangeFinder:
         self.labels = self.adata.obs[self.label_col]
         self.label_totals = self.labels.value_counts()
         self.cmap = tp.rand_cmap_d(self.labels)
-        ids = self.adata.var[self.label_col].dropna()
-        for id in ids:
-            if self.premature_stop and self._check_n_features():
+        ids = self.adata.var[self.id_col].dropna()
+        for i, id in enumerate(ids):
+            if (
+                self.premature_stop
+                and self._check_n_features()
+                or (self.max_features is not None and i == self.max_features - 1)
+            ):
                 break
             self.get_range(id)
         if not self._check_n_features():
@@ -106,7 +112,7 @@ class RangeFinder:
         print(self.label_tracker)
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
-        ids = self.adata.var[self.label_col].dropna()
+        ids = self.adata.var[self.id_col].dropna()
         all_expr = np.zeros((self.adata.shape[0], len(ids)))
         # for i in ids:
 
@@ -122,6 +128,7 @@ class RangeFinder:
         expr = self._get_id_expr(id)
         if backend == "rustworkx":
             ranges, contents = self._get_ranges_rx(
+                id,
                 expr,
                 self.labels,
                 use_unique=self.use_unique,
@@ -131,6 +138,7 @@ class RangeFinder:
             )
         elif backend == "networkx":
             ranges, contents = self._get_ranges_nx(
+                id,
                 expr,
                 self.labels,
                 use_unique=self.use_unique,
@@ -140,6 +148,7 @@ class RangeFinder:
             )
         else:
             ranges, contents = self._get_ranges_it(
+                id,
                 expr,
                 self.labels,
                 use_unique=self.use_unique,
@@ -172,12 +181,11 @@ class RangeFinder:
         expr = self._get_id_expr(id)
         target_labels = self.id2labels.get(id)
         order = list(target_labels) + ["NOISE"]
-        hue = [lab if lab in target_labels else "NOISE" for lab in labels]
+        print(target_labels)
+        hue = [lab if lab in target_labels else "NOISE" for lab in self.labels]
         sns.stripplot(y=expr, x=hue, hue=hue, ax=ax, order=order)
         xlim = ax.get_xlim()
         for rge in ranges:
-            ax.axhline(y=rge[0], xmin=xlim[0], xmax=xlim[1])
-            ax.axhline(y=rge[1], xmin=xlim[0], xmax=xlim[1])
             ax.add_patch(
                 Rectangle(
                     (xlim[0], rge[0]),
@@ -193,6 +201,7 @@ class RangeFinder:
 
     def _get_ranges_rx(
         self,
+        id: str,
         vals: np.ndarray,
         labels: pd.Series,
         use_unique: bool = True,
@@ -225,6 +234,7 @@ class RangeFinder:
         ranges = []
         range2contents = {}
         seen: set = set()
+        self.id2labels[id] = set()
         for cmp in rx.connected_components(G):
             sg = G.subgraph(list(cmp))
             s_nodes = sg.nodes()
@@ -237,7 +247,6 @@ class RangeFinder:
             if self._check_label_p(top_label, top_count):
                 ranges.append(rge)
                 range2contents[rge] = cur_counts
-                self.id2labels[id] = set()
                 for lab in cur_counts.index[:report_n]:
                     if lab not in seen:
                         seen.add(lab)
@@ -245,8 +254,10 @@ class RangeFinder:
                         self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
         return ranges, range2contents
 
+    # TODO: haven't implemented id2labels for the others
     def _get_ranges_nx(
         self,
+        id: str,
         vals: np.ndarray,
         labels: pd.Series,
         use_unique: bool = True,
@@ -290,6 +301,7 @@ class RangeFinder:
 
     def _get_ranges_it(
         self,
+        id: str,
         vals: np.ndarray,
         labels: pd.Series,
         use_unique: bool = True,
