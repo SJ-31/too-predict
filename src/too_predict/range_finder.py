@@ -5,49 +5,76 @@ from functools import reduce
 from typing import Literal
 
 import anndata as ad
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
 import rustworkx as rx
+import scipy.sparse as sparse
+import seaborn as sns
 from intervaltree import Interval, IntervalTree
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
+import too_predict.plotting as tp
+
 
 class RangeFinder:
+    """Class to find discriminatory gene expression ranges, while masking
+    noisy ranges.
+
+    A `noisy` range is one containing the expression of multiple tumor types,
+        quantitatively determined by Gini impurity
+    An `informative feature` for a given label is defined as one that has a range that
+        distinctly separates it from all other labels
+    """
+
     def __init__(
         self,
         label_col: str = "tumor_type",
         batch_col: str = "is_organoid",
         id_col: str = "GENEID",
-        min_features_per_label: int = 50,
+        features_per_label: int = 50,
         use_unique: bool = False,
         n_bins: int = 30,
         purity_cutoff: float = 0.5,
-        min_labels_within: int | None = None,
+        premature_stop: bool = False,
+        min_label_within_p: float | None | dict = None,
         report_n: int = 3,
         mask_method: Literal["binary", "mean", "median"] = "mean",
     ) -> None:
+        self.labels: Sequence
+        self.adata: ad.AnnData
         self.label_col: str = label_col
         self.id_col: str = id_col
-        self.n_bins: int = n_bins
-        self.use_unique: bool = use_unique
         self.batch_col: str = batch_col
-        self.min_fpl: int = min_features_per_label
-        self.min_lw: int | None = min_labels_within
-        self.labels: Sequence = None
-        self.adata: ad.AnnData | None = None
-        self.report_n: int = 3
-        self.purity_cutoff: float = purity_cutoff
-        self.mask_method: str = mask_method
+
+        # Lookups
         self.cmap: dict[str, str] = {}
         self.id2range: dict = {}
         self.id2labels: dict[str, set] = {}
         self.id2contents: dict = {}
         self.label_tracker: dict = {}
+        self.failed_ids: set[str] = set()
+        self.label_totals: pd.Series
+
+        # Range-finding parameters
+        self.n_bins: int = n_bins
+        self.use_unique: bool = use_unique
+        self.features_per: int = features_per_label
+        self.premature_stop: bool = premature_stop  # If true, stop the range-finding
+        # process when every label has at least n = `features_per` features with
+        # informative ranges
+        self.min_lwp: float | None | dict = (
+            min_label_within_p  # Minimum percent of labels that must be in a range to be considered informative
+        )
+        self.report_n: int = 3
+        self.impurity_cutoff: float = purity_cutoff  # Accept ranges with Gini impurity
+        # below this value
+        self.mask_method: str = mask_method
 
     @staticmethod
-    def gini_index(counts: pd.Series, size: int, report_n: int = 3) -> float:
+    def gini_impurity(counts: pd.Series, size: int, report_n: int = 3) -> float:
         "Calculate the gini index for an expression range"
         counts = counts[counts != 0]
         if len(counts) == 0:
@@ -55,15 +82,35 @@ class RangeFinder:
         val = counts.apply(lambda x: x / size * (1 - x / size)).sum()
         return val
 
+    def _check_n_features(self) -> bool:
+        return all(np.array(list(self.label_tracker.values())) >= self.features_per)
+
     def fit(self, x: ad.AnnData) -> None:
         self.adata = x.copy()
         self.adata.X = (
             self.adata.X.toarray() if sparse.issparse(self.adata.X) else self.adata.X
         )
         self.labels = self.adata.obs[self.label_col]
-        self.cmap: dict = tp.rand_cmap_d(self.labels)
+        self.label_totals = self.labels.value_counts()
+        self.cmap = tp.rand_cmap_d(self.labels)
+        ids = self.adata.var[self.label_col].dropna()
+        for id in ids:
+            if self.premature_stop and self._check_n_features():
+                break
+            self.get_range(id)
+        if not self._check_n_features():
+            print(
+                f"WARING: At least one label doesn't have {self.features_per} informative features"
+            )
+        print("Counts of informative features for each label")
+        print(self.label_tracker)
 
-    def transform() -> ad.AnnData: ...
+    def transform(self, x: ad.AnnData) -> ad.AnnData:
+        ids = self.adata.var[self.label_col].dropna()
+        all_expr = np.zeros((self.adata.shape[0], len(ids)))
+        # for i in ids:
+
+        # for i
 
     def get_range(
         self,
@@ -80,7 +127,7 @@ class RangeFinder:
                 use_unique=self.use_unique,
                 n_bins=self.n_bins,
                 report_n=self.report_n,
-                cutoff=self.purity_cutoff,
+                cutoff=self.impurity_cutoff,
             )
         elif backend == "networkx":
             ranges, contents = self._get_ranges_nx(
@@ -89,7 +136,7 @@ class RangeFinder:
                 use_unique=self.use_unique,
                 n_bins=self.n_bins,
                 report_n=self.report_n,
-                cutoff=self.purity_cutoff,
+                cutoff=self.impurity_cutoff,
             )
         else:
             ranges, contents = self._get_ranges_it(
@@ -98,13 +145,24 @@ class RangeFinder:
                 use_unique=self.use_unique,
                 n_bins=self.n_bins,
                 report_n=self.report_n,
-                cutoff=self.purity_cutoff,
+                cutoff=self.impurity_cutoff,
             )
         self.id2range[id] = ranges
         self.id2contents[id] = contents
 
     def _get_id_expr(self, id: str) -> np.ndarray:
         return self.adata.X[:, self.adata.var[self.id_col].values == id].flatten()
+
+    def _check_label_p(self, label: str, label_count: int) -> bool:
+        total: int = self.label_totals[label]
+        if self.min_lwp is None:
+            return True
+        elif isinstance(self.min_lwp, dict):
+            return (label_count / total) >= self.min_lwp[label]
+        else:
+            return (label_count / total) >= self.min_lwp
+
+    # * Plotting
 
     def range_stripplot(self, id: str) -> Figure:
         fig, ax = plt.subplots()
@@ -131,6 +189,8 @@ class RangeFinder:
             )
         return fig
 
+    # * Range getter backends
+
     def _get_ranges_rx(
         self,
         vals: np.ndarray,
@@ -153,7 +213,9 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            gini = self.gini_index(counts=counts, size=len(narrowed), report_n=report_n)
+            gini = self.gini_impurity(
+                counts=counts, size=len(narrowed), report_n=report_n
+            )
             if gini < cutoff:
                 if begin not in i2n:
                     i2n[begin] = G.add_node(begin)
@@ -162,6 +224,7 @@ class RangeFinder:
                 G.add_edge(i2n[begin], i2n[end], counts)
         ranges = []
         range2contents = {}
+        seen: set = set()
         for cmp in rx.connected_components(G):
             sg = G.subgraph(list(cmp))
             s_nodes = sg.nodes()
@@ -170,13 +233,16 @@ class RangeFinder:
                 lambda x, y: x if all(x.values >= y.values) else y,
                 (sg.get_edge_data_by_index(e) for e in sg.edge_indices()),
             ).sort_values(ascending=False)
-            if self.min_lw is None or cur_counts[0] > self.min_lw:
+            top_count, top_label = cur_counts[0], cur_counts.index[0]
+            if self._check_label_p(top_label, top_count):
                 ranges.append(rge)
                 range2contents[rge] = cur_counts
                 self.id2labels[id] = set()
                 for lab in cur_counts.index[:report_n]:
-                    self.id2labels[id].add(lab)
-                    self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
+                    if lab not in seen:
+                        seen.add(lab)
+                        self.id2labels[id].add(lab)
+                        self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
         return ranges, range2contents
 
     def _get_ranges_nx(
@@ -200,7 +266,9 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            gini = self.gini_index(counts=counts, size=len(narrowed), report_n=report_n)
+            gini = self.gini_impurity(
+                counts=counts, size=len(narrowed), report_n=report_n
+            )
             if gini < cutoff:
                 G.add_edge(begin, end, within=counts)
         ranges = []
@@ -211,8 +279,9 @@ class RangeFinder:
             cur_counts = reduce(
                 lambda x, y: x if all(x.values >= y.values) else y,
                 nx.get_edge_attributes(s, "within").values(),
-            )
-            if self.min_lw is None or cur_counts[0] > self.min_lw:
+            ).sort_values(ascending=False)
+            top_count, top_label = cur_counts[0], cur_counts.index[0]
+            if self._check_label_p(top_label, top_count):
                 ranges.append(rge)
                 range2contents[rge] = cur_counts
                 for lab in cur_counts.index[:report_n]:
@@ -239,7 +308,9 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            gini = self.gini_index(counts=counts, size=len(narrowed), report_n=report_n)
+            gini = self.gini_impurity(
+                counts=counts, size=len(narrowed), report_n=report_n
+            )
             if gini < cutoff:
                 It.add(Interval(begin, end, data=counts))
         ranges = []
@@ -249,7 +320,9 @@ class RangeFinder:
         )
         for it in It.items():
             rge = (it.begin, it.end)
-            if self.min_lw is None or it.data.max() > self.min_lw:
+            sorted = it.data.sort_values(ascending=False)
+            top_count, top_label = sorted[0], sorted.index[0]
+            if self._check_label_p(top_label, top_count):
                 ranges.append(rge)
                 range2contents[rge] = it.data
                 for lab in it.data.sort_values().index[:report_n]:
