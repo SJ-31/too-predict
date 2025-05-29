@@ -154,7 +154,6 @@ def get_combined(f):
     adatas = [ad.read_h5ad(v.joinpath("all.h5ad")) for v in dirs.values()]
     final = ad.concat(adatas, axis="obs", join="inner", merge="first")
     sc.pp.calculate_qc_metrics(final, inplace=True)
-    print(final)
     final.write_h5ad(f)
     return final
 
@@ -190,7 +189,7 @@ def harmonize_labels_tissues(tissues) -> pd.Series:
                 result.append("kidney")
             case _:
                 result.append(t)
-    return pd.Series(result)
+    return pd.Series(result, dtype="category")
 
 
 def harmonize_labels_cells(cell_types) -> pd.Series:
@@ -251,12 +250,15 @@ def harmonize_labels_cells(cell_types) -> pd.Series:
                 result.append("myocyte")
             case _:
                 result.append(cell)
-    return pd.Series(result, index=cell_types)
+    return pd.Series(result, index=cell_types, dtype="category")
 
 
 def replace_cell_labels(adata) -> None:
-    harmonized = harmonize_labels_cells(list(adata.obs["cell_type"].unique()))
-    old = list(adata.obs["cell_type"])
+    harmonized = harmonize_labels_cells(
+        list(adata.obs["cell_type"].str.lower().unique())
+    )
+    old = list(adata.obs["cell_type"].str.lower())
+    adata.obs = adata.obs.drop("cell_type", axis="columns")
     adata.obs.loc[:, "cell_type"] = list(harmonized[old])
     adata.obs.loc[:, "tissue_broad"] = list(
         harmonize_labels_tissues(adata.obs["tissue"])
@@ -279,7 +281,7 @@ def average_within_source(adata: ad.AnnData) -> ad.AnnData:
     return ad.concat(adatas, axis="obs", join="inner", merge="first")
 
 
-def get_scanorama(combined, f):
+def filter_rename(combined, average_within: bool = False) -> ad.AnnData:
     replace_cell_labels(combined)
     ut.mad_outliers(
         combined, mode="cells", columns=["total_counts", "n_genes_by_counts"]
@@ -288,19 +290,17 @@ def get_scanorama(combined, f):
     sc.pp.filter_cells(combined, min_genes=1000)
     sc.pp.filter_genes(combined, min_cells=1000)
     ru.pooled_normalization(combined)
-    combined = average_within_source(combined)
+    if average_within:
+        combined = average_within_source(combined)
+    return combined
 
-    print(combined.shape)
-    method = "scanorama"
-    corrected = ut.scanorama_correct(  # [2025-05-13 Tue] Got OOM
-        combined, batch_key="source", batch_size=batch_size, hvg=4000
-    )
 
-    ut.pca_to_leiden(combined)
-    ut.pca_to_leiden(corrected)
+def scib_metrics(old: ad.AnnData, new: ad.AnnData, method):
+    ut.pca_to_leiden(old)
+    ut.pca_to_leiden(new)
 
     scores = scib.metrics.metrics_fast(
-        combined, corrected, batch_key="source", label_key="cell_type"
+        old, new, batch_key="source", label_key="cell_type"
     )
 
     # metrics_fast only computes
@@ -322,17 +322,31 @@ def get_scanorama(combined, f):
         {"metric": scores.index, "value": scores.iloc[:, 0]}
     ).reset_index(drop=True)
     scores.to_csv(here("data", "output", f"sc_ref_{method}_metrics.csv"), index=False)
+
+
+def get_scanorama(combined, f):
+    combined = filter_rename(combined, True)
+    print(combined.shape)
+    corrected = ut.scanorama_correct(  # [2025-05-13 Tue] Got OOM
+        combined, batch_key="source", batch_size=batch_size, hvg=3000
+    )
+    scib_metrics(corrected, combined, "scanorama")
     corrected.write_h5ad(f)
     return corrected
 
 
-combined_file = here(storage_dir, "sc_ref_all.h5ad")
-combined = ut.read_existing(combined_file, get_combined, ad.read_h5ad)
-# combined.obs["cell_type"].value_counts().to_csv(
-#     here("sc_cell_types.csv"), index_label="cell_type", header=["count"]
-# )
-combined.obs.to_csv(here("data", "reference", "sc_ref_all_obs.csv"), index=False)
-scanorama_file = here(storage_dir, "sc_ref_all_corrected.h5ad")
-scan = ut.read_existing(
-    scanorama_file, lambda x: get_scanorama(combined, x), ad.read_h5ad
-)
+# def get_harmony(combined, f):
+#     combined = filter_rename(combined)
+
+
+if __name__ == "__main__":
+    combined_file = here(storage_dir, "sc_ref_all.h5ad")
+    combined = ut.read_existing(combined_file, get_combined, ad.read_h5ad)
+    # combined.obs["cell_type"].value_counts().to_csv(
+    #     here("sc_cell_types.csv"), index_label="cell_type", header=["count"]
+    # )
+    combined.obs.to_csv(here("data", "reference", "sc_ref_all_obs.csv"), index=False)
+    scanorama_file = here(storage_dir, "sc_ref_all_corrected.h5ad")
+    scan = ut.read_existing(
+        scanorama_file, lambda x: get_scanorama(combined, x), ad.read_h5ad
+    )
