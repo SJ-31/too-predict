@@ -140,46 +140,14 @@ class RangeFinder:
         self.fit(x)
         return self.transform(x)
 
-    def get_range(
-        self,
-        id: str,
-        backend: Literal["networkx", "rustworkx", "intervaltree"] = "rustworkx",
-    ) -> None:
+    def get_range(self, id: str) -> None:
         if self.adata is None:
             raise ValueError("Not fitted yet!")
         expr = self._get_id_expr(id)
-        if backend == "rustworkx":
-            ranges, contents = self._get_ranges_rx(
-                id,
-                expr,
-                self.labels,
-                use_unique=self.use_unique,
-                n_bins=self.n_bins,
-                report_n=self.report_n,
-                cutoff=self.impurity_cutoff,
-            )
-        elif backend == "networkx":
-            ranges, contents = self._get_ranges_nx(
-                id,
-                expr,
-                self.labels,
-                use_unique=self.use_unique,
-                n_bins=self.n_bins,
-                report_n=self.report_n,
-                cutoff=self.impurity_cutoff,
-            )
-        else:
-            ranges, contents = self._get_ranges_it(
-                id,
-                expr,
-                self.labels,
-                use_unique=self.use_unique,
-                n_bins=self.n_bins,
-                report_n=self.report_n,
-                cutoff=self.impurity_cutoff,
-            )
+        ranges, contents, ginis = self._get_ranges_rx(id, expr, self.labels)
         self.id2range[id] = ranges
         self.id2contents[id] = contents
+        self.id2gini[id] = ginis
 
     def _get_id_expr(self, id: str, adata: ad.AnnData | None = None) -> np.ndarray:
         if adata is None:
@@ -248,127 +216,25 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            gini = self.gini_impurity(
-                counts=counts, size=len(narrowed), report_n=report_n
-            )
-            if gini < cutoff:
+            gini = self.gini_impurity(counts=counts, size=len(narrowed))
+            if gini < self.impurity_cutoff:
                 if begin not in i2n:
                     i2n[begin] = G.add_node(begin)
                 if end not in i2n:
                     i2n[end] = G.add_node(end)
-                G.add_edge(i2n[begin], i2n[end], counts)
+                G.add_edge(i2n[begin], i2n[end], {"counts": counts, "gini": gini})
         if G.num_nodes() == 0:
             self.failed_ids.add(id)
             return [], {}
         ranges = []
         range2contents = {}
+        ginis = []
         seen: set = set()
         self.id2labels[id] = set()
         for cmp in rx.connected_components(G):
             sg = G.subgraph(list(cmp))
-            s_nodes = sg.nodes()
-            rge = (min(s_nodes), max(s_nodes))
-            cur_counts = reduce(
-                lambda x, y: x if all(x.values >= y.values) else y,
-                (sg.get_edge_data_by_index(e) for e in sg.edge_indices()),
-            ).sort_values(ascending=False)
-            top_count, top_label = cur_counts[0], cur_counts.index[0]
-            if self._check_label_p(top_label, top_count):
-                ranges.append(rge)
-                range2contents[rge] = cur_counts
-                for lab in cur_counts.index[:report_n]:
-                    if lab not in seen:
-                        seen.add(lab)
-                        self.id2labels[id].add(lab)
-                        self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
-        return ranges, range2contents
-
-    # TODO: haven't implemented id2labels for the others
-    def _get_ranges_nx(
-        self,
-        id: str,
-        vals: np.ndarray,
-        labels: pd.Series,
-        use_unique: bool = True,
-        n_bins: int = 30,
-        report_n: int = 3,
-        cutoff=0.5,
-    ) -> tuple:
-        if use_unique:
-            nodes = np.unique(vals)
-        else:
-            nodes = np.linspace(start=min(vals), stop=max(vals), num=n_bins)
-        expr = pd.Series(vals, index=labels)
-        nodes = sorted(nodes)
-        G: nx.Graph = nx.Graph()
-        for pair in itertools.combinations(nodes, 2):
-            begin = min(pair)
-            end = pair[0] if begin == pair[1] else pair[1]
-            narrowed = expr[(begin <= expr) & (expr <= end)]
-            counts = narrowed.index.value_counts()
-            gini = self.gini_impurity(
-                counts=counts, size=len(narrowed), report_n=report_n
-            )
-            if gini < cutoff:
-                G.add_edge(begin, end, within=counts)
-        ranges = []
-        range2contents = {}
-        for cmp in nx.connected_components(G):
-            s = G.subgraph(cmp)
-            rge = (min(s.nodes), max(s.nodes))
-            cur_counts = reduce(
-                lambda x, y: x if all(x.values >= y.values) else y,
-                nx.get_edge_attributes(s, "within").values(),
-            ).sort_values(ascending=False)
-            top_count, top_label = cur_counts[0], cur_counts.index[0]
-            if self._check_label_p(top_label, top_count):
-                ranges.append(rge)
-                range2contents[rge] = cur_counts
-                for lab in cur_counts.index[:report_n]:
-                    self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
-        return ranges, range2contents
-
-    def _get_ranges_it(
-        self,
-        id: str,
-        vals: np.ndarray,
-        labels: pd.Series,
-        use_unique: bool = True,
-        n_bins: int = 30,
-        report_n: int = 3,
-        cutoff=0.5,
-    ) -> tuple:
-        if use_unique:
-            nodes = np.unique(vals)
-        else:
-            nodes = np.linspace(start=min(vals), stop=max(vals), num=n_bins)
-        expr = pd.Series(vals, index=labels)
-        It: IntervalTree = IntervalTree()
-        for pair in itertools.combinations(nodes, 2):
-            begin = min(pair)
-            end = pair[0] if begin == pair[1] else pair[1]
-            narrowed = expr[(begin <= expr) & (expr <= end)]
-            counts = narrowed.index.value_counts()
-            gini = self.gini_impurity(
-                counts=counts, size=len(narrowed), report_n=report_n
-            )
-            if gini < cutoff:
-                It.add(Interval(begin, end, data=counts))
-        ranges = []
-        range2contents = {}
-        It.merge_overlaps(
-            data_reducer=lambda x, y: x if all(x.values >= y.values) else y
-        )
-        for it in It.items():
-            rge = (it.begin, it.end)
-            sorted = it.data.sort_values(ascending=False)
-            top_count, top_label = sorted[0], sorted.index[0]
-            if self._check_label_p(top_label, top_count):
-                ranges.append(rge)
-                range2contents[rge] = it.data
-                for lab in it.data.sort_values().index[:report_n]:
-                    self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
-        return ranges, range2contents
+            self._ranges_from_sg_rx(id, sg, seen, ranges, range2contents, ginis)
+        return ranges, range2contents, ginis
 
 
 # * Wrapper for predictor
