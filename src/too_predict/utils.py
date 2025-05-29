@@ -63,8 +63,13 @@ def get_data(path: str, must_exist: bool = True) -> Path:
     return file.absolute()
 
 
-def xarray_if_sparse(x: ad.AnnData) -> np.ndarray:
-    return x.X if not sparse.issparse(x.X) else x.X.toarray()
+def xarray_if_sparse(x: ad.AnnData, copy: bool = True) -> np.ndarray:
+    was_sparse: bool = sparse.issparse(x.X)
+    if was_sparse:
+        return x.X.toarray()
+    if copy:
+        return x.X.copy()
+    return x.X
 
 
 def filter_by_obs(
