@@ -10,13 +10,14 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import rustworkx as rx
-import scipy.sparse as sparse
 import seaborn as sns
 from intervaltree import Interval, IntervalTree
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
 import too_predict.plotting as tp
+import too_predict.utils as ut
+from too_predict.filter import Filter
 
 
 class RangeFinder:
@@ -89,9 +90,7 @@ class RangeFinder:
 
     def fit(self, x: ad.AnnData) -> None:
         self.adata = x.copy()
-        self.adata.X = (
-            self.adata.X.toarray() if sparse.issparse(self.adata.X) else self.adata.X
-        )
+        self.adata.X = ut.xarray_if_sparse(x)
         self.labels = self.adata.obs[self.label_col]
         self.label_totals = self.labels.value_counts()
         self.cmap = tp.rand_cmap_d(self.labels)
@@ -100,7 +99,7 @@ class RangeFinder:
             if (
                 self.premature_stop
                 and self._check_n_features()
-                or (self.max_features is not None and i == self.max_features - 1)
+                or (self.max_features is not None and i == self.max_features)
             ):
                 break
             self.get_range(id)
@@ -112,12 +111,32 @@ class RangeFinder:
         print(self.label_tracker)
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
-        ids = self.adata.var[self.id_col].dropna()
-        # to_keep =
-        all_expr = np.zeros((x.shape[0], len(ids)))
-        # for i in ids:
+        ids_to_use: set = set(self.id2range.keys()) - self.failed_ids
+        not_present: set = ids_to_use - set(x.var[self.id_col])
+        filter: Filter = Filter(
+            features=list(ids_to_use), feature_col=self.id_col, inplace=False
+        )
+        x = filter.fit_transform(x)
+        old_expr: np.ndarray = ut.xarray_if_sparse(x).copy()
+        new_expr = np.zeros_like(old_expr)
+        for i, var in enumerate(x.var[self.id_col]):
+            if var in not_present:
+                continue
+            ranges = self.id2range[var]
+            for rge in ranges:
+                mask = (rge[0] <= old_expr[:, i]) & (old_expr[:, i] <= rge[1])
+                if self.mask_method == "binary":
+                    new_expr[:, i][mask] = 1
+                elif self.mask_method == "mean":
+                    new_expr[:, i][mask] = old_expr[:, i][mask].mean()
+                elif self.mask_method == "median":
+                    new_expr[:, i][mask] = old_expr[:, i][mask].median()
+        new_adata: ad.AnnData = ad.AnnData(X=new_expr, var=x.var, obs=x.obs)
+        return new_adata
 
-        # for i
+    def fit_transform(self, x: ad.AnnData) -> ad.AnnData:
+        self.fit(x)
+        return self.transform(x)
 
     def get_range(
         self,
@@ -160,8 +179,10 @@ class RangeFinder:
         self.id2range[id] = ranges
         self.id2contents[id] = contents
 
-    def _get_id_expr(self, id: str) -> np.ndarray:
-        return self.adata.X[:, self.adata.var[self.id_col].values == id].flatten()
+    def _get_id_expr(self, id: str, adata: ad.AnnData | None = None) -> np.ndarray:
+        if adata is None:
+            adata = self.adata
+        return adata.X[:, adata.var[self.id_col].values == id].flatten()
 
     def _check_label_p(self, label: str, label_count: int) -> bool:
         total: int = self.label_totals[label]
@@ -174,14 +195,15 @@ class RangeFinder:
 
     # * Plotting
 
-    def range_stripplot(self, id: str) -> Figure:
+    def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
         fig, ax = plt.subplots()
         ranges = self.id2range.get(id)
         if ranges is None:
             raise ValueError(f"Ranges haven't been found for {id=} yet!")
         elif id in self.failed_ids:
             raise ValueError(f"No informative ranges were found for {id=}!")
-        expr = self._get_id_expr(id)
+        expr = self._get_id_expr(id, adata)
+        expr[expr == 0] = np.nan
         target_labels = self.id2labels.get(id)
         order = list(target_labels) + ["NOISE"]
         hue = [lab if lab in target_labels else "NOISE" for lab in self.labels]
