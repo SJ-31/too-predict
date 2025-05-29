@@ -20,7 +20,11 @@ wanted_cols <- c("ensembl", "tissue", "cell_type", "from_tme")
 source_tbs <- list()
 
 symbol2ensembl <- local({
-  grch38_ref <- read_tsv(here("data", "reference", "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv")) |>
+  grch38_ref <- read_tsv(here(
+    "data",
+    "reference",
+    "Homo_sapiens.GRCh38.113.gene_id_mapping.tsv"
+  )) |>
     filter(!is.na(gene_name)) |>
     dplyr::rename(symbol = gene_name, ensembl = gene_id)
   hgnc_ref <- read_tsv(here("data", "hgnc_complete_set_2025-3-19.tsv")) |>
@@ -53,7 +57,8 @@ wanted_cells <- here(refdir, "cellmarker2_wanted.yaml") |> yaml::read_yaml()
 #   Tumor variants of cells will be renamed to the normal cell type here (the label "tme" will be added later)
 markers <- read_csv(files$cellmarker2) |>
   mutate(
-    cell_name = case_match(cell_name,
+    cell_name = case_match(
+      cell_name,
       "Regulatory T(Treg) cell" ~ "Treg cell",
       "Natural killer T(NKT) cell" ~ "Natural killer T (NKT) cell",
       "Activated dendritic cell" ~ "Dendritic cell",
@@ -128,16 +133,24 @@ markers <- read_csv(files$cellmarker2) |>
       "Memory T(Tm) cell" ~ "Tm cell",
       "Naïve or central memory  T cell" ~ "Central memory T cell",
       # CAFs
-      "Cancer associated fibroblast(CAF)" ~ "Cancer associated fibroblast (CAF)",
-      "Classical cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Cancer associated fibroblast(CAF)" ~
+        "Cancer associated fibroblast (CAF)",
+      "Classical cancer associated fibroblast" ~
+        "Cancer associated fibroblast (CAF)",
       "Pan-cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
-      "Complement-secreting cancer associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
-      "Myofibroblastic cancer‐associated fibroblast (myCAF)" ~ "Cancer associated fibroblast (CAF)",
-      "Inflammatory cancer‐associated fibroblast (iCAF)" ~ "Cancer associated fibroblast (CAF)",
+      "Complement-secreting cancer associated fibroblast" ~
+        "Cancer associated fibroblast (CAF)",
+      "Myofibroblastic cancer‐associated fibroblast (myCAF)" ~
+        "Cancer associated fibroblast (CAF)",
+      "Inflammatory cancer‐associated fibroblast (iCAF)" ~
+        "Cancer associated fibroblast (CAF)",
       "Cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
-      "Antigen presentation cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
-      "Myofibroblastic cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
-      "Inflammatory cancer-associated fibroblast" ~ "Cancer associated fibroblast (CAF)",
+      "Antigen presentation cancer-associated fibroblast" ~
+        "Cancer associated fibroblast (CAF)",
+      "Myofibroblastic cancer-associated fibroblast" ~
+        "Cancer associated fibroblast (CAF)",
+      "Inflammatory cancer-associated fibroblast" ~
+        "Cancer associated fibroblast (CAF)",
       # B cells
       "Regulatory B(Breg) cell" ~ "Breg cell",
       "B10 Regulatory B cell" ~ "Breg cell",
@@ -155,15 +168,18 @@ markers <- read_csv(files$cellmarker2) |>
       "Foxp3+IL-17+ T cell" ~ "T cell",
       "T-cell lineage" ~ "T cell",
       "Tumor-infiltrating lymphocyte(TIL)" ~ "Lymphocyte",
-      "Lymphoid-primed multipotent progenitor cell(LMPP)" ~ "Multipotent progenitor cell",
+      "Lymphoid-primed multipotent progenitor cell(LMPP)" ~
+        "Multipotent progenitor cell",
       "Pro-tumor type-2 pericyte" ~ "Pericyte",
       "Low-density neutrophil" ~ "Neutrophil",
       "Pan-B cell" ~ "B cell",
       "B cell lineage" ~ "B cell",
       "Primitive stromal cell" ~ "Stromal cell",
       "Tumor-associated microglia cell" ~ "Microglial cell",
-      "Microglia-derived tumor-associated macrophage(Mg-TAM)" ~ "Tumor-associated macrophage (TAM)",
-      "Epithelial-mesenchymal transition cancer stem cell" ~ "EMT cancer stem cell",
+      "Microglia-derived tumor-associated macrophage(Mg-TAM)" ~
+        "Tumor-associated macrophage (TAM)",
+      "Epithelial-mesenchymal transition cancer stem cell" ~
+        "EMT cancer stem cell",
       "Pan–T-cell" ~ "T cell",
       "Superpotent cancer stem cell" ~ "Cancer stem cell",
       "pit mucous cell (PMC)" ~ "Pit mucous cell",
@@ -179,37 +195,57 @@ markers <- read_csv(files$cellmarker2) |>
   left_join(symbol2ensembl, by = join_by(x$marker == y$symbol))
 
 source_tbs$cellmarker2 <- markers |>
-  filter(cell_name %in% wanted_cells$common | tissue_class %in% names(wanted_cells) | from_tme) |>
+  filter(
+    cell_name %in%
+      wanted_cells$common |
+      tissue_class %in% names(wanted_cells) |
+      from_tme
+  ) |>
   filter(!is.na(Genetype) & !is.na(ensembl) & !is.na(cellontology_id)) |>
   filter(!is.na(ensembl)) |>
   mutate(
     cell_type = cell_name,
-    tissue = case_when(cell_type %in% wanted_cells$common ~ "common",
+    tissue = case_when(
+      cell_type %in% wanted_cells$common ~ "common",
       .default = tissue
     )
   ) |>
   select(all_of(wanted_cols))
 
 # Find tissue-specific
-tissues2cells <- sapply(unique(markers$tissue_class), \(t) {
-  markers |>
-    filter(tissue_class == t) |>
-    pluck("cell_type") |>
-    unique()
-}, simplify = FALSE)
+tissues2cells <- sapply(
+  unique(markers$tissue_class),
+  \(t) {
+    markers |>
+      filter(tissue_class == t) |>
+      pluck("cell_type") |>
+      unique()
+  },
+  simplify = FALSE
+)
 
 # [2025-04-18 Fri] As expected, got nothing from this
-tissue_specific <- sapply(names(tissues2cells), \(n) {
-  other_tissues <- tissues2cells[names(tissues2cells) != n]
-  the_rest <- unlist(other_tissues)
-  setdiff(tissues2cells[[n]], the_rest)
-}, simplify = FALSE, USE.NAMES = TRUE)
+tissue_specific <- sapply(
+  names(tissues2cells),
+  \(n) {
+    other_tissues <- tissues2cells[names(tissues2cells) != n]
+    the_rest <- unlist(other_tissues)
+    setdiff(tissues2cells[[n]], the_rest)
+  },
+  simplify = FALSE,
+  USE.NAMES = TRUE
+)
 
 ## * PanglaoDB
 
 panglaodb <- read_tsv(files$panglaodb) |>
-  filter(str_detect(species, "Hs") & !is.na(organ) & !is.na(`canonical marker`)) |>
-  inner_join(symbol2ensembl, by = join_by(x$`official gene symbol` == y$symbol)) |>
+  filter(
+    str_detect(species, "Hs") & !is.na(organ) & !is.na(`canonical marker`)
+  ) |>
+  inner_join(
+    symbol2ensembl,
+    by = join_by(x$`official gene symbol` == y$symbol)
+  ) |>
   mutate(organ_ct = paste0(organ, `cell type`)) |>
   group_by(organ_ct) |>
   mutate(agg_sensitivity_hs = median(sensitivity_human, na.rm = TRUE))
@@ -219,24 +255,29 @@ panglaodb <- read_tsv(files$panglaodb) |>
 # Select top 3 cell types from each organ that have the highest median sensitivity for
 # their marker genes
 source_tbs$panglaodb <- panglaodb |>
-  mutate(tissue = str_to_lower(case_match(
-    organ,
-    "Immune system" ~ "common", "Thyroid" ~ "thyroid_gland",
-    "Skeletal muscle" ~ "skeletal muscle",
-    "Adrenal glands" ~ "adrenal_glands",
-    .default = organ
-  ))) |>
+  mutate(
+    tissue = str_to_lower(case_match(
+      organ,
+      "Immune system" ~ "common",
+      "Thyroid" ~ "thyroid_gland",
+      "Skeletal muscle" ~ "skeletal muscle",
+      "Adrenal glands" ~ "adrenal_glands",
+      .default = organ
+    ))
+  ) |>
   filter(tissue %in% names(wanted_cells)) |>
   group_by(tissue) |>
   nest() |>
-  mutate(data = lapply(data, \(tb) {
-    slice_max(tb, order_by = agg_sensitivity_hs, n = 3, with_ties = FALSE)
-  }), from_tme = FALSE) |>
+  mutate(
+    data = lapply(data, \(tb) {
+      slice_max(tb, order_by = agg_sensitivity_hs, n = 3, with_ties = FALSE)
+    }),
+    from_tme = FALSE
+  ) |>
   unnest(cols = c(data)) |>
   ungroup() |>
   dplyr::rename(cell_type = "cell type") |>
   select(all_of(wanted_cols))
-
 
 
 ## * Enriched from hpa
@@ -244,9 +285,7 @@ source_tbs$panglaodb <- panglaodb |>
 ## --- CODE BLOCK ---
 get_hpa_query <- function(query, ...) {
   base_url <- "www.proteinatlas.org/api/search_download.php?"
-  string <- url_query_build(list(search = query, ...),
-    .multi = "comma"
-  )
+  string <- url_query_build(list(search = query, ...), .multi = "comma")
   paste0(base_url, string)
 }
 
@@ -267,14 +306,34 @@ hpa_wanted_cols <- c(
 
 hpa_tissues <- list(
   breast = c("Adipocytes (Breast)", "Endothelial cells", "Plasma cells"),
-  colon = c("Colon enterocytes", "Colon enteroendocrine cells", "Enteric glia cells"),
-  skin = c("Keratinocyte (other)", "Keratinocyte (granular)", "Sebaceous gland cells"),
+  colon = c(
+    "Colon enterocytes",
+    "Colon enteroendocrine cells",
+    "Enteric glia cells"
+  ),
+  skin = c(
+    "Keratinocyte (other)",
+    "Keratinocyte (granular)",
+    "Sebaceous gland cells"
+  ),
   `heart muscle` = c("Cardiomyocytes", "Fibroblasts", "Endothelial cells"),
-  kidney = c("Proximal tubular cells", "Podocytes", "Ascending Loop of Henle cells"),
+  kidney = c(
+    "Proximal tubular cells",
+    "Podocytes",
+    "Ascending Loop of Henle cells"
+  ),
   liver = c("Hepatocytes", "Hepatic stellate cells", "Erythroid cells"),
-  lung = c("Respiratory ciliated cells", "Plasma cells", "Mitotic cells (Lung)"),
+  lung = c(
+    "Respiratory ciliated cells",
+    "Plasma cells",
+    "Mitotic cells (Lung)"
+  ),
   pancreas = c("Alpha cells", "Beta cells", "Exocrine glandular cells"),
-  prostate = c("Prostate glandular cells", "Smooth muscle cells", "Endothelial cells"),
+  prostate = c(
+    "Prostate glandular cells",
+    "Smooth muscle cells",
+    "Endothelial cells"
+  ),
   `skeletal muscle` = c("Myocytes", "fibroblasts", "Macrophages"),
   testis = c("Early spermatids", "Late spermatids", "Spermatocytes"),
   `thyroid gland` = c("Glandular cells", "Parafollicular cells", "Plasma cells")
@@ -306,16 +365,26 @@ get_hpa <- function(file) {
   hpa_all <- lapply(names(hpa_tissues), \(t) {
     cell_list <- hpa_tissues[[t]]
     lapply(cell_list, \(c) {
-      specificity_level <- lget(hpa_specificity_map, glue("{t} {c}"), "Very high")
+      specificity_level <- lget(
+        hpa_specificity_map,
+        glue("{t} {c}"),
+        "Very high"
+      )
       cname <- lget(hpa_aliases, glue("{t} {c}"), c)
       q <- glue("ce_enriched:{t};{cname};{specificity_level}")
-      url <- get_hpa_query(q, format = "tsv", columns = hpa_wanted_cols, compress = "no")
+      url <- get_hpa_query(
+        q,
+        format = "tsv",
+        columns = hpa_wanted_cols,
+        compress = "no"
+      )
       Sys.sleep(1)
       resp <- request(url) |> req_perform()
-      tb <- as_tibble(fread(resp_body_string(resp))) |> mutate(
-        query_tissue = t,
-        cell_type = c
-      )
+      tb <- as_tibble(fread(resp_body_string(resp))) |>
+        mutate(
+          query_tissue = t,
+          cell_type = c
+        )
       tryCatch(
         expr = {
           stopifnot(nrow(tb) != 0)
@@ -335,12 +404,14 @@ get_hpa <- function(file) {
   hpa_all
 }
 
-hpa_tb <- read_existing(files$hpa_all, get_hpa, read_csv) |> mutate(cell_type = str_replace(cell_type, "_[213]\\*", ""))
-
+hpa_tb <- read_existing(files$hpa_all, get_hpa, read_csv) |>
+  mutate(cell_type = str_replace(cell_type, "_[213]\\*", ""))
 
 
 source_tbs$hpa <- hpa_tb |>
-  filter(`RNA cancer specificity` %in% c("Low cancer specificity", "Not detected")) |>
+  filter(
+    `RNA cancer specificity` %in% c("Low cancer specificity", "Not detected")
+  ) |>
   mutate(tissue = str_replace(query_tissue, " ", "_"), from_tme = FALSE) |>
   dplyr::rename(ensembl = Ensembl) |>
   select(all_of(wanted_cols))
@@ -355,24 +426,36 @@ hpa_custom_ref_transcripts <- read_csv(files$hpa_ref) |>
   inner_join(symbol2ensembl, by = join_by(symbol))
 
 source_tbs$hpa_ref <- hpa_custom_ref_transcripts |>
-  mutate(tissue = case_match(
-    tissue,
-    "Breast (female)" ~ "breast",
-    "Kidney (cortex)" ~ "kidney",
-    "Skin (non-sun exposed)" ~ "skin",
-    .default = str_to_lower(tissue) |> str_replace(" ", "_")
-  ), from_tme = FALSE) |>
+  mutate(
+    tissue = case_match(
+      tissue,
+      "Breast (female)" ~ "breast",
+      "Kidney (cortex)" ~ "kidney",
+      "Skin (non-sun exposed)" ~ "skin",
+      .default = str_to_lower(tissue) |> str_replace(" ", "_")
+    ),
+    from_tme = FALSE
+  ) |>
   select(all_of(wanted_cols))
 
 ## * Cancer stem cells
 # Data from https://academic.oup.com/database/article/doi/10.1093/database/baac082/6725752?login=true
 # How reliable is this?
-bcscdb <- read_csv(files$bcscdb,
+bcscdb <- read_csv(
+  files$bcscdb,
   col_names = c(
-    "symbol", "marker_type", "expression_level",
-    "hgnc_id", "cancer_type",
-    "histological_type", "cell_line", "csc_enrichment", "method", "confidence_scoring",
-    "global_scoring", "pubmed"
+    "symbol",
+    "marker_type",
+    "expression_level",
+    "hgnc_id",
+    "cancer_type",
+    "histological_type",
+    "cell_line",
+    "csc_enrichment",
+    "method",
+    "confidence_scoring",
+    "global_scoring",
+    "pubmed"
   )
 )
 
@@ -382,7 +465,11 @@ bcscdb <- read_csv(files$bcscdb,
 combined <- lmap(source_tbs, \(x) mutate(x[[1]], source = names(x))) |>
   bind_rows() |>
   mutate(
-    cell_type = str_replace_all(str_trim(str_remove(cell_type, "\\(.*\\)")), "  ", " "),
+    cell_type = str_replace_all(
+      str_trim(str_remove(cell_type, "\\(.*\\)")),
+      "  ",
+      " "
+    ),
     cell_type = str_replace_all(str_to_lower(cell_type), " ", "_"),
     cell_type = str_replace(cell_type, "cells$", "cell"),
     cell_type = case_match(
@@ -410,55 +497,26 @@ min_markers <- 5
 cell_tb <- local({
   tb <- combined |>
     mutate(
-      cell_type = case_when(from_tme ~ paste0(cell_type, "-tme"), .default = cell_type),
+      cell_type = case_when(
+        from_tme ~ paste0(cell_type, "-tme"),
+        .default = cell_type
+      ),
       cell_type = paste0(tissue, "-", cell_type)
     ) |>
     select(cell_type, ensembl) |>
     group_by(cell_type) |>
     nest() |>
     filter(map_dbl(data, nrow) >= min_markers) |>
-    mutate(data = lapply(data, \(x) unique(x$ensembl)), marker_count = map_dbl(data, \(x) length(x)))
+    mutate(
+      data = lapply(data, \(x) unique(x$ensembl)),
+      marker_count = map_dbl(data, \(x) length(x))
+    )
 })
-
-## combined |> filter(!from_tme & tissue != "common") |>
-
-tissue2ttype <- c(
-  "blood" = "DLBC",
-  "common" = NULL, "adipose_tissue" = NULL, "ascites" = NULL,
-  "belly" = "STAD",
-  "bile_duct" = NULL, "biliary_tract" = NULL, "bladder" = NULL,
-  "blood_vessel" = "DLBC", "bone" = c("AML", "LCML"),
-  "bone_marrow" = c("AML", "LCML"),
-  "brain" = c("LGG", "GBB"),
-  "breast" = "BRCA", "colon" = "COAD-READ",
-  "embryo" = NULL, "endocrine_organ" = NULL,
-  "endometrium" = "UCEC", "esophagus" = NULL, "eye" = "UVM",
-  "gall_bladder" = NULL,
-  "gastrointestinal_tract" = NULL,
-  "gut" = "COAD-READ", "intestine" = "COAD-READ",
-  "kidney" = c("KIRC", "KICH", "KIRP"),
-  "liver" = "LIHC", "lung" = c("LUAD", "LUSC"),
-  "lymph" = NULL, "lymph_node" = NULL,
-  "lymphoid_tissue" = NULL,
-  "muscle" = "SARC",
-  "nasopharynx" = NULL, "neck" = "HNSC", "nose" = NULL, "oral_cavity" = NULL,
-  "ovary" = "OV",
-  "pancreas" = "PAAD", "pharynx" = NULL, "prostate" = "PRAD",
-  "salivary_gland" = NULL, "skin" = "SKCM", "soft_tissue" = "MESO", "spleen" = NULL,
-  "stomach" = "STAD", "suprarenal_gland" = NULL, "testis" = NULL, "thyroid" = "THCA",
-  "tongue" = NULL, "tonsil" = NULL, "undefined" = NULL,
-  "uterine_cervix" = c("UVM", "UCEC"), "uterus" = c("UVM", "UCEC"),
-  "heart" = NULL, "adrenal_glands" = "ACC",
-  "thyroid_gland" = NULL,
-  "heart_muscle" = "SARC",
-  "skeletal_muscle" = "SARC",
-)
 
 cell_list <- setNames(cell_tb$data, cell_tb$cell_type)
 
 
 ## * Quantify and resolve overlaps
-
 
 new_list <- cell_list
 
@@ -475,11 +533,20 @@ for (j in seq_along(new_list)) {
         if (length(cj) > length(ci)) {
           new_list[[j]] <- setdiff(cj, ci)
           overlap_tracker$larger <- c(overlap_tracker$larger, names(new_list)[j])
-          overlap_tracker$smaller <- c(overlap_tracker$smaller, names(new_list)[i])
+          overlap_tracker$smaller <- c(
+            overlap_tracker$smaller,
+            names(new_list)[i]
+          )
         } else {
           new_list[[i]] <- setdiff(ci, cj)
-          overlap_tracker$larger <- c(overlap_tracker$larger, names(new_list)[i])
-          overlap_tracker$smaller <- c(overlap_tracker$smaller, names(new_list)[j])
+          overlap_tracker$larger <- c(
+            overlap_tracker$larger,
+            names(new_list)[i]
+          )
+          overlap_tracker$smaller <- c(
+            overlap_tracker$smaller,
+            names(new_list)[j]
+          )
         }
       }
     }
@@ -490,10 +557,13 @@ for (j in seq_along(new_list)) {
 new_list <- new_list[map_dbl(new_list, length) >= min_markers]
 overlap_tb <- as_tibble(overlap_tracker)
 yaml::write_yaml(new_list, final_file)
-write_tsv(tibble(
-  set_name = names(new_list),
-  marker_count = map_dbl(new_list, length)
-), final_file_metrics)
+write_tsv(
+  tibble(
+    set_name = names(new_list),
+    marker_count = map_dbl(new_list, length)
+  ),
+  final_file_metrics
+)
 
 combined |>
   filter(ensembl %in% unlist(new_list)) |>
