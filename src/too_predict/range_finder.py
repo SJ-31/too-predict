@@ -2,7 +2,7 @@
 import itertools
 from collections.abc import Sequence
 from functools import reduce
-from typing import Literal
+from typing import Literal, override
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -18,6 +18,8 @@ from matplotlib.patches import Rectangle
 import too_predict.plotting as tp
 import too_predict.utils as ut
 from too_predict.filter import Filter
+from too_predict.model import PredBase
+from too_predict.transformer import Transformer
 
 
 class RangeFinder:
@@ -193,7 +195,7 @@ class RangeFinder:
         else:
             return (label_count / total) >= self.min_lwp
 
-    # * Plotting
+    # ** Plotting
 
     def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
         fig, ax = plt.subplots()
@@ -221,7 +223,7 @@ class RangeFinder:
             )
         return fig
 
-    # * Range getter backends
+    # ** Range getter backends
 
     def _get_ranges_rx(
         self,
@@ -367,3 +369,40 @@ class RangeFinder:
                 for lab in it.data.sort_values().index[:report_n]:
                     self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
         return ranges, range2contents
+
+
+# * Wrapper for predictor
+
+
+class RangeFinderPred(PredBase):
+    def __init__(
+        self,
+        model: PredBase,
+        transformer: Transformer,
+        **kwargs,
+    ) -> None:
+        super().__init__(model=model, **kwargs)
+        self.transformer: Transformer = transformer
+        self.genewise_params: np.ndarray
+        self.kwargs: dict = kwargs
+        self.rf: RangeFinder = RangeFinder(**kwargs)
+
+    @override
+    def fit(self, X: ad.AnnData, y="tumor_type") -> None:
+        learned: ad.AnnData = self.rf.fit_transform(
+            X
+        )  # Learn ranges and apply to training data
+        transformed = self.transformer.fit_transform(learned)
+        self.model.fit(transformed, y)
+
+    @override
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        x = self.rf.transform(X)
+        x = self.transformer.fit_transform(x)
+        return self.model.predict(x)
+
+    @override
+    def predict_proba(self, X: ad.AnnData) -> np.ndarray:
+        x = self.rf.transform(X)
+        x = self.transformer.fit_transform(x)
+        return self.model.predict_proba(x)
