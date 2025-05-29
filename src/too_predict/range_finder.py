@@ -25,7 +25,7 @@ from too_predict.transformer import Transformer
 class RangeData:
     rge: list[tuple]  # start, end of range
     gini: list[float]  # gini impurity of range
-    contents: pd.Series  # Counts of labels within the range
+    contents: pd.DataFrame  # Counts of labels within the range
     labels: set  # Set of labels that the range is deemed informative to
 
 
@@ -64,7 +64,8 @@ class RangeFinder:
         self.imap: dict[str, RangeData]  # Dict of id-> range data:
         self.cmap: dict[str, str]
 
-        self.label2ids: pd.DataFrame
+        self.label_metrics: pd.DataFrame
+        self.id_metrics: pd.DataFrame
         self.label_tracker: dict
         self.failed_ids: set[str]
         self.label_totals: pd.Series
@@ -121,18 +122,37 @@ class RangeFinder:
             )
         print("Counts of informative features for each label")
         print(self.label_tracker)
-        self.label2ids = (
+        self._get_metrics()
+
+    def id_label_counts(self, id: str) -> pd.DataFrame:
+        self._has_data(id)
+        return self.imap[id].contents
+
+    def _get_metrics(self) -> None:
+        labels = []
+        tmp = {self.id_col: [], "avg_gini": [], "ginis": [], "n": [], "ranges": []}
+        data: RangeData
+        for id, data in self.imap.items():
+            tmp[self.id_col].append(id)
+            tmp["ginis"].append(data.gini)
+            tmp["avg_gini"].append(np.mean(data.gini))
+            tmp["n"].append(len(data.rge))
+            tmp["ranges"].append(data.rge)
+            labels.append(data.labels)
+        self.label_metrics = (
             pd.DataFrame(
                 {
-                    self.id_col: self.imap.keys(),
-                    self.label_col: [d.labels for d in self.imap.values()],
+                    self.id_col: tmp[self.id_col],
+                    self.label_col: labels,
                 }
             )
             .assign(count=1)
             .explode(self.label_col)
             .groupby(self.label_col)
             .agg({self.id_col: lambda x: list(x), "count": sum})
+            .sort_values("count", ascending=False)
         )
+        self.id_metrics = pd.DataFrame(tmp).sort_values("avg_gini")
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
         ids_to_use: set = set(self.imap.keys()) - self.failed_ids
@@ -187,15 +207,19 @@ class RangeFinder:
         else:
             return (label_count / total) >= self.min_lwp
 
-    # ** Plotting
-
-    def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
-        fig, ax = plt.subplots()
-        data: RangeData | None = self.imap.get(id)
+    def _has_data(self, id: str) -> None:
+        data = self.imap.get(id)
         if data is None:
             raise ValueError(f"Ranges haven't been found for {id=} yet!")
         elif id in self.failed_ids:
             raise ValueError(f"No informative ranges were found for {id=}!")
+
+    # ** Plotting
+
+    def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
+        fig, ax = plt.subplots()
+        self._has_data(id)
+        data: RangeData = self.imap[id]
         ranges = data.rge
         expr = self._get_id_expr(id, adata)
         expr[expr == 0] = np.nan
