@@ -1,7 +1,7 @@
 #!/usr/bin/env ipython
 import itertools
 from collections.abc import Sequence
-from functools import reduce
+from dataclasses import dataclass
 from typing import Literal, override
 
 import anndata as ad
@@ -19,6 +19,14 @@ import too_predict.utils as ut
 from too_predict.filter import Filter
 from too_predict.model import PredBase
 from too_predict.transformer import Transformer
+
+
+@dataclass
+class RangeData:
+    rge: list[tuple]  # start, end of range
+    gini: list[float]  # gini impurity of range
+    contents: pd.Series  # Counts of labels within the range
+    labels: set  # Set of labels that the range is deemed informative to
 
 
 class RangeFinder:
@@ -53,14 +61,12 @@ class RangeFinder:
         self.batch_col: str = batch_col
 
         # Lookups
-        self.cmap: dict[str, str] = {}
-        self.id2range: dict = {}
-        self.id2gini: dict = {}
-        self.id2labels: dict[str, set] = {}
-        self.id2contents: dict = {}
+        self.imap: dict[str, RangeData]  # Dict of id-> range data:
+        self.cmap: dict[str, str]
+
         self.label2ids: pd.DataFrame
-        self.label_tracker: dict = {}
-        self.failed_ids: set[str] = set()
+        self.label_tracker: dict
+        self.failed_ids: set[str]
         self.label_totals: pd.Series
 
         # Range-finding parameters
@@ -92,6 +98,9 @@ class RangeFinder:
         return all(np.array(list(self.label_tracker.values())) >= self.features_per)
 
     def fit(self, x: ad.AnnData) -> None:
+        self.imap = {}
+        self.label_tracker = {}
+        self.failed_ids = set()
         self.adata = x.copy()
         self.adata.X = ut.xarray_if_sparse(x)
         self.labels = self.adata.obs[self.label_col]
@@ -115,8 +124,8 @@ class RangeFinder:
         self.label2ids = (
             pd.DataFrame(
                 {
-                    self.id_col: self.id2labels.keys(),
-                    self.label_col: self.id2labels.values(),
+                    self.id_col: self.imap.keys(),
+                    self.label_col: [d.labels for d in self.imap.values()],
                 }
             )
             .assign(count=1)
@@ -126,7 +135,7 @@ class RangeFinder:
         )
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
-        ids_to_use: set = set(self.id2range.keys()) - self.failed_ids
+        ids_to_use: set = set(self.imap.keys()) - self.failed_ids
         not_present: set = ids_to_use - set(x.var[self.id_col])
         filter: Filter = Filter(
             features=list(ids_to_use), feature_col=self.id_col, inplace=False
@@ -137,7 +146,7 @@ class RangeFinder:
         for i, var in enumerate(x.var[self.id_col]):
             if var in not_present:
                 continue
-            ranges = self.id2range[var]
+            ranges = self.imap[var].rge
             for rge in ranges:
                 mask = (rge[0] <= old_expr[:, i]) & (old_expr[:, i] <= rge[1])
                 if self.mask_method == "binary":
@@ -157,10 +166,12 @@ class RangeFinder:
         if self.adata is None:
             raise ValueError("Not fitted yet!")
         expr = self._get_id_expr(id)
-        ranges, contents, ginis = self._get_ranges_rx(id, expr, self.labels)
-        self.id2range[id] = ranges
-        self.id2contents[id] = contents
-        self.id2gini[id] = ginis
+        ranges, contents, ginis, labels = self._get_ranges_rx(id, expr, self.labels)
+        merged_contents = pd.concat(contents, axis=1)
+        merged_contents.columns = contents.keys()
+        self.imap[id] = RangeData(
+            rge=ranges, gini=ginis, labels=labels, contents=merged_contents
+        )
 
     def _get_id_expr(self, id: str, adata: ad.AnnData | None = None) -> np.ndarray:
         if adata is None:
@@ -180,14 +191,15 @@ class RangeFinder:
 
     def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
         fig, ax = plt.subplots()
-        ranges = self.id2range.get(id)
-        if ranges is None:
+        data: RangeData | None = self.imap.get(id)
+        if data is None:
             raise ValueError(f"Ranges haven't been found for {id=} yet!")
         elif id in self.failed_ids:
             raise ValueError(f"No informative ranges were found for {id=}!")
+        ranges = data.rge
         expr = self._get_id_expr(id, adata)
         expr[expr == 0] = np.nan
-        target_labels = self.id2labels.get(id)
+        target_labels = self.imap[id].labels
         order = list(target_labels) + ["NOISE"]
         hue = [lab if lab in target_labels else "NOISE" for lab in self.labels]
         sns.stripplot(y=expr, x=hue, hue=hue, ax=ax, order=order)
@@ -243,7 +255,6 @@ class RangeFinder:
             for lab in cur_counts.index[: self.report_n]:
                 if lab not in seen:
                     seen.add(lab)
-                    self.id2labels[id].add(lab)
                     self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
 
     def _get_ranges_rx(
@@ -279,11 +290,10 @@ class RangeFinder:
         range2contents = {}
         ginis = []
         seen: set = set()
-        self.id2labels[id] = set()
         for cmp in rx.connected_components(G):
             sg = G.subgraph(list(cmp))
             self._ranges_from_sg_rx(id, sg, seen, ranges, range2contents, ginis)
-        return ranges, range2contents, ginis
+        return ranges, range2contents, ginis, seen
 
 
 # * Wrapper for predictor
