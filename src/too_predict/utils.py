@@ -63,6 +63,10 @@ def get_data(path: str, must_exist: bool = True) -> Path:
     return file.absolute()
 
 
+def xarray_if_sparse(x: ad.AnnData) -> np.ndarray:
+    return x.X if not sparse.issparse(x.X) else x.X.toarray()
+
+
 def filter_by_obs(
     adata: ad.AnnData, keys: list[str], min: int = 0, max: int = np.inf
 ) -> tuple[ad.AnnData, dict[str, set]]:
