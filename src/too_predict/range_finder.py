@@ -113,7 +113,8 @@ class RangeFinder:
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
         ids = self.adata.var[self.id_col].dropna()
-        all_expr = np.zeros((self.adata.shape[0], len(ids)))
+        # to_keep =
+        all_expr = np.zeros((x.shape[0], len(ids)))
         # for i in ids:
 
         # for i
@@ -178,10 +179,11 @@ class RangeFinder:
         ranges = self.id2range.get(id)
         if ranges is None:
             raise ValueError(f"Ranges haven't been found for {id=} yet!")
+        elif id in self.failed_ids:
+            raise ValueError(f"No informative ranges were found for {id=}!")
         expr = self._get_id_expr(id)
         target_labels = self.id2labels.get(id)
         order = list(target_labels) + ["NOISE"]
-        print(target_labels)
         hue = [lab if lab in target_labels else "NOISE" for lab in self.labels]
         sns.stripplot(y=expr, x=hue, hue=hue, ax=ax, order=order)
         xlim = ax.get_xlim()
@@ -231,6 +233,9 @@ class RangeFinder:
                 if end not in i2n:
                     i2n[end] = G.add_node(end)
                 G.add_edge(i2n[begin], i2n[end], counts)
+        if G.num_nodes() == 0:
+            self.failed_ids.add(id)
+            return [], {}
         ranges = []
         range2contents = {}
         seen: set = set()
