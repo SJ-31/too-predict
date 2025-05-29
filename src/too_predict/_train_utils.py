@@ -1,8 +1,7 @@
 #!/usr/bin/env ipython
 from pathlib import Path
-from typing import Callable
+from typing import Literal
 
-import anndata
 import anndata as ad
 import numpy as np
 import pandas as pd
@@ -14,18 +13,19 @@ from sklearn.tree import DecisionTreeClassifier
 import too_predict.evaluation as te
 import too_predict.model as tm
 import too_predict.recoder as rt
+import too_predict.transformer as trf
 from too_predict.corrector import Corrector
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestClassifier, XGBEstimator
+from too_predict.range_finder import RangeFinderPred
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     RANDOM_STATE,
     cell_markers_internal,
     get_blacklist_internal,
     ref_feature_lists_internal,
-    train_test_split_ad,
 )
 
 REF_LISTS, FEATURE_LISTS = ref_feature_lists_internal()
@@ -51,6 +51,7 @@ def get_common():
 # c : correction to counts
 # k : kwargs to transformer
 # l : feature blacklist
+# p : post_processing for transformer
 
 # model, filter, transformation values must be functions of no arguments that return
 # the object
@@ -90,13 +91,13 @@ MODELS: dict = {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": "clr",
         "i": "plus_one",
-        "f": "edgeR_70_per_type",
+        "f": "edgeR_70_per_type_",
         "s": True,
     },
     "xgboost_edger_per_type": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
         "t": None,
-        "i": "plus_one",
+        "i": None,
         "f": "edgeR_70_per_type",
         "s": True,
     },
@@ -307,7 +308,7 @@ MODELS: dict = {
         "r": "edgeR_median_lfc_feature_list_lowest_20",
         "s": True,
     },
-    "tmm_random_forest_edger": {
+    "tmm_random_foret_edger": {
         "m": lambda: tm.RandomForestPred(),
         "t": "tmm",
         "i": "plus_one",
@@ -320,6 +321,20 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,
+    },
+    "tpm_xgb3_per_type": {
+        "m": lambda: tm.PredBase(tm.XGBEstimator()),
+        "t": "tpm",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_",
+        "s": False,
+    },
+    "fpkm_xgb3_per_type": {
+        "m": lambda: tm.PredBase(tm.XGBEstimator()),
+        "t": "fpkm",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_",
+        "s": False,
     },
     "fpkm_random_forest_edger": {
         "m": lambda: tm.PredBase(RandomForestClassifier(random_state=RANDOM_STATE)),
@@ -506,6 +521,55 @@ MODELS: dict = {
         "e": lambda: rt.Recoder("bisque_marker", markers=get_common()),
         "s": True,
     },
+    # ** Less quantitative
+    # *** Ranking
+    "clr_ranks_mean_xgb_edger_per_type_ovp": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_ovp_",
+        "s": False,
+        "p": trf.into_ranks,
+    },
+    # *** Range finder
+    "clr_rf_mean_xgb_edger_per_type_ovp_t_enriched": {
+        "m": lambda: RangeFinderPred(
+            model=tm.PredBase(model=tm.XGBEstimator()),
+            features_per_label=70,
+            purity_cutoff=0.3,
+            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+        ),
+        "t": None,
+        "i": None,
+        "f": "edgeR_70_per_type_ovp_tissue_enriched",
+        "s": True,
+    },
+    "clr_rf_bin_xgb_edger_per_type_ovp_t_enriched": {
+        "m": lambda: RangeFinderPred(
+            model=tm.PredBase(model=tm.XGBEstimator()),
+            features_per_label=70,
+            mask_method="binary",
+            purity_cutoff=0.3,
+            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+        ),
+        "t": None,
+        "i": None,
+        "f": "edgeR_70_per_type_ovp_tissue_enriched",
+        "s": True,
+    },
+    "clr_rf_median_xgb_edger_per_type_ovp_t_enriched": {
+        "m": lambda: RangeFinderPred(
+            model=tm.PredBase(model=tm.XGBEstimator()),
+            features_per_label=70,
+            mask_method="median",
+            purity_cutoff=0.3,
+            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+        ),
+        "t": None,
+        "i": None,
+        "f": "edgeR_70_per_type_ovp_tissue_enriched",
+        "s": True,
+    },
 }
 
 # * Additional splits
@@ -559,11 +623,11 @@ def organoid_test_task(
     adata: ad.AnnData,
     model_spec: dict,
     outdir: Path | None = None,
-    correct_before: bool = True,
+    correction_mode: Literal["before_split", "on_train", "on_train_test"] = "on_train",
     organoid_col: str = "is_organoid",
     label_col: str = "tumor_type",
     with_randoms: bool = True,
-    **kwargs,
+    shuffle_kwargs: dict | None = None,
 ) -> dict:
     """Test model's ability to generalize to organoid samples
 
@@ -584,13 +648,13 @@ def organoid_test_task(
     filter, model, transformer, balancer, encoder, corrector = read_model_spec(
         model_spec
     )
+    if shuffle_kwargs is None:
+        shuffle_kwargs = {}
     if encoder is not None:
         adata = encoder.fit_transform(adata)
     if filter is not None:
         adata = filter.fit_transform(adata)
-    if transformer is not None:
-        adata = transformer.fit_transform(adata)
-    if correct_before and corrector is not None:
+    if correction_mode == "before_split":
         adata = corrector.fit_transform(adata)
     crosses = pd.crosstab(adata.obs[label_col], adata.obs[organoid_col])
     n: int = adata.shape[0]
@@ -599,7 +663,7 @@ def organoid_test_task(
     for ttype in filtered.index.tolist():
         mask = (adata.obs[label_col] == ttype) & adata.obs[organoid_col]
         if with_randoms:
-            splitter = ShuffleSplit(n_splits=1, **kwargs)
+            splitter = ShuffleSplit(n_splits=1, **shuffle_kwargs)
             tmp = adata[~mask, :]
             train, test = next(splitter.split(np.zeros(tmp.shape)))
             test_indices = np.array(
@@ -615,7 +679,20 @@ def organoid_test_task(
         p_test = mask.sum() / n
         split_prop = (p_train, p_test, p_train + p_test)
         print(f"{ttype} {split_prop=}")
-    result: dict = te.holdout(model, adata, split_fns=split_fns, label_col=label_col)
+    result: dict = te.holdout(
+        model,
+        adata,
+        split_fns=split_fns,
+        label_col=label_col,
+        transformer=transformer,
+        balancer=balancer,
+        corrector=corrector
+        if correction_mode in {"on_train", "on_train_test"}
+        else None,
+        apply_correction_to="train"
+        if correction_mode in {"on_train", "on_train_test"}
+        else "both",
+    )
     if outdir is not None:
         te.write_cross_val(result, outdir=outdir)
     return result
@@ -639,6 +716,7 @@ def read_model_spec(
     features = spec.get("f")
     encoding = spec.get("e")
     ckwargs = spec.get("c")
+    post_process = spec.get("p")
     blacklist = spec.get("l")
 
     if ckwargs:
@@ -672,6 +750,10 @@ def read_model_spec(
     if transformation_name == "clr" and references is not None:
         kwargs.update({"features": r_list, "feature_col": "GENEID"})
     T = Transformer(
-        transformation_name, impute_fn=Imputer(spec.get("i")), inplace=False, **kwargs
+        transformation_name,
+        impute_fn=Imputer(spec.get("i")),
+        inplace=False,
+        post_process=post_process,
+        **kwargs,
     )
     return F, M, T, B, encoding, C

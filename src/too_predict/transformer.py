@@ -14,6 +14,7 @@ from too_predict.r_utils import (
     np_from_r,
     np_to_r,
     r_cleanup,
+    xarray_if_sparse,
 )
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
 from too_predict.utils import add_gc_content
@@ -50,10 +51,7 @@ class Transformer:
             self.counts_only = False
             self.adata = data if self.inplace else data.copy()
             self.adata.layers["counts"] = data.X.copy()
-            if sparse.issparse(data.X):
-                self.counts = data.X.toarray().copy()
-            else:
-                self.counts = data.X.copy()  # A sample x feature ndarray
+            self.counts = xarray_if_sparse(data)  # A sample x feature ndarray
         else:
             self.adata = None
             self.counts_only = True
@@ -66,6 +64,7 @@ class Transformer:
         inplace=False,
         make_sparse=True,
         supported_methods=IMPLEMENTED_TRANSFORMATION,
+        post_process: list[Callable] | None | Callable = None,
         **kwargs,
     ) -> None:
         self.counts: np.ndarray | pd.DataFrame
@@ -73,11 +72,16 @@ class Transformer:
         self.counts_only: bool
         self.inplace: bool = inplace
         self.method: str | None = method
+        self.post_process: list[Callable] | None | Callable = post_process
+        # List of functions to apply
+        # sequentially after transforming adata. These functions must
+        # take an AnnData or ndarray object as single argument and return the equivalent
+        # without changing its shape
         self.make_sparse: bool = make_sparse
         if method is not None and method.lower() not in supported_methods:
             raise ValueError(f"Method {method} not implemented!")
         self.kwargs: dict = kwargs
-        self.impute: Callable[[np.ndarray], np.ndarray] = impute_fn
+        self.impute: Callable[[np.ndarray], np.ndarray] | None = impute_fn
 
     def alr(
         self,
@@ -409,6 +413,7 @@ class Transformer:
             clr[clr == -np.inf] = 0
         return clr
 
+    # * Transform
     def transform(self, _=None) -> ad.AnnData | None | np.ndarray:
         if self.impute and self.method != "robust_clr":
             self.counts = self.impute(self.counts)
@@ -441,6 +446,7 @@ class Transformer:
                 case "none" | _:
                     normalized = self.counts
         if not self.counts_only:
+            self.adata = self._maybe_post_process(self.adata)
             if self.method not in IMPLEMENTED_SIMULATION:
                 self.adata.X = (
                     sparse.csc_matrix(normalized) if self.make_sparse else normalized
@@ -448,10 +454,31 @@ class Transformer:
             if not self.inplace:
                 return self.adata
         else:
-            return normalized
+            return self._maybe_post_process(normalized)
+
+    def _maybe_post_process(
+        self, x: np.ndarray | ad.AnnData
+    ) -> np.ndarray | ad.AnnData:
+        if self.post_process is None:
+            return x
+        elif not isinstance(self.post_process, list):
+            return self.post_process(x)
+        for proc in self.post_process:
+            x = proc(x)
+        return x
 
     def fit_transform(
         self, data: ad.AnnData | np.ndarray | pd.DataFrame, _=None
     ) -> ad.AnnData | None | np.ndarray:
         self.fit(data)
         return self.transform()
+
+
+# * Misc transformations
+#
+def into_ranks(x: ad.AnnData) -> ad.AnnData:
+    new_x = np.zeros_like(x)
+    expr = xarray_if_sparse(x)
+    for i in range(x.shape[0]):
+        new_x[i, :] = stats.rankdata(expr[i, :], method="average")
+    return ad.AnnData(X=new_x, obs=x.obs, var=x.var, uns=x.uns.copy())

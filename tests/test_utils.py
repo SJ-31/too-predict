@@ -27,6 +27,7 @@ import shap
 import skbio.stats.composition as comp
 import sklearn.feature_selection as fs
 import sklearn.metrics as sm
+import sklearn.model_selection as ms
 import sklearn.neighbors as sn
 import sklearn.preprocessing as sp
 import too_predict._rust_helpers as rh
@@ -36,17 +37,19 @@ import too_predict.go_utils as gu
 import too_predict.model as tm
 import too_predict.plotting as tp
 import too_predict.r_utils as ru
+import too_predict.range_finder as tr
 import too_predict.recoder as rt
 import too_predict.utils as ut
 from joblib import Parallel, delayed, parallel
+from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numba import jit
 from pyhere import here
 from rpy2.robjects.packages import importr
 from scipy import sparse
 from scipy.stats import mode
-from sklearn.linear_model import LogisticRegressionCV
-from too_predict._train_utils import MODELS, read_model_spec
+from sklearn.linear_model import ElasticNetCV, LogisticRegressionCV
+from too_predict._train_utils import MODELS, organoid_test_task, read_model_spec
 from too_predict.corrector import Corrector
 from too_predict.transformer import Transformer
 
@@ -64,6 +67,7 @@ adata = ut.training_data_internal_test()
 
 spc = MODELS["clr_xgb3_edger_combat_ref"]
 
+adata.obs["is_organoid"] = adata.obs["Sample_Type"] != "primary"
 F, M, T, B, E, C = read_model_spec(spc)
 adata.obs.loc[:, "not_primary"] = adata.obs["Sample_Type"] != "primary"
 
@@ -72,3 +76,15 @@ adata = adata[
 ]
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
+
+labels = adata.obs["tumor_type"]
+
+batch = adata.obs["Sample_Type"]
+test = filtered.X[:, 0]
+
+# #  --- CODE BLOCK ---
+
+counts = adata.X.toarray()
+
+
+lookup = pd.Series(range(len(test)), index=np.sort(test))

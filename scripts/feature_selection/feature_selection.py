@@ -34,6 +34,7 @@ from too_predict.evaluation import sklearn_cv_coefs, write_cross_val
 from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
+from too_predict.range_finder import RangeFinder
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     ref_feature_lists_internal,
@@ -243,6 +244,19 @@ def remove_redundant(adata):
             write_cross_val(results, cur_outdir, prefix=f"height_{height}")
 
 
+# ** Testing range finder
+def range_finder(adata):
+    trans = Transformer(method="clr", impute_fn=Imputer("plus_one"), inplace=False)
+    transformed = trans.fit_transform(adata)
+    rfinder = RangeFinder()
+    rfinder.fit(transformed)
+    outdir = OUTDIR.joinpath("range_finder")
+    outdir.mkdir(exist_ok=True)
+    ut.write_pickle(rfinder, outdir.joinpath("range_finder.pkl"))
+    rfinder.label_metrics.to_csv(outdir.joinpath("rf_label_metrics.csv"), index=False)
+    rfinder.id_metrics.to_csv(outdir.joinpath("rf_id_metrics.csv"), index=False)
+
+
 # ** With optimization
 
 # *** Fns
@@ -425,4 +439,5 @@ if __name__ == "__main__":
         # )
         # importance score with gain are the average gain across all trees
         # optimization_scanpy(adata)
-        ovp_filter(adata)
+        # ovp_filter(adata)
+        range_finder(adata)
