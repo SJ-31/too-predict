@@ -6,14 +6,13 @@ from typing import Literal, override
 
 import anndata as ad
 import matplotlib.pyplot as plt
-import networkx as nx
 import numpy as np
 import pandas as pd
 import rustworkx as rx
 import seaborn as sns
-from intervaltree import Interval, IntervalTree
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
+from sortedcontainers import SortedSet
 
 import too_predict.plotting as tp
 import too_predict.utils as ut
@@ -56,8 +55,10 @@ class RangeFinder:
         # Lookups
         self.cmap: dict[str, str] = {}
         self.id2range: dict = {}
+        self.id2gini: dict = {}
         self.id2labels: dict[str, set] = {}
         self.id2contents: dict = {}
+        self.label2ids: pd.DataFrame
         self.label_tracker: dict = {}
         self.failed_ids: set[str] = set()
         self.label_totals: pd.Series
@@ -79,7 +80,7 @@ class RangeFinder:
         self.mask_method: str = mask_method
 
     @staticmethod
-    def gini_impurity(counts: pd.Series, size: int, report_n: int = 3) -> float:
+    def gini_impurity(counts: pd.Series, size: int) -> float:
         "Calculate the gini index for an expression range"
         counts = counts[counts != 0]
         if len(counts) == 0:
@@ -111,6 +112,18 @@ class RangeFinder:
             )
         print("Counts of informative features for each label")
         print(self.label_tracker)
+        self.label2ids = (
+            pd.DataFrame(
+                {
+                    self.id_col: self.id2labels.keys(),
+                    self.label_col: self.id2labels.values(),
+                }
+            )
+            .assign(count=1)
+            .explode(self.label_col)
+            .groupby(self.label_col)
+            .agg({self.id_col: lambda x: list(x), "count": sum})
+        )
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
         ids_to_use: set = set(self.id2range.keys()) - self.failed_ids
@@ -193,20 +206,56 @@ class RangeFinder:
 
     # ** Range getter backends
 
+    def _ranges_from_sg_rx(
+        self,
+        id: str,
+        sg: rx.PyGraph,
+        seen: set,
+        ranges: list,
+        range2contents: dict,
+        ginis: list,
+    ):
+        """
+        Process a set of connected ranges in the subgraph, extracting the largest range
+        The purity of the range set is taken to be the purity of the largest range,
+        as are the label counts
+        """
+        cur_counts: pd.Series = None
+        cur_gini: float = -np.inf
+        s_nodes = SortedSet()
+        for e_begin, e_end, data in sg.edge_index_map().values():
+            s_nodes.update((sg[e_begin], sg[e_end]))
+            counts = data["counts"]
+            gini = data["gini"]
+            if cur_counts is None or (counts.values >= cur_counts.values).all():
+                cur_counts = counts
+                cur_gini = gini
+        rge = (s_nodes[0], s_nodes[-1])
+        cur_counts = cur_counts.sort_values(ascending=False)
+        top_count, top_label = cur_counts[0], cur_counts.index[0]
+
+        if self._check_label_p(top_label, top_count):
+            # Check that the current range meets the minimum parameters
+            # for the proportion of labels within, if provided
+            ranges.append(rge)
+            range2contents[rge] = cur_counts
+            ginis.append(cur_gini)
+            for lab in cur_counts.index[: self.report_n]:
+                if lab not in seen:
+                    seen.add(lab)
+                    self.id2labels[id].add(lab)
+                    self.label_tracker[lab] = self.label_tracker.get(lab, 0) + 1
+
     def _get_ranges_rx(
         self,
         id: str,
         vals: np.ndarray,
         labels: pd.Series,
-        use_unique: bool = True,
-        n_bins: int = 30,
-        report_n: int = 3,
-        cutoff=0.5,
     ) -> tuple:
-        if use_unique:
+        if self.use_unique:
             nodes = np.unique(vals)
         else:
-            nodes = np.linspace(start=min(vals), stop=max(vals), num=n_bins)
+            nodes = np.linspace(start=min(vals), stop=max(vals), num=self.n_bins)
         expr = pd.Series(vals, index=labels)
         nodes = sorted(nodes)
         i2n: dict = {}
