@@ -9,15 +9,9 @@ import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 
-from too_predict.r_utils import (
-    counts_into_r,
-    np_from_r,
-    np_to_r,
-    r_cleanup,
-    xarray_if_sparse,
-)
+from too_predict.r_utils import counts_into_r, np_from_r, np_to_r, r_cleanup
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
-from too_predict.utils import add_gc_content
+from too_predict.utils import add_gc_content, xarray_if_sparse
 
 IMPLEMENTED_TRANSFORMATION = {
     "clr",

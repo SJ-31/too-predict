@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-from collections.abc import Iterable
 from pathlib import Path
 
 import anndata as ad
@@ -439,5 +438,5 @@ if __name__ == "__main__":
         # )
         # importance score with gain are the average gain across all trees
         # optimization_scanpy(adata)
-        # ovp_filter(adata)
+        ovp_filter(adata)
         range_finder(adata)

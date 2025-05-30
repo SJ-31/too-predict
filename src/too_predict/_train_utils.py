@@ -628,6 +628,7 @@ def organoid_test_task(
     label_col: str = "tumor_type",
     with_randoms: bool = True,
     shuffle_kwargs: dict | None = None,
+    prefix: str = "",
 ) -> dict:
     """Test model's ability to generalize to organoid samples
 
@@ -694,7 +695,7 @@ def organoid_test_task(
         else "both",
     )
     if outdir is not None:
-        te.write_cross_val(result, outdir=outdir)
+        te.write_cross_val(result, outdir=outdir, prefix=prefix)
     return result
 
 
