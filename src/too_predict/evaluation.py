@@ -358,6 +358,7 @@ def holdout(
     balancer: Balancer | None = None,
     transformer: Transformer | None = None,
     corrector: Corrector | None = None,
+    apply_correction_to: Literal["train", "test", "both"] = "train",
     label_col="tumor_type",
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
@@ -378,10 +379,10 @@ def holdout(
         confounded with the target labels
     """
 
-    def helper(split_fn, adata):
-        adata = adata.copy()
-        n = len(adata)
-        x_train, x_test = split_fn(adata)
+    def helper(split_fn, cur_adata):
+        cur_adata = cur_adata.copy()
+        n = len(cur_adata)
+        x_train, x_test = split_fn(cur_adata)
         split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
         split_prop = pd.DataFrame(
             {
@@ -392,8 +393,10 @@ def holdout(
             },
             index=[0],
         )
-        if corrector is not None:
+        if corrector is not None and apply_correction_to in {"both", "train"}:
             x_train = corrector.fit_transform(x_train)
+        if corrector is not None and apply_correction_to in {"both", "test"}:
+            x_test = corrector.fit_transform(x_test)
         if balancer is not None:
             x_train = balancer.fit_transform(x_train, y=label_col)
         if transformer is not None:
