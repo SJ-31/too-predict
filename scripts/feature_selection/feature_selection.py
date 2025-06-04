@@ -29,7 +29,7 @@ from sklearn.model_selection import (
 )
 from sklearn.preprocessing import StandardScaler
 from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
-from too_predict.evaluation import sklearn_cv_coefs, write_cross_val
+from too_predict.evaluation import write_cross_val
 from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
@@ -247,13 +247,26 @@ def remove_redundant(adata):
 def range_finder(adata):
     trans = Transformer(method="clr", impute_fn=Imputer("plus_one"), inplace=False)
     transformed = trans.fit_transform(adata)
-    rfinder = RangeFinder()
-    rfinder.fit(transformed)
     outdir = OUTDIR.joinpath("range_finder")
+    params = [
+        ("tumor_type", None),
+        (("tumor_type", "Sample_Type"), "combine"),
+        (("tumor_type", "Sample_Type"), "mean"),
+    ]
     outdir.mkdir(exist_ok=True)
-    ut.write_pickle(rfinder, outdir.joinpath("range_finder.pkl"))
-    rfinder.label_metrics.to_csv(outdir.joinpath("rf_label_metrics.csv"), index=False)
-    rfinder.id_metrics.to_csv(outdir.joinpath("rf_id_metrics.csv"), index=False)
+    for label_col, mmethod in params:
+        if mmethod is None:
+            cur_outdir = outdir.joinpath("single")
+        else:
+            cur_outdir = outdir.joinpath(f"multitask_{mmethod}")
+        cur_outdir.mkdir(exist_ok=True)
+        rfinder = RangeFinder(label_col=label_col, multitask_method=mmethod)
+        rfinder.fit(transformed)
+        ut.write_pickle(rfinder, cur_outdir.joinpath("range_finder.pkl"))
+        rfinder.label_metrics.to_csv(
+            cur_outdir.joinpath("rf_label_metrics.csv"), index=False
+        )
+        rfinder.id_metrics.to_csv(cur_outdir.joinpath("rf_id_metrics.csv"), index=False)
 
 
 # ** With optimization
