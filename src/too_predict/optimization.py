@@ -2,11 +2,10 @@
 
 # Study: optimization based on an objective function
 # Trial: a single execution of the objective function
-
 import pickle
 from functools import partial
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import anndata as ad
 import numpy as np
@@ -20,10 +19,13 @@ import yaml
 from optuna.pruners import BasePruner, HyperbandPruner
 from optuna.samplers import BaseSampler, TPESampler
 from optuna.trial import TrialState
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.pipeline import Pipeline
 
-from too_predict.evaluation import cross_validate
+import too_predict._train_utils as tt
+import too_predict.utils as ut
+from too_predict._train_utils import ADDITIONAL_SPLITS
+from too_predict.evaluation import cross_validate, holdout
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import AlrBase, PredBase, SimPred, XGBEstimator
@@ -33,8 +35,6 @@ from too_predict.utils import (
     RANDOM_STATE,
     get_data,
     ref_feature_lists_internal,
-    training_data_internal,
-    training_data_internal_test,
     write_pickle,
 )
 
@@ -49,7 +49,34 @@ def get_options(file: str | Path | None = None) -> dict:
     return loaded
 
 
-class Constructor:
+class FeaturesChooser(Setup):
+    """
+    Helper class to choose best feature set only, with fixed model and transformer
+    """
+
+    @override
+    def __call__(
+        self, opts: dict | None = None
+    ) -> tuple[Callable[[ad.AnnData], ad.AnnData], PredBase, Pipeline]:
+        if self.spec is None:
+            raise ValueError("spec must be provided")
+        _, model, transformer, _, _, _ = tt.read_model_spec(self.spec)
+        feature_set = self.trial.suggest_categorical(
+            "feature_set", opts.get("feature_sets")
+        )
+        filter = Filter(features=feature_set)
+
+        def fn(X: ad.AnnData) -> ad.AnnData:
+            return transformer.fit_transform(X)
+
+        pipeline = Pipeline(
+            ("filter", filter), ("transformer", transformer), ("classifier", model)
+        )
+
+        return fn, model, pipeline
+
+
+class TrialSetup:
     """Helper class to transform data and get predictor from params
 
     Returns
@@ -60,8 +87,14 @@ class Constructor:
     Notes
     -----
     Used either to build a model for the objective function,
-        or to get a model from optuna study params
+        or to get a model from optuna study params (self.params)
         (ideally use optuna artifactstore, but use this as backup)
+
+    The dictionary passed to this object in __call__ MUST have the following keys:
+        imputation
+        transformation
+        feature_sets
+        classifier
     """
 
     def __init__(
@@ -71,8 +104,8 @@ class Constructor:
         self.trial: optuna.Trial | None = trial
         self.params: dict | None = trial_params
 
-    def _get_gradient_booster(self, name: str):
-        if self.for_trial:
+    def _get_gradient_booster(self, name: str, defaults):
+        if self.for_trial and not defaults:
             learning_rate = self.trial.suggest_categorical(
                 "learning_rate", [0.01, 0.1, 0.2, 0.3]
             )  # Synonymous with shrinkage rate, eta
@@ -89,11 +122,11 @@ class Constructor:
                     "minimum_loss", 0, 5, step=1
                 )  # gamma
         else:
-            minimum_loss = self.params.get("minimum_loss")
-            learning_rate = self.params.get("learning_rate")
-            max_depth = self.params.get("max_depth")
-            l1_reg = self.params.get("l1_regularization")
-            l2_reg = self.params.get("l2_regularization")
+            minimum_loss = self.params.get("minimum_loss", 0)
+            max_depth = self.params.get("max_depth", 3)
+            l1_reg = self.params.get("l1_regularization", 1)
+            l2_reg = self.params.get("l2_regularization", 0)
+        learning_rate = self.params.get("learning_rate", 0.5)
         if name == "XGBEstimator":
             return XGBEstimator(
                 gamma=minimum_loss,
@@ -113,7 +146,7 @@ class Constructor:
                 max_depth=max_depth,
             )
 
-    def _get_svm(self):
+    def _get_svm(self, defaults: bool):
         if self.for_trial:
             c = self.trial.suggest_float("C", low=0.2, high=1, step=0.2)
             loss_fn = self.trial.suggest_categorical("loss", ["hinge", "squared_hinge"])
@@ -122,12 +155,12 @@ class Constructor:
             loss_fn = self.params.get("loss")
         return sv.LinearSVC(C=c, loss=loss_fn, random_state=RANDOM_STATE)
 
-    def _get_classifier(self, name):
+    def _get_classifier(self, name, defaults: bool):
         match name:
             case "XGBEstimator" | "HistGradientBoostingClassifier":
-                return self._get_gradient_booster(name)
+                return self._get_gradient_booster(name, defaults)
             case "SVM":
-                return self._get_svm()
+                return self._get_svm(defaults)
             case _:
                 raise ValueError(f"Classifier {name} is not implemented!")
 
@@ -167,49 +200,65 @@ class Constructor:
                     if self.for_trial
                     else self.params.get("n_dirichlet_instances")
                 )
+            case _:
+                raise ValueError("Not recognized!")
         return transform_kwargs
+
+    def _check_opt(
+        self,
+        value: Literal["imputation", "transformation", "classifier", "feature_set"],
+        opts: dict,
+    ) -> Filter | Transformer | PredBase | list | None | str:
+        vals = opts.get(value)
+        if vals is None:
+            raise ValueError(f"Key {value} not provided!")
+        if isinstance(vals, tuple):
+            return vals[0]
+        return self.trial.suggest_categorical(value, vals)
 
     def __call__(
         self, opts: dict | None = None
     ) -> tuple[Callable[[ad.AnnData], ad.AnnData], PredBase, Pipeline]:
         transform: bool = True
-        # Get parameters
+        # Set up pipeline parameters
         if self.for_trial:
-            imputation = self.trial.suggest_categorical(
-                "imputation", opts["imputation"]
-            )
-            transform_name = self.trial.suggest_categorical(
-                "transformation", opts["transformation"]
-            )
-            features = FEATURES[
-                self.trial.suggest_categorical("feature_set", opts["feature_set"])
-            ]
-            classifier_name = self.trial.suggest_categorical(
-                "classifier", opts["classifier"]
-            )
+            if opts is None:
+                raise ValueError("options dictionary must be provided if for trial!")
+            # Suggest for trial
+            imputation = self._check_opt("imputation")
+            transform_name = self._check_opt("transformation")
+            features = FEATURES[self._check_opt("feature_set")]
+            classifier_name = self._check_opt("classifier")
         else:
+            # Read parameters from dictionary
             imputation = self.params.get("imputation")
             transform_name = self.params.get("transformation")
             features = FEATURES[self.params.get("feature_set")]
             classifier_name = self.params.get("classifier")
 
-        # Make classifier from params
-        model = self._get_classifier(classifier_name)
-        transform_kwargs: dict = self._get_transformation(transform_name)
-        if transform_name == "alr":
-            classifier = AlrBase(
-                model,
-                references=transform_kwargs["references"],
-                imputation=imputation,
-                n_refs=transform_kwargs["n_refs"],
-            )
-            features += transform_kwargs["references"]
-            del transform_kwargs["references"]
-            transform = False
-        elif transform_name in IMPLEMENTED_SIMULATION:
-            classifier = SimPred(model=model, method=transform_name, **transform_kwargs)
+        transform_kwargs = {}
+        if isinstance(classifier_name, str):
+            # Make classifier from params
+            model = self._get_classifier(classifier_name)
+            transform_kwargs: dict = self._get_transformation(transform_name)
+            if transform_name == "alr":
+                classifier = AlrBase(
+                    model,
+                    references=transform_kwargs["references"],
+                    imputation=imputation,
+                    n_refs=transform_kwargs["n_refs"],
+                )
+                features += transform_kwargs["references"]
+                del transform_kwargs["references"]
+                transform = False
+            elif transform_name in IMPLEMENTED_SIMULATION:
+                classifier = SimPred(
+                    model=model, method=transform_name, **transform_kwargs
+                )
+            else:
+                classifier = PredBase(model=model)
         else:
-            classifier = PredBase(model=model)
+            classifier = classifier_name
 
         # Return transformation function and classifier
         filter = Filter(feature_col="GENEID", features=features)
@@ -248,6 +297,7 @@ def ignore_duplicated(
 class Optimizer:
     def __init__(
         self,
+        setup_fn: Setup,
         score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
         label_col: str = "tumor_type",
         save_model: bool = True,
@@ -257,28 +307,36 @@ class Optimizer:
         journal_dir: Path | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
-        self.label_col = label_col
-        self.save_model = save_model
+        self.label_col: str = label_col
+        self.save_model: bool = save_model
         self.group_col: None | str = group_col
-        self.save_cv = save_cv
-        self.journal_dir = journal_dir
-        self.artifact_dir = artifact_dir
-        self.ignore_duplicated = ignore_duplicated
-        self.score_fn = score_fn
+        self.save_cv: bool = save_cv
+        self.journal_dir: Path = journal_dir
+        self.artifact_dir: Path = artifact_dir
+        self.ignore_duplicated: bool = ignore_duplicated
+        self.score_fn: Callable = score_fn
+        self.setup_fn: Callable = setup_fn
+        self.objective: Callable[[optuna.Trial], float]
 
-    def objective(
+    def make_objective(self, **kwargs):
+        self.objective = partial(self._objective, **kwargs)
+
+    def _objective(
         self,
         trial: optuna.Trial,
         adata: ad.AnnData,
         cv_splits=5,
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
+        **kwargs,
     ):
-        if ignore_duplicated:
+        if self.ignore_duplicated:
             is_duplicated, val = ignore_duplicated(trial)
             if is_duplicated:
                 return val
-        cons = Constructor(trial=trial, trial_params=None)
+        cons = self.setup_fn(trial=trial, **kwargs)
+        # Suggest values to the trial object, it'll track which values have been
+        # seen
         transform, classifier, pipeline = cons(
             opts=opts if opts is not None else get_options()
         )
@@ -308,8 +366,15 @@ class Optimizer:
                 study_or_trial=trial,
             )
             trial.set_user_attr("cv_id", cv_id)
-        kappa = cv_results["misc"]["kappa"]
-        return kappa.mean()
+        split_res: dict = holdout(classifier, adata, split_fns=ADDITIONAL_SPLITS)
+        acc = cv_results["misc"]["balanced_acc"].mean()
+        acc_split = split_res["misc"]["balanced_acc"].mean()
+        return np.mean([acc, acc_split])
+
+    def get_study(self, **kwargs) -> optuna.Study:
+        study = optuna.create_study(**kwargs)
+        study.optimize(self.objective)
+        return study
 
     def nested(
         self,
@@ -361,7 +426,7 @@ class Optimizer:
                 obj_kwargs["artifact_store"] = a_store
 
             study = optuna.create_study(**study_kwargs)
-            obj = partial(self.objective, **obj_kwargs)
+            obj = partial(self._objective, **obj_kwargs)
             study.optimize(obj)
 
             # Test optimal hyperparameters with inner test set
@@ -376,7 +441,7 @@ class Optimizer:
                 pipeline.fit(x_train, y=x_train.obs[self.label_col])
                 y_hat = pipeline.predict(x_test)
             else:
-                cons = Constructor(trial=None, trial_params=best_params)
+                cons = self.setup_fn()
                 transform, model, _ = cons()
                 model.fit(transform(x_train))
                 y_hat = model.predict(transform(x_test))
