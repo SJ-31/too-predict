@@ -685,13 +685,20 @@ def organoid_test_task(
             splitter = ShuffleSplit(n_splits=1, **shuffle_kwargs)
             tmp = adata[~mask, :]
             train, test = next(splitter.split(np.zeros(tmp.shape)))
-            print(train)
-            test_indices = np.array(
-                list(map(lambda x: x in test, range(adata.shape[0])))
+            train_mask, test_mask = np.array(
+                [
+                    list(map(lambda x: x in t, range(adata.shape[0])))
+                    for t in [train, test]
+                ]
             )
+            train_mask = np.logical_xor(train_mask, mask)  # Ensure that the random
+            # train indices don't include organoids we want to test
             split_masks[f"{ttype}_excluded"] = (
-                train.copy() | (~mask).copy(),
-                mask.copy() | test_indices,
+                np.logical_or(train_mask.copy(), (~mask).copy()),
+                np.logical_or(
+                    mask.copy(), test_mask
+                ),  # Test set contains organoids and
+                # the random splits
             )
         else:
             split_masks[f"{ttype}_excluded"] = ((~mask).copy(), mask.copy())
