@@ -41,7 +41,7 @@ class RangeFinder:
 
     def __init__(
         self,
-        label_col: str = "tumor_type",
+        label_col: str | Sequence = "tumor_type",
         batch_col: str = "is_organoid",
         id_col: str = "GENEID",
         features_per_label: int = 50,
@@ -216,7 +216,9 @@ class RangeFinder:
 
     # ** Plotting
 
-    def range_stripplot(self, id: str, adata: ad.AnnData | None = None) -> Figure:
+    def range_stripplot(
+        self, id: str, adata: ad.AnnData | None = None, hue: str | None = None
+    ) -> Figure:
         fig, ax = plt.subplots()
         self._has_data(id)
         data: RangeData = self.imap[id]
@@ -225,8 +227,14 @@ class RangeFinder:
         expr[expr == 0] = np.nan
         target_labels = self.imap[id].labels
         order = list(target_labels) + ["NOISE"]
-        hue = [lab if lab in target_labels else "NOISE" for lab in self.labels]
-        sns.stripplot(y=expr, x=hue, hue=hue, ax=ax, order=order)
+        xs = [lab if lab in target_labels else "NOISE" for lab in self.labels]
+        if adata is not None and hue is not None:
+            hue_lst = adata.obs[hue]
+        elif adata is None and hue is not None:
+            hue_lst = self.adata.obs[hue]
+        else:
+            hue_lst = xs
+        sns.stripplot(y=expr, x=xs, hue=hue_lst, ax=ax, order=order)
         xlim = ax.get_xlim()
         for rge in ranges:
             ax.add_patch(
@@ -244,7 +252,6 @@ class RangeFinder:
 
     def _ranges_from_sg_rx(
         self,
-        id: str,
         sg: rx.PyGraph,
         seen: set,
         ranges: list,
@@ -316,7 +323,7 @@ class RangeFinder:
         seen: set = set()
         for cmp in rx.connected_components(G):
             sg = G.subgraph(list(cmp))
-            self._ranges_from_sg_rx(id, sg, seen, ranges, range2contents, ginis)
+            self._ranges_from_sg_rx(sg, seen, ranges, range2contents, ginis)
         return ranges, range2contents, ginis, seen
 
 
