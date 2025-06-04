@@ -36,8 +36,17 @@ def parse_args():
     return parser.parse_args()
 
 
-def global_shap(model: PredBase, target, adata):
-    train, test = ut.train_test_split_ad(adata, random_state=ut.RANDOM_STATE)
+def global_shap(
+    model: PredBase,
+    target,
+    adata,
+    outdir: Path | None = None,
+    split_fn: Callable | None = None,
+):
+    if split_fn:
+        train, test = split_fn(adata)
+    else:
+        train, test = ut.train_test_split_ad(adata, random_state=ut.RANDOM_STATE)
     model.fit(train, y=target)
     exp = te.Exp(model, label_col=target)
     exp.fit(train)
@@ -45,7 +54,11 @@ def global_shap(model: PredBase, target, adata):
     exp.fit(test)
     stest, _ = exp.shap(lambda x: shap.TreeExplainer(x), summary_plot=False)
     inter = te.ExpInterpreter(strain, stest, label_col=target)
-    g_importance = inter.global_importance("shap_")
+    g_importance: pd.DataFrame = inter.global_importance("shap_")
+    if outdir is not None:
+        stest.write_h5ad(outdir.joinpath("test_data_shap.h5ad"))
+        strain.write_h5ad(outdir.joinpath("train_data_shap.h5ad"))
+        g_importance.to_csv(outdir.joinpath("shap_global_importance.csv"), index=False)
     ranked = g_importance.mean(axis=1).sort_values(ascending=False)
     return ranked.index
 
@@ -128,6 +141,35 @@ def train_without_noisy(
     )
 
 
+def save_shaps(args):
+    print("Running save shaps...")
+    if args.test:
+        adata = ut.training_data_internal_test()
+        adata = adata[:, :20]
+        adata.obs.loc[:, "is_organoid"] = ut.RNG.choice([0, 1], size=adata.shape[0])
+
+    else:
+        adata = ut.training_data_internal()
+        adata.obs.loc[:, "is_organoid"] = (
+            adata.obs["Sample_Type"] == "organoid"
+        ).astype(int)
+
+    outdir = here("data", "output", "explanations", "shap_importance_25-5-31")
+    label_col = args.label_class
+    spec = MODELS["clr_xgboost_edger_per_type_ovp_t_enriched"]
+    filter, model, trans, _, _, _ = read_model_spec(spec)
+
+    adata = filter.fit_transform(adata)
+    adata = trans.fit_transform(adata)
+    global_shap(
+        model,
+        target=label_col,
+        adata=adata,
+        outdir=outdir,
+        split_fn=ADDITIONAL_SPLITS["CHULA"],
+    )
+
+
 def main(args):
     if args.test:
         adata = ut.training_data_internal_test()
@@ -194,4 +236,5 @@ if __name__ == "__main__":
     args = parse_args()
     par_args = {"n_jobs": args.cores}
     with joblib.parallel_backend("loky", **par_args):
-        main(args)
+        save_shaps(args)
+        # main(args)
