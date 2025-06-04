@@ -187,6 +187,13 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_3000",
         "s": True,  # [2025-04-08 Tue] Surprisingly good
     },
+    "clr_xgb1_edger": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=1)),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_median_lfc_feature_list_3000",
+        "s": False,  # Use for fast training
+    },
     "clr_xgb3_edger_rfecv": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
         "t": "clr",
@@ -327,14 +334,14 @@ MODELS: dict = {
         "t": "tpm",
         "i": "plus_one",
         "f": "edgeR_70_per_type_",
-        "s": False,
+        "s": True,
     },
     "fpkm_xgb3_per_type": {
         "m": lambda: tm.PredBase(tm.XGBEstimator()),
         "t": "fpkm",
         "i": "plus_one",
         "f": "edgeR_70_per_type_",
-        "s": False,
+        "s": True,
     },
     "fpkm_random_forest_edger": {
         "m": lambda: tm.PredBase(RandomForestClassifier(random_state=RANDOM_STATE)),
@@ -423,7 +430,7 @@ MODELS: dict = {
             "group": "tumor_type",
         },
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,  # [2025-04-28 Mon] Now this works well, let's see if it'll work
+        "s": True,  # [2025-04-28 Mon] Now this works well, let's see if it'll work
         # if you don't correct beforehand
         # [2025-04-29 Tue] Okay looks like this only works if the batch correction is
         # able to use information from the organoid samples, which constitutes
@@ -531,6 +538,14 @@ MODELS: dict = {
         "s": False,
         "p": trf.into_ranks,
     },
+    "clr_ranks-std_mean_xgb_edger_per_type_ovp": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_70_per_type_ovp_",
+        "s": False,
+        "p": lambda x: trf.into_ranks(x, True),
+    },
     # *** Range finder
     "clr_rf_mean_xgb_edger_per_type_ovp_t_enriched": {
         "m": lambda: RangeFinderPred(
@@ -629,6 +644,7 @@ def organoid_test_task(
     with_randoms: bool = True,
     shuffle_kwargs: dict | None = None,
     prefix: str = "",
+    save_split_path: Path | None = None,
 ) -> dict:
     """Test model's ability to generalize to organoid samples
 
@@ -693,6 +709,7 @@ def organoid_test_task(
         apply_correction_to="train"
         if correction_mode in {"on_train", "on_train_test"}
         else "both",
+        save_split_path=save_split_path,
     )
     if outdir is not None:
         te.write_cross_val(result, outdir=outdir, prefix=prefix)

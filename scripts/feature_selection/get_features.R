@@ -154,7 +154,7 @@ tissue_enriched <- read_csv(here(
 seen_ovp <- c()
 with_p_value <- TRUE
 # [2025-05-19 Mon] TODO: figure out why using only the ratio method fails
-with_tissue_enriched <- TRUE
+with_tissue_enriched <- FALSE
 source(here("data", "mappings", "misc_mappings.R"))
 blacklist <- ovp_tb |>
   filter(PValue >= 0.01) |>
@@ -164,6 +164,8 @@ if (with_tissue_enriched) {
 }
 if (!with_p_value) {
   add_name <- glue("{add_name}_ratio_only")
+} else {
+  add_name <- ""
 }
 ovp_fs_file <- here(fs_lists, glue("edgeR_{n_per}_per_type_ovp_{add_name}.txt"))
 

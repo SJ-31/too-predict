@@ -445,9 +445,6 @@ class ExpInterpreter:
         return dist
 
 
-# def shap_adata(adata: ad.AnnData):
-
-
 class Exp:
     """Helper class for unifying feature explanations
 

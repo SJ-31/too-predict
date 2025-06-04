@@ -8,6 +8,7 @@ import rpy2.robjects as ro
 import skbio.stats.composition as comp
 from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
+from sklearn.preprocessing import StandardScaler
 
 from too_predict.r_utils import counts_into_r, np_from_r, np_to_r, r_cleanup
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
@@ -470,9 +471,12 @@ class Transformer:
 
 # * Misc transformations
 #
-def into_ranks(x: ad.AnnData) -> ad.AnnData:
+def into_ranks(x: ad.AnnData, standardize: bool = False) -> ad.AnnData:
     new_x = np.zeros_like(x)
     expr = xarray_if_sparse(x)
     for i in range(x.shape[0]):
         new_x[i, :] = stats.rankdata(expr[i, :], method="average")
+    if standardize:
+        scaler = StandardScaler()
+        new_x = scaler.fit_transform(new_x)
     return ad.AnnData(X=new_x, obs=x.obs, var=x.var, uns=x.uns.copy())

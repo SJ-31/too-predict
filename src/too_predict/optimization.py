@@ -13,7 +13,6 @@ import numpy as np
 import optuna
 import optuna.artifacts as oa
 import optuna.storages.journal as oj
-import sklearn.linear_model as sl
 import sklearn.metrics as sm
 import sklearn.model_selection as ms
 import sklearn.svm as sv
@@ -24,8 +23,7 @@ from optuna.trial import TrialState
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.pipeline import Pipeline
 
-from too_predict import transformer
-from too_predict.evaluation import cross_validate, prc_auc_score, write_cross_val
+from too_predict.evaluation import cross_validate
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import AlrBase, PredBase, SimPred, XGBEstimator

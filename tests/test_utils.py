@@ -49,7 +49,12 @@ from rpy2.robjects.packages import importr
 from scipy import sparse
 from scipy.stats import mode
 from sklearn.linear_model import ElasticNetCV, LogisticRegressionCV
-from too_predict._train_utils import MODELS, organoid_test_task, read_model_spec
+from too_predict._train_utils import (
+    ADDITIONAL_SPLITS,
+    MODELS,
+    organoid_test_task,
+    read_model_spec,
+)
 from too_predict.corrector import Corrector
 from too_predict.transformer import Transformer
 
@@ -77,14 +82,6 @@ adata = adata[
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
 
-labels = adata.obs["tumor_type"]
-
-batch = adata.obs["Sample_Type"]
-test = filtered.X[:, 0]
+result = te.holdout(M, filtered, split_fns={"chula": ADDITIONAL_SPLITS["CGCI"]})
 
 # #  --- CODE BLOCK ---
-
-counts = adata.X.toarray()
-
-
-lookup = pd.Series(range(len(test)), index=np.sort(test))
