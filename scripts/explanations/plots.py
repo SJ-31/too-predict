@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import anndata as ad
 import pandas as pd
 import scanpy as sc
 import too_predict.plotting as tp
@@ -117,6 +118,40 @@ def plot_de_enrichment(adata):
     )
 
 
+def plot_shap(adata):
+    shap_dir = here("data", "output", "explanations", "shap_importance_25-5-31")
+    train_shaps = ad.read_h5ad(shap_dir.joinpath("train_data_shap.h5ad"))
+    spec = MODELS["clr_xgboost_edger_per_type_ovp_t_enriched"]
+    filter, model, trans, _, _, _ = read_model_spec(spec)
+    adata = adata[~adata.obs["Sample_Type"].isna(), :]
+    adata.obs.loc[:, "is_organoid"] = adata.obs["Sample_Type"] == "organoid"
+    transformed = trans.fit_transform(filter.fit_transform(adata))
+    wanted_types = ["PAAD", "CHOL", "LIHC", "COAD_READ", "LUAD", "BRCA"]
+    all_ttypes = wanted_types + [""]
+    transformed = transformed[transformed.obs["tumor_type"].isin(all_ttypes), :]
+    n: int = 30
+    for w in wanted_types:
+        mean = (
+            train_shaps.obsm[f"shap_{w}"]
+            .abs()
+            .mean(axis=0)
+            .sort_values(ascending=False)
+        )
+        top_n = mean[:n].index
+        hmap = tp.mp_plot(
+            transformed,
+            genes=top_n,
+            sample_groupings=["tumor_type", "is_organoid"],
+            method="heatmap",
+            gene_symbols="GENEID",
+            gene_symbols_to_show="GENENAME",
+        )
+        hmap.figure.set_size_inches(12, 15)
+        hmap.figure.savefig(
+            shap_dir(f"{w}_train_most_important.png"), bbox_inches="tight"
+        )
+
+
 if __name__ == "__main__":
     args = parse_args()
     to_plot = {
@@ -131,16 +166,16 @@ if __name__ == "__main__":
         adata = ut.training_data_internal_test()
     else:
         adata = ut.training_data_internal()
-    adata = adata[~adata.obs["Sample_Type"].isna(), :]
 
-    for name, data in to_plot.items():
-        # Plot some count data
-        plot_helper(
-            name,
-            adata,
-            style=data.get("style", DEFAULT_STYLE),
-            subset=data.get("subset", DEFAULT_SUBSET),
-            y=data.get("y", "tumor_type"),
-            colors=data.get("colors"),
-        )
-    plot_de_enrichment(adata)
+    plot_shap(adata)
+    # for name, data in to_plot.items():
+    #     # Plot some count data
+    #     plot_helper(
+    #         name,
+    #         adata,
+    #         style=data.get("style", DEFAULT_STYLE),
+    #         subset=data.get("subset", DEFAULT_SUBSET),
+    #         y=data.get("y", "tumor_type"),
+    #         colors=data.get("colors"),
+    #     )
+    # plot_de_enrichment(adata)
