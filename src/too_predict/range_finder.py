@@ -37,6 +37,15 @@ class RangeFinder:
         quantitatively determined by Gini impurity
     An `informative feature` for a given label is defined as one that has a range that
         distinctly separates it from all other labels
+
+    Supports using multiple labels to separate samples (multitask)
+        e.g. by tumor type and by sample type
+
+    multitask_method : how to handle impurity in the multitask setting.
+        If "mean", the average is impurity is taken while considering each label
+        separately
+        If "combine", new labels are created from the product of the labels and the
+            impurity is calculated as normal
     """
 
     def __init__(
@@ -53,10 +62,11 @@ class RangeFinder:
         report_n: int = 3,
         max_features: int | None = None,
         mask_method: Literal["binary", "mean", "median"] = "mean",
+        multitask_method: Literal["mean", "combine", None] = "combine",
     ) -> None:
-        self.labels: Sequence
+        self.labels: pd.Series | pd.DataFrame | pd.MultiIndex
         self.adata: ad.AnnData
-        self.label_col: str = label_col
+        self.label_col: str | Sequence = label_col
         self.id_col: str = id_col
         self.batch_col: str = batch_col
 
@@ -72,6 +82,10 @@ class RangeFinder:
 
         # Range-finding parameters
         self.n_bins: int = n_bins
+        self.multitask_method: Literal["combine", "mean", None] = multitask_method
+        self.do_multitask: bool = (
+            not isinstance(self.label_col, str) or multitask_method is None
+        )
         self.use_unique: bool = use_unique
         self.features_per: int = features_per_label
         self.premature_stop: bool = premature_stop  # If true, stop the range-finding
@@ -84,7 +98,7 @@ class RangeFinder:
         self.report_n: int = 3
         self.impurity_cutoff: float = purity_cutoff  # Accept ranges with Gini impurity
         # below this value
-        self.mask_method: str = mask_method
+        self.mask_method: str = mask_method  # How to transform data within the range
 
     @staticmethod
     def gini_impurity(counts: pd.Series, size: int) -> float:
@@ -104,7 +118,12 @@ class RangeFinder:
         self.failed_ids = set()
         self.adata = x.copy()
         self.adata.X = ut.xarray_if_sparse(x)
-        self.labels = self.adata.obs[self.label_col]
+        if self.do_multitask:
+            self.labels = pd.MultiIndex.from_frame(
+                self.adata.obs.loc[:, self.label_col]
+            )
+        else:
+            self.labels = self.adata.obs[self.label_col]
         self.label_totals = self.labels.value_counts()
         self.cmap = tp.rand_cmap_d(self.labels)
         ids = self.adata.var[self.id_col].dropna()
@@ -139,16 +158,20 @@ class RangeFinder:
             tmp["n"].append(len(data.rge))
             tmp["ranges"].append(data.rge)
             labels.append(data.labels)
+        if not self.do_multitask:
+            groupby_explode: str = self.label_col
+        else:
+            groupby_explode = "combined"
         self.label_metrics = (
             pd.DataFrame(
                 {
                     self.id_col: tmp[self.id_col],
-                    self.label_col: labels,
+                    groupby_explode: labels,
                 }
             )
             .assign(count=1)
-            .explode(self.label_col)
-            .groupby(self.label_col)
+            .explode(groupby_explode)
+            .groupby(groupby_explode)
             .agg({self.id_col: lambda x: list(x), "count": sum})
             .sort_values("count", ascending=False)
         )
@@ -199,7 +222,7 @@ class RangeFinder:
         return adata.X[:, adata.var[self.id_col].values == id].flatten()
 
     def _check_label_p(self, label: str, label_count: int) -> bool:
-        total: int = self.label_totals[label]
+        total: int = self.label_totals.get(label, 0)
         if self.min_lwp is None:
             return True
         elif isinstance(self.min_lwp, dict):
@@ -292,7 +315,7 @@ class RangeFinder:
         self,
         id: str,
         vals: np.ndarray,
-        labels: pd.Series,
+        labels: pd.Series | pd.DataFrame | pd.MultiIndex,
     ) -> tuple:
         if self.use_unique:
             nodes = np.unique(vals)
@@ -307,7 +330,17 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            gini = self.gini_impurity(counts=counts, size=len(narrowed))
+            if self.multitask_method != "mean" and self.do_multitask:
+                gini = self.gini_impurity(counts=counts, size=len(narrowed))
+            else:
+                gini_tracker = []
+                df = narrowed.to_frame().reset_index()
+                for lab in self.label_col:
+                    cur_counts = df[lab].value_counts()
+                    gini_tracker.append(
+                        self.gini_impurity(counts=cur_counts, size=narrowed.shape[0])
+                    )
+                gini = np.mean(gini_tracker)
             if gini < self.impurity_cutoff:
                 if begin not in i2n:
                     i2n[begin] = G.add_node(begin)
