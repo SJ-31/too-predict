@@ -78,6 +78,7 @@ class TrialSetup:
             that the object be used as is. e.g. [PredBase(model), True]
     """
 
+    # * Trial setup init
     def __init__(
         self, trial: optuna.Trial | None = None, trial_params: dict | None = None
     ) -> None:
@@ -297,7 +298,6 @@ def ignore_duplicated(
 class Optimizer:
     def __init__(
         self,
-        setup_fn: Callable,
         score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
         label_col: str = "tumor_type",
         save_model: bool = True,
@@ -315,7 +315,6 @@ class Optimizer:
         self.artifact_dir: Path = artifact_dir
         self.ignore_duplicated: bool = ignore_duplicated
         self.score_fn: Callable = score_fn
-        self.setup_fn: Callable = setup_fn
         self.objective: Callable[[optuna.Trial], float]
 
     def make_objective(self, **kwargs):
@@ -335,7 +334,7 @@ class Optimizer:
             if is_duplicated:
                 return val
 
-        setup = self.setup_fn(trial=trial, **kwargs)
+        setup = TrialSetup(trial=trial, **kwargs)
         # Suggest values to the trial object, it'll track which values have been
         # seen
         transform, classifier, pipeline = setup(
