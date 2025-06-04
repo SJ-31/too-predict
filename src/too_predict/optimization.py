@@ -49,33 +49,6 @@ def get_options(file: str | Path | None = None) -> dict:
     return loaded
 
 
-class FeaturesChooser(Setup):
-    """
-    Helper class to choose best feature set only, with fixed model and transformer
-    """
-
-    @override
-    def __call__(
-        self, opts: dict | None = None
-    ) -> tuple[Callable[[ad.AnnData], ad.AnnData], PredBase, Pipeline]:
-        if self.spec is None:
-            raise ValueError("spec must be provided")
-        _, model, transformer, _, _, _ = tt.read_model_spec(self.spec)
-        feature_set = self.trial.suggest_categorical(
-            "feature_set", opts.get("feature_sets")
-        )
-        filter = Filter(features=feature_set)
-
-        def fn(X: ad.AnnData) -> ad.AnnData:
-            return transformer.fit_transform(X)
-
-        pipeline = Pipeline(
-            ("filter", filter), ("transformer", transformer), ("classifier", model)
-        )
-
-        return fn, model, pipeline
-
-
 class TrialSetup:
     """Helper class to transform data and get predictor from params
 
@@ -95,32 +68,36 @@ class TrialSetup:
         transformation
         feature_sets
         classifier
+    Include key `<object>_default` if you don't want to modify any parameters
+        e.g. classifier_default = True to use the defaults for that classifier
+
+    Their values must either be
+        a list of strings, which will then be passed to the optuna trial as categorial
+           options
+        or a tuple of [object, True] to indicate
+            that the object be used as is. e.g. [PredBase(model), True]
     """
 
     def __init__(
         self, trial: optuna.Trial | None = None, trial_params: dict | None = None
     ) -> None:
-        self.for_trial = trial is not None
+        self.user_opts: dict
+        self.for_trial: bool = trial is not None
         self.trial: optuna.Trial | None = trial
         self.params: dict | None = trial_params
+        if trial is None and trial_params is None:
+            raise ValueError("One of trial or trial_params must be provided!")
 
-    def _get_gradient_booster(self, name: str, defaults):
-        if self.for_trial and not defaults:
-            learning_rate = self.trial.suggest_categorical(
-                "learning_rate", [0.01, 0.1, 0.2, 0.3]
-            )  # Synonymous with shrinkage rate, eta
-            l2_reg = self.trial.suggest_float(
-                "l2_regularization", 0, 5, step=1
-            )  # lambda
-            max_depth = self.trial.suggest_int("max_depth", 3, 15, step=5)
-            max_bin = self.trial.suggest_int("max_bin", 150, 350, step=50)
+    def _suggest_gradient_booster(self, name: str):
+        if self.for_trial and not self.user_opts.get("classifier_default"):
+            learning_rate = self._suggest_param_or_default("learning_rate")
+            # Synonymous with shrinkage rate, eta
+            l2_reg = self._suggest_param_or_default("l2_regularization")  # lambda
+            max_depth = self._suggest_param_or_default("max_depth")
+            max_bin = self._suggest_param_or_default("max_bin")
             if name == "XGBEstimator":
-                l1_reg = self.trial.suggest_float(
-                    "l1_regularization", 0, 5, step=1
-                )  # alpha
-                minimum_loss = self.trial.suggest_int(
-                    "minimum_loss", 0, 5, step=1
-                )  # gamma
+                l1_reg = self._suggest_param_or_default("l1_regularization")  # alpha
+                minimum_loss = self._suggest_param_or_default("minimum_loss")  # gamma
         else:
             minimum_loss = self.params.get("minimum_loss", 0)
             max_depth = self.params.get("max_depth", 3)
@@ -146,140 +123,163 @@ class TrialSetup:
                 max_depth=max_depth,
             )
 
-    def _get_svm(self, defaults: bool):
-        if self.for_trial:
-            c = self.trial.suggest_float("C", low=0.2, high=1, step=0.2)
-            loss_fn = self.trial.suggest_categorical("loss", ["hinge", "squared_hinge"])
+    def _suggest_svm(self, use_default: bool):
+        if not use_default:
+            if self.for_trial:
+                c = self._suggest_param_or_default("C")
+                loss_fn = self._suggest_param_or_default("loss")
+            else:
+                c = self.params.get("C")
+                loss_fn = self.params.get("loss")
+            return sv.LinearSVC(C=c, loss=loss_fn, random_state=RANDOM_STATE)
+        return sv.LinearSVC(random_state=RANDOM_STATE)
+
+    def _suggest_classifier(self, name, features: list):
+        if name in {"XGBEstimator", "HistGradientBoostingClassifier"}:
+            model = self._suggest_gradient_booster(name)
+        elif name == "SVM":
+            model = self._suggest_svm()
         else:
-            c = self.params.get("C")
-            loss_fn = self.params.get("loss")
-        return sv.LinearSVC(C=c, loss=loss_fn, random_state=RANDOM_STATE)
+            raise ValueError(f"Classifier {name} is not implemented yet!")
 
-    def _get_classifier(self, name, defaults: bool):
-        match name:
-            case "XGBEstimator" | "HistGradientBoostingClassifier":
-                return self._get_gradient_booster(name, defaults)
-            case "SVM":
-                return self._get_svm(defaults)
-            case _:
-                raise ValueError(f"Classifier {name} is not implemented!")
+        tname = self.user_opts["transformation"]
+        classifier: PredBase
+        if tname == "alr":
+            transform_kwargs: dict = self._suggest_transformation_kwargs()
+            classifier = AlrBase(
+                model,
+                references=transform_kwargs["references"],
+                imputation=self._get("imputation"),
+                n_refs=transform_kwargs["n_refs"],
+            )
+            features.extend(transform_kwargs["references"])
+        elif tname in IMPLEMENTED_SIMULATION:
+            transform_kwargs = self._suggest_transformation_kwargs()
+            classifier = SimPred(model=model, method=tname, **transform_kwargs)
+        else:
+            classifier = PredBase(model=model)
+        return classifier
 
-    def _get_transformation(self, transform_name, opts: dict | None = None) -> dict:
+    def _suggest_transformation(self) -> Transformer | None:
+        tname = self.user_opts["transformation"]
+        if tname == "alr":
+            return None
+        imputation = self._get("imputation")
+        kwargs = self._suggest_transformation_kwargs()
+        return Transformer(
+            tname,
+            impute_fn=Imputer(imputation),
+            inplace=False,
+            **kwargs,
+        )
+
+    def _suggest_transformation_kwargs(self) -> dict:
         transform_kwargs = {}
-        opts = {} if opts is None else opts
-        match transform_name:
-            case "clr":
-                transform_kwargs["feature_col"] = "GENEID"
-                clr_subset = opts.get("clr_subset", list(REFS.keys()) + [None])
-                ref_set = (
-                    self.trial.suggest_categorical("clr_subset", clr_subset)
-                    if self.for_trial
-                    else self.params.get("clr_subset")
-                )
-                if ref_set is not None:
-                    transform_kwargs["features"] = REFS[ref_set]
-            case "alr":
-                alr_ref = opts.get("alr_references", REFS.keys())
-                ref_set = (
-                    self.trial.suggest_categorical("alr_references", alr_ref)
-                    if self.for_trial
-                    else self.params.get("alr_references")
-                )
-                alr_n_refs = (
-                    self.trial.suggest_int("alr_n_references", low=5, high=20, step=5)
-                    if self.for_trial
-                    else self.params.get("alr_n_references")
-                )
-                transform_kwargs["n_refs"] = alr_n_refs
-                transform_kwargs["references"] = REFS[ref_set]
-            case "dirichlet":
-                transform_kwargs["n_instances"] = (
-                    self.trial.suggest_int(
-                        "n_dirichlet_instances", low=5, high=15, step=5
-                    )
-                    if self.for_trial
-                    else self.params.get("n_dirichlet_instances")
-                )
-            case _:
-                raise ValueError("Not recognized!")
+        tname = self.user_opts["transformation"]
+        if tname == "clr":
+            transform_kwargs["feature_col"] = "GENEID"
+            ref_set = (
+                self._suggest_param_or_default("clr_subset")
+                if self.for_trial
+                else self.params.get("clr_subset")
+            )
+            if ref_set is not None:
+                transform_kwargs["features"] = REFS[ref_set]
+        elif tname == "alr":
+            ref_set = (
+                self._suggest_param_or_default("alr_references")
+                if self.for_trial
+                else self.params.get("alr_references")
+            )
+            alr_n_refs = (
+                self._suggest_param_or_default("alr_n_references")
+                if self.for_trial
+                else self.params.get("alr_n_references")
+            )
+            transform_kwargs["n_refs"] = alr_n_refs
+            transform_kwargs["references"] = REFS[ref_set]
+        elif tname == "dirichlet":
+            transform_kwargs["n_instances"] = (
+                self._suggest_param_or_default("n_dirichlet_instances")
+                if self.for_trial
+                else self.params.get("n_dirichlet_instances")
+            )
+        else:
+            raise ValueError("Not recognized!")
         return transform_kwargs
 
-    def _check_opt(
+    def _suggest_param_or_default(self, param_name: str):
+        """
+        Read a default value of a hyperparameter from user options, or suggest a
+        selection to the optuna trial
+        If the value of `param_name` in user_opts is a tuple, the first and
+            second values are interpreted as start, end of a range and the last
+            as the step
+        If a list, interpreted as categorical options
+        """
+        val = self.user_opts.get(param_name)
+        if val is None:
+            raise ValueError(f"Missing default value for {val}!")
+        if isinstance(val, list):
+            return self.trial.suggest_categorical(param_name, val)
+        elif isinstance(val, tuple) and not isinstance(val[1], bool):
+            if len(val) != 3:
+                raise ValueError("Values for tuple params must be (start, stop, step)")
+            start, stop, step = val
+            if isinstance(start, float):
+                return self.trial.suggest_float(param_name, start, stop, step=step)
+            else:
+                return self.trial.suggest_int(param_name, start, stop, step=step)
+        return val[0]
+
+    def _get(
         self,
-        value: Literal["imputation", "transformation", "classifier", "feature_set"],
-        opts: dict,
+        value: Literal["transformation", "classifier", "imputation"],
+        features: list,
     ) -> Filter | Transformer | PredBase | list | None | str:
-        vals = opts.get(value)
+        vals = self.user_opts.get(value)
         if vals is None:
             raise ValueError(f"Key {value} not provided!")
-        if isinstance(vals, tuple):
-            return vals[0]
-        return self.trial.suggest_categorical(value, vals)
+
+        if value == "imputation":
+            return self._suggest_param_or_default(value)
+        read = self._suggest_param_or_default(value)
+        if isinstance(read, str) and value == "transformation":
+            return self._suggest_transformation(read)
+        elif isinstance(read, str) and value == "classifier":
+            return self._suggest_classifier(read, features=features)
+        return read
 
     def __call__(
         self, opts: dict | None = None
     ) -> tuple[Callable[[ad.AnnData], ad.AnnData], PredBase, Pipeline]:
         transform: bool = True
         # Set up pipeline parameters
+        if opts is None:
+            raise ValueError("options dictionary must be provided if for trial!")
+        self.user_opts = opts
         if self.for_trial:
-            if opts is None:
-                raise ValueError("options dictionary must be provided if for trial!")
             # Suggest for trial
-            imputation = self._check_opt("imputation")
-            transform_name = self._check_opt("transformation")
-            features = FEATURES[self._check_opt("feature_set")]
-            classifier_name = self._check_opt("classifier")
+            features = FEATURES[self._suggest_param_or_default("feature_set")]
+            transformer = self._get("transformation", features)
+            classifier = self._get("classifier", features)
         else:
             # Read parameters from dictionary
-            imputation = self.params.get("imputation")
-            transform_name = self.params.get("transformation")
             features = FEATURES[self.params.get("feature_set")]
-            classifier_name = self.params.get("classifier")
+            transformer = self.params.get("transformation")
+            classifier = self.params.get("classifier")
 
-        transform_kwargs = {}
-        if isinstance(classifier_name, str):
-            # Make classifier from params
-            model = self._get_classifier(classifier_name)
-            transform_kwargs: dict = self._get_transformation(transform_name)
-            if transform_name == "alr":
-                classifier = AlrBase(
-                    model,
-                    references=transform_kwargs["references"],
-                    imputation=imputation,
-                    n_refs=transform_kwargs["n_refs"],
-                )
-                features += transform_kwargs["references"]
-                del transform_kwargs["references"]
-                transform = False
-            elif transform_name in IMPLEMENTED_SIMULATION:
-                classifier = SimPred(
-                    model=model, method=transform_name, **transform_kwargs
-                )
-            else:
-                classifier = PredBase(model=model)
-        else:
-            classifier = classifier_name
-
-        # Return transformation function and classifier
         filter = Filter(feature_col="GENEID", features=features)
         pipeline_lst = [("filter", filter)]
-        if transform:
-            transformer = Transformer(
-                transform_name,
-                impute_fn=Imputer(imputation),
-                inplace=False,
-                **transform_kwargs,
-            )
+        if transformer is not None:
             pipeline_lst.append(("transformer", transformer))
-        else:
-            transformer = None
         pipeline_lst.append(("classifier", classifier))
 
         def transform_fn(X: ad.AnnData) -> ad.AnnData:
-            X = filter.fit_transform(X)
+            x: ad.AnnData = filter.fit_transform(X)
             if transform:
-                X = transformer.fit_transform(X)
-            return X
+                x = transformer.fit_transform(x)
+            return x
 
         return transform_fn, classifier, Pipeline(pipeline_lst)
 
@@ -297,7 +297,7 @@ def ignore_duplicated(
 class Optimizer:
     def __init__(
         self,
-        setup_fn: Setup,
+        setup_fn: Callable,
         score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
         label_col: str = "tumor_type",
         save_model: bool = True,
@@ -334,10 +334,11 @@ class Optimizer:
             is_duplicated, val = ignore_duplicated(trial)
             if is_duplicated:
                 return val
-        cons = self.setup_fn(trial=trial, **kwargs)
+
+        setup = self.setup_fn(trial=trial, **kwargs)
         # Suggest values to the trial object, it'll track which values have been
         # seen
-        transform, classifier, pipeline = cons(
+        transform, classifier, pipeline = setup(
             opts=opts if opts is not None else get_options()
         )
         if self.save_model:
@@ -371,7 +372,7 @@ class Optimizer:
         acc_split = split_res["misc"]["balanced_acc"].mean()
         return np.mean([acc, acc_split])
 
-    def get_study(self, **kwargs) -> optuna.Study:
+    def run_study(self, **kwargs) -> optuna.Study:
         study = optuna.create_study(**kwargs)
         study.optimize(self.objective)
         return study
