@@ -354,18 +354,23 @@ def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.Data
 def holdout(
     model,
     adata: ad.AnnData,
-    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
+    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
+    | None = None,
     balancer: Balancer | None = None,
     transformer: Transformer | None = None,
     corrector: Corrector | None = None,
     apply_correction_to: Literal["train", "test", "both"] = "train",
     label_col="tumor_type",
+    save_split_path: Path | None = None,
+    split_masks: dict[str, tuple] | None = None,
+    verbose: bool = False,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
 
     Parameters
     ---------
-    split_fn: A function that splits adata into a tuple of train, test
+    split_fn: A dictionary of function that splits adata into a tuple of train, test
+    split_indices: A dictionary of mapping test set names to (train, test) boolean indices
 
     Return
     ------
@@ -378,11 +383,30 @@ def holdout(
         when the group category to be evaluated is
         confounded with the target labels
     """
+    if split_fns is None and split_masks is None:
+        raise ValueError("Either split_fns or split_indices must be given!")
 
-    def helper(split_fn, cur_adata):
+    split_is_fn: bool = split_fns is not None
+
+    def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
         n = len(cur_adata)
-        x_train, x_test = split_fn(cur_adata)
+        if split_is_fn:
+            x_train, x_test = splitter(cur_adata)
+        else:
+            x_train = cur_adata[splitter[0], :]
+            x_test = cur_adata[splitter[1], :]
+        if verbose:
+            print(
+                f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
+            )
+        if save_split_path is not None:
+            x_train.obs.to_csv(
+                save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
+            )
+            x_test.obs.to_csv(
+                save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
+            )
         split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
         split_prop = pd.DataFrame(
             {
@@ -428,9 +452,10 @@ def holdout(
         "mcc": [],
     }
     cms = {}
-    for set_label, split_fn in split_fns.items():
+    splitters: dict = split_fns if split_fns is not None else split_masks
+    for set_label, splitter in splitters.items():
         try:
-            cur = helper(split_fn, adata)
+            cur = helper(set_label, splitter, adata)
         except RRuntimeError as e:
             print("Error in R runtime: ", e)
             print("ignoring...")

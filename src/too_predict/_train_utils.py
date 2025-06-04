@@ -192,7 +192,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_median_lfc_feature_list_3000",
-        "s": False,  # Use for fast training
+        "s": True,  # Good, use for fast training
     },
     "clr_xgb3_edger_rfecv": {
         "m": lambda: tm.PredBase(model=tm.XGBEstimator(max_depth=3)),
@@ -547,6 +547,7 @@ MODELS: dict = {
         "p": lambda x: trf.into_ranks(x, True),
     },
     # *** Range finder
+    # [2025-06-04 Wed] Not yet
     "clr_rf_mean_xgb_edger_per_type_ovp_t_enriched": {
         "m": lambda: RangeFinderPred(
             model=tm.PredBase(model=tm.XGBEstimator()),
@@ -645,6 +646,7 @@ def organoid_test_task(
     shuffle_kwargs: dict | None = None,
     prefix: str = "",
     save_split_path: Path | None = None,
+    verbose: bool = True,
 ) -> dict:
     """Test model's ability to generalize to organoid samples
 
@@ -676,22 +678,23 @@ def organoid_test_task(
     crosses = pd.crosstab(adata.obs[label_col], adata.obs[organoid_col])
     n: int = adata.shape[0]
     filtered = crosses.loc[crosses[True] > 0, :]
-    split_fns: dict = {}
+    split_masks: dict = {}
     for ttype in filtered.index.tolist():
         mask = (adata.obs[label_col] == ttype) & adata.obs[organoid_col]
         if with_randoms:
             splitter = ShuffleSplit(n_splits=1, **shuffle_kwargs)
             tmp = adata[~mask, :]
             train, test = next(splitter.split(np.zeros(tmp.shape)))
+            print(train)
             test_indices = np.array(
                 list(map(lambda x: x in test, range(adata.shape[0])))
             )
-            split_fns[f"{ttype}_excluded"] = lambda x: (adata[train, :], adata[mask, :])
-        else:
-            split_fns[f"{ttype}_excluded"] = lambda x: (
-                adata[~mask, :],
-                adata[mask | test_indices, :],
+            split_masks[f"{ttype}_excluded"] = (
+                train.copy() | (~mask).copy(),
+                mask.copy() | test_indices,
             )
+        else:
+            split_masks[f"{ttype}_excluded"] = ((~mask).copy(), mask.copy())
         p_train = (~mask).sum() / n
         p_test = mask.sum() / n
         split_prop = (p_train, p_test, p_train + p_test)
@@ -699,7 +702,7 @@ def organoid_test_task(
     result: dict = te.holdout(
         model,
         adata,
-        split_fns=split_fns,
+        split_masks=split_masks,
         label_col=label_col,
         transformer=transformer,
         balancer=balancer,
@@ -710,6 +713,7 @@ def organoid_test_task(
         if correction_mode in {"on_train", "on_train_test"}
         else "both",
         save_split_path=save_split_path,
+        verbose=verbose,
     )
     if outdir is not None:
         te.write_cross_val(result, outdir=outdir, prefix=prefix)
