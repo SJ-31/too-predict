@@ -472,7 +472,7 @@ class Transformer:
 # * Misc transformations
 #
 def into_ranks(x: ad.AnnData, standardize: bool = False) -> ad.AnnData:
-    new_x = np.zeros_like(x)
+    new_x = np.zeros(x.shape)
     expr = xarray_if_sparse(x)
     for i in range(x.shape[0]):
         new_x[i, :] = stats.rankdata(expr[i, :], method="average")
