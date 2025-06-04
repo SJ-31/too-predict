@@ -113,14 +113,14 @@ upset_helper <- function(tb_list, filename, target_col = "GENENAME", direction_c
   } else if (has_neg) {
     ht <- UpSet(mt_neg, row_title = "Upregulated DE genes")
   }
-  pdf(here(outdir_o, filename), width = 10, height = 15)
+  png(here(outdir_o, filename), width = 1080, height = 1920)
   # PNG doesn't work here for some reason
   draw(ht)
   dev.off()
   list(plot = ht, mt_pos = mt_pos, mt_neg = mt_neg)
 }
 
-upset_res <- upset_helper(list_modify(top_tags, sample_type = zap()), filename = "de_gene_upset_no_filter.pdf")
+upset_res <- upset_helper(list_modify(top_tags, sample_type = zap()), filename = "de_gene_upset_no_filter.png")
 
 
 # Shared characteristics of uniquely downreg genes
@@ -134,7 +134,6 @@ unique_downreg <- local({
     left_join(with_root_fam, by = join_by(x$ensembl == y$`Ensembl gene ID`))
 })
 ud_families <- table(unique_downreg$tumor_type, unique_downreg$family)
-
 
 
 common_expr <- local({
@@ -229,6 +228,33 @@ ovr_corrs <- lmap(ovrs, \(x) {
   cor.test(x[[1]]$logFC.primary, x[[1]]$logFC.organoid) |>
     tidy() |>
     mutate(tumor_type = names(x[1]))
+}) |>
+  bind_rows()
+geneid2biotype <- setNames(edgeR_top$GENEBIOTYPE, edgeR_top$GENEID)
+ttype2correlation <- setNames(ovr_corrs$estimate, ovr_corrs$tumor_type)
+
+ovr_plot <- ovrs |>
+  list_rbind(names_to = "tumor_type") |>
+  mutate(
+    biotype = geneid2biotype[GENEID],
+    tumor_type = str_to_upper(tumor_type)
+  ) |>
+  ggplot(aes(x = logFC.primary, y = logFC.organoid, color = biotype)) +
+  geom_point() +
+  facet_wrap(~tumor_type)
+ggsave(plot = ovr_plot, filename = here(outdir_o, "ovr_lfc_consistency.png"), width = 20, height = 12)
+
+
+# Check overlap of most discriminatory features for each ttype
+n <- 70
+# TODO: to check if it is worth including organoid features, you need to compare the
+# primary auROC scores of primary_best and org_best
+lmap(ovrs, \(x) {
+  tb <- x[[1]]
+  primary_best <- slice_max(tb, abs(logFC.primary), n = n) |> pull(GENEID)
+  org_best <- slice_max(tb, abs(logFC.organoid), n = n) |> pull(GENEID)
+  i_length <- length(intersect(primary_best, org_best))
+  tibble(n_intersect = i_length, percentage = i_length / n, tumor_type = names(x[1]))
 }) |>
   bind_rows()
 
