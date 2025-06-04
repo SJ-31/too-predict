@@ -129,7 +129,7 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    chosen = tt.MODELS["clr_xgb3_edger"]
+    chosen = tt.MODELS["clr_xgb1_edger"]
     filter, model, transform, _, _, _ = tt.read_model_spec(chosen)
     if str(Path.home()) != "/home/shannc":
         adata = ut.training_data_internal()

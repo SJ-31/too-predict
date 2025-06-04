@@ -5,7 +5,12 @@ from pathlib import Path
 import too_predict.evaluation as te
 import too_predict.utils as ut
 from pyhere import here
-from too_predict._train_utils import ADDITIONAL_SPLITS, MODELS, read_model_spec
+from too_predict._train_utils import (
+    ADDITIONAL_SPLITS,
+    MODELS,
+    organoid_test_task,
+    read_model_spec,
+)
 from too_predict.model import PredWithCorrection
 
 outdir = here("data", "output", "explanations", "batch_correction")
@@ -18,35 +23,83 @@ else:
 adata.obs.loc[:, "is_organoid"] = adata.obs["Sample_Type"] == "organoid"
 label_col = "tumor_type"
 
+# [2025-05-29 Thu] In outdir, the directory org_as_ref_separate are the results of combat_ref
+# batch correction where the correction was applied to the train and test data separately
+# i.e. the correction parameters didn't see the organoids
+# In practice, they would need to have access to the organoids
+
 
 # Test original
 def compare_new_original(adata):
     specs = [
-        ("clr_xgb3_edger_combat_ref", "original"),
-        ("clr_xgb3_edger_combat_ref_org_rbatch", "org_as_ref"),
+        ("clr_xgb3_edger_combat_ref", "original", True),
+        ("clr_xgb3_edger_combat_ref_org_rbatch", "org_as_ref", True),
+        ("clr_xgboost_edger_per_type_ovp_t_enriched", "clr_xgb3", False),
     ]
-    for model_name, prefix in specs:
+    for model_name, prefix, skip in specs:
+        if skip:
+            continue
         filter, model, transform, _, _, correction = read_model_spec(MODELS[model_name])
         copy = adata.copy()
         copy = filter.fit_transform(copy)
         if prefix == "org_as_ref":
-            model = PredWithCorrection(
-                model,  # With this setup, fit model to corrected data, but do not
-                # let it test on corrected data
-                corrector=correction,
+            copy = correction.fit_transform(copy)
+            # model = PredWithCorrection(
+            #     model,  # With this setup, fit model to corrected data, but do not
+            #     # let it test on corrected data
+            #     corrector=correction,
+            #     transformer=transform,
+            #     how="none",
+            #     give_direct=True,
+            # )
+            result = te.holdout(
+                model=model,
+                adata=copy,
+                split_fns=ADDITIONAL_SPLITS,
+                label_col=label_col,
                 transformer=transform,
-                how="none",
-                give_direct=True,
+                apply_correction_to="train",
             )
-            result = model.holdout(copy, ADDITIONAL_SPLITS, label_col=label_col)
-
-        else:
+            otest_dir = outdir.joinpath("org_as_ref_organoid_test")
+            otest_dir.mkdir(exist_ok=True)
+            organoid_test_task(
+                adata=adata.copy(),
+                model_spec=MODELS[model_name],
+                outdir=otest_dir,
+                correction_mode="on_train",
+                save_split_path=otest_dir,
+            )
+        elif prefix == "original":
             # Upper limit to test against, can't use this for real
+            otest_dir = outdir.joinpath("original_organoid_test")
+            otest_dir.mkdir(exist_ok=True)
             copy = correction.fit_transform(copy)
             result = model.holdout(
                 copy, ADDITIONAL_SPLITS, label_col=label_col, transformer=transform
             )
-        te.write_cross_val(result, outdir, prefix=f"{prefix}_")
+            # [2025-05-29 Thu] So doing it with CLR does produce the right accuracy
+            organoid_test_task(
+                adata=adata.copy(),
+                model_spec=MODELS[model_name],
+                outdir=otest_dir,
+                correction_mode="before_split",
+                save_split_path=otest_dir,
+            )
+        else:
+            otest_dir = outdir.joinpath(f"{prefix}_organoid_test")
+            otest_dir.mkdir(exist_ok=True)
+            result = model.holdout(
+                copy, ADDITIONAL_SPLITS, label_col=label_col, transformer=transform
+            )
+            organoid_test_task(
+                adata=adata.copy(),
+                model_spec=MODELS[model_name],
+                outdir=otest_dir,
+                save_split_path=otest_dir,
+            )
+        te.write_cross_val(
+            result, outdir.joinpath("additional_splits"), prefix=f"{prefix}_"
+        )
 
 
 compare_new_original(adata)
