@@ -126,7 +126,7 @@ def plot_shap(adata):
     adata = adata[~adata.obs["Sample_Type"].isna(), :]
     adata.obs.loc[:, "is_organoid"] = adata.obs["Sample_Type"] == "organoid"
     transformed = trans.fit_transform(filter.fit_transform(adata))
-    wanted_types = ["PAAD", "CHOL", "LIHC", "COAD_READ", "LUAD", "BRCA"]
+    wanted_types = ["PAAD", "CHOL", "LIHC", "COAD-READ", "LUAD", "BRCA"]
     all_ttypes = wanted_types + [""]
     transformed = transformed[transformed.obs["tumor_type"].isin(all_ttypes), :]
     n: int = 30
@@ -148,7 +148,7 @@ def plot_shap(adata):
         )
         hmap.figure.set_size_inches(12, 15)
         hmap.figure.savefig(
-            shap_dir(f"{w}_train_most_important.png"), bbox_inches="tight"
+            shap_dir.joinpath(f"{w}_train_most_important.png"), bbox_inches="tight"
         )
 
 

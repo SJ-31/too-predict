@@ -58,7 +58,9 @@ def global_shap(
     if outdir is not None:
         stest.write_h5ad(outdir.joinpath("test_data_shap.h5ad"))
         strain.write_h5ad(outdir.joinpath("train_data_shap.h5ad"))
-        g_importance.to_csv(outdir.joinpath("shap_global_importance.csv"), index=False)
+        g_importance.reset_index(names="GENEID").to_csv(
+            outdir.joinpath("shap_global_importance.csv"), index=False
+        )
     ranked = g_importance.mean(axis=1).sort_values(ascending=False)
     return ranked.index
 
