@@ -11,7 +11,7 @@ from optuna.storages import JournalStorage
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 from too_predict.model import AlrEstimator, PredBase
-from too_predict.optimization import Constructor, Optimizer
+from too_predict.optimization import Setup, Optimizer
 from too_predict.utils import (
     RANDOM_STATE,
     get_data,
@@ -31,7 +31,7 @@ def test_objective():
     study: optuna.Study = optuna.create_study(direction="maximize")
     O = Optimizer()
     obj = partial(
-        O.objective,
+        O._objective,
         adata=adata,
         cv_splits=2,
         artifact_store=oa.FileSystemArtifactStore(adir),
@@ -63,7 +63,7 @@ def test_pickle():
     res = load_pickle(cv_results)
 
     study.best_trial.user_attrs
-    cons = Constructor(trial=None, trial_params=study.best_params)
+    cons = Setup(trial=None, trial_params=study.best_params)
     transform, model, _ = cons()
 
     cpred = model.fit(transform(adata), y="tumor_type")

@@ -307,7 +307,7 @@ def rand_cmap_d(
 def mp_plot(
     adata: ad.AnnData,
     genes: Sequence,
-    var_groupings: str | None | Sequence = None,
+    var_groupings: str | Sequence = None,
     method: Literal["heatmap", "tracksplot"] = "tracksplot",
     gene_symbols: str | None = None,
     gene_symbols_to_show: str | None = None,
@@ -335,7 +335,7 @@ def mp_plot(
         raise ValueError("Not implemented yet!")
 
     # Annotate genes
-    if var_groupings is not None and isinstance(var_groupings, str):
+    if isinstance(var_groupings, str):
         var_groupings = [var_groupings]
     if var_groupings is not None:
         vals_first = list(var[var_groupings[0]][vmask])

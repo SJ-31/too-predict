@@ -32,6 +32,7 @@ import sklearn.neighbors as sn
 import sklearn.preprocessing as sp
 import too_predict._rust_helpers as rh
 import too_predict.evaluation as te
+import too_predict.explanation as ex
 import too_predict.filter as fil
 import too_predict.go_utils as gu
 import too_predict.model as tm
@@ -70,7 +71,7 @@ adata = ut.training_data_internal_test()
 
 # #  --- CODE BLOCK ---
 
-spc = MODELS["clr_xgb3_edger_combat_ref"]
+spc = MODELS["clr_ranks_mean_xgb_edger_per_type_ovp"]
 
 adata.obs["is_organoid"] = adata.obs["Sample_Type"] != "primary"
 F, M, T, B, E, C = read_model_spec(spc)
@@ -82,6 +83,11 @@ adata = adata[
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
 
-result = te.holdout(M, filtered, split_fns={"chula": ADDITIONAL_SPLITS["CGCI"]})
 
-# #  --- CODE BLOCK ---
+import too_predict.optimization as topt
+
+searcher = topt.Optimizer(setup_fn=topt.FeaturesChooser.new)
+searcher.make_objective(
+    adata=filtered,
+    cv_splits=3,
+)
