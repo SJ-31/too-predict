@@ -218,7 +218,7 @@ class TrialSetup:
         """
         val = self.user_opts.get(param_name)
         if val is None:
-            raise ValueError(f"Missing default value for {val}!")
+            raise ValueError(f"Missing default value for {param_name}!")
         if isinstance(val, list):
             return self.trial.suggest_categorical(param_name, val)
         elif isinstance(val, tuple):
@@ -302,14 +302,16 @@ class Optimizer:
         save_cv: bool = True,
         ignore_duplicated: bool = True,
         group_col: None | str = None,
-        journal_file: Path | None = None,
+        journal_file: Path | str | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
         self.label_col: str = label_col
         self.save_model: bool = save_model
         self.group_col: None | str = group_col
         self.save_cv: bool = save_cv
-        self.journal_file: Path | None = journal_file
+        self.journal_file: str | None = (
+            str(journal_file) if isinstance(journal_file, Path) else journal_file
+        )
         self.artifact_dir: Path | None = artifact_dir
         self.ignore_duplicated: bool = ignore_duplicated
         self.score_fn: Callable = score_fn
@@ -383,6 +385,7 @@ class Optimizer:
         defaults = {
             "study_name": "optimize",
             "direction": "maximize",
+            "load_if_exists": True,
         }
         defaults.update(kwargs)
         if "storage" not in kwargs and self.journal_file is not None:
@@ -390,10 +393,10 @@ class Optimizer:
                 oj.JournalFileBackend(self.journal_file)
             )
         try:
-            study = optuna.create_study(**kwargs)
+            study = optuna.create_study(**defaults)
             study.optimize(self.objective)
         except ValueError:
-            study = optuna.load_study(**kwargs)
+            study = optuna.load_study(**defaults)
         return study
 
     def nested(
