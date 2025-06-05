@@ -79,9 +79,11 @@ feature_dist_plot <- ggplot(features_together, aes(x = value, color = metric)) +
   xlab("Scaled value")
 ggsave(here(fs_dir, "feature_dist.png"), feature_dist_plot, width = 10)
 
-n_features <- 1000
+n_features <- 500
 
 ## * Get features
+
+## --- CODE BLOCK ---
 
 top_n_features <- lapply(names(feature_tbs), \(x) {
   features <- feature_tbs[[x]] |>
@@ -97,13 +99,15 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
   `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
 
+## --- CODE BLOCK ---
+
 ## ** edgeR by type
 # Instead of aggregating by median lfc, will get disjoint feature sets for each tumor
 # type
 ttypes <- colnames(edger) |>
   keep(\(x) str_detect(x, "logFC_tumor_type")) |>
   str_remove("logFC_tumor_type")
-n_per <- 70
+n_per <- 50
 seen <- c()
 pybuiltins <- import_builtins()
 type_overlap_list <- list()
@@ -150,22 +154,23 @@ tissue_enriched <- read_csv(here(
 )) |>
   mutate(tissue = str_replace_all(tissue, " ", "_"))
 
-
+## --- CODE BLOCK ---
 seen_ovp <- c()
 with_p_value <- TRUE
 # [2025-05-19 Mon] TODO: figure out why using only the ratio method fails
 with_tissue_enriched <- FALSE
+n_per <- 70
 source(here("data", "mappings", "misc_mappings.R"))
 blacklist <- ovp_tb |>
   filter(PValue >= 0.01) |>
   pull(GENEID)
 if (with_tissue_enriched) {
   add_name <- "tissue_enriched"
+} else {
+  add_name <- ""
 }
 if (!with_p_value) {
   add_name <- glue("{add_name}_ratio_only")
-} else {
-  add_name <- ""
 }
 ovp_fs_file <- here(fs_lists, glue("edgeR_{n_per}_per_type_ovp_{add_name}.txt"))
 
@@ -196,7 +201,6 @@ edger_type_flist_ovp <- lapply(ttypes, \(type) {
         )
       ) |>
       arrange(desc(is_tissue_enriched), desc(abs(!!as.symbol(fc_col))))
-    print(table(sorted$is_tissue_enriched))
   }
   if (with_p_value) {
     # Only keep non-DE genes in the organoid_vs_primary comparison
