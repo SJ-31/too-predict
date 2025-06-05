@@ -146,7 +146,7 @@ class TrialSetup:
         tname = self.user_opts["transformation"]
         classifier: PredBase
         if tname == "alr":
-            transform_kwargs: dict = self._suggest_transformation_kwargs()
+            transform_kwargs: dict = self._suggest_transformation_kwargs(tname)
             classifier = AlrBase(
                 model,
                 references=transform_kwargs["references"],
@@ -155,18 +155,17 @@ class TrialSetup:
             )
             features.extend(transform_kwargs["references"])
         elif tname in IMPLEMENTED_SIMULATION:
-            transform_kwargs = self._suggest_transformation_kwargs()
+            transform_kwargs = self._suggest_transformation_kwargs(tname)
             classifier = SimPred(model=model, method=tname, **transform_kwargs)
         else:
             classifier = PredBase(model=model)
         return classifier
 
-    def _suggest_transformation(self) -> Transformer | None:
-        tname = self.user_opts["transformation"]
+    def _suggest_transformation(self, tname) -> Transformer | None:
         if tname == "alr":
             return None
         imputation = self._get("imputation")
-        kwargs = self._suggest_transformation_kwargs()
+        kwargs = self._suggest_transformation_kwargs(tname)
         return Transformer(
             tname,
             impute_fn=Imputer(imputation),
@@ -174,9 +173,8 @@ class TrialSetup:
             **kwargs,
         )
 
-    def _suggest_transformation_kwargs(self) -> dict:
+    def _suggest_transformation_kwargs(self, tname) -> dict:
         transform_kwargs = {}
-        tname = self.user_opts["transformation"]
         if tname == "clr":
             transform_kwargs["feature_col"] = "GENEID"
             ref_set = (
@@ -223,7 +221,7 @@ class TrialSetup:
             raise ValueError(f"Missing default value for {val}!")
         if isinstance(val, list):
             return self.trial.suggest_categorical(param_name, val)
-        elif isinstance(val, tuple) and not isinstance(val[1], bool):
+        elif isinstance(val, tuple):
             if len(val) != 3:
                 raise ValueError("Values for tuple params must be (start, stop, step)")
             start, stop, step = val
@@ -231,7 +229,7 @@ class TrialSetup:
                 return self.trial.suggest_float(param_name, start, stop, step=step)
             else:
                 return self.trial.suggest_int(param_name, start, stop, step=step)
-        return val[0]
+        return val
 
     def _get(
         self,
@@ -304,26 +302,30 @@ class Optimizer:
         save_cv: bool = True,
         ignore_duplicated: bool = True,
         group_col: None | str = None,
-        journal_dir: Path | None = None,
+        journal_file: Path | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
         self.label_col: str = label_col
         self.save_model: bool = save_model
         self.group_col: None | str = group_col
         self.save_cv: bool = save_cv
-        self.journal_dir: Path = journal_dir
-        self.artifact_dir: Path = artifact_dir
+        self.journal_file: Path | None = journal_file
+        self.artifact_dir: Path | None = artifact_dir
         self.ignore_duplicated: bool = ignore_duplicated
         self.score_fn: Callable = score_fn
         self.objective: Callable[[optuna.Trial], float]
 
     def make_objective(self, **kwargs):
+        if "artifact_store" not in kwargs and self.artifact_dir is not None:
+            kwargs["artifact_store"] = oa.FileSystemArtifactStore(self.artifact_dir)
         self.objective = partial(self._objective, **kwargs)
 
     def _objective(
         self,
         trial: optuna.Trial,
         adata: ad.AnnData,
+        split_fns: dict | None = None,
+        split_masks: dict | None = None,
         cv_splits=5,
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
@@ -349,31 +351,49 @@ class Optimizer:
             )
             trial.set_user_attr("artifact_id", artifact_id)
 
-        adata = transform(adata)
-        cv_results: dict = cross_validate(
-            classifier,
-            adata,
-            label_col=self.label_col,
-            n_splits=cv_splits,
-            trial=trial,
-            get_report_val=lambda x: x["kappa"],
-        )
-        if self.save_cv:
-            write_pickle(cv_results, "cv_results.pickle")
-            cv_id = oa.upload_artifact(
-                artifact_store=artifact_store,
-                file_path="cv_results.pickle",
-                study_or_trial=trial,
+        adata = transform(adata.copy())
+        all_accs = []
+        if cv_splits > 1:
+            cv_results: dict = cross_validate(
+                classifier,
+                adata,
+                label_col=self.label_col,
+                n_splits=cv_splits,
+                trial=trial,
+                get_report_val=lambda x: x["kappa"],
             )
-            trial.set_user_attr("cv_id", cv_id)
-        split_res: dict = holdout(classifier, adata, split_fns=ADDITIONAL_SPLITS)
-        acc = cv_results["misc"]["balanced_acc"].mean()
-        acc_split = split_res["misc"]["balanced_acc"].mean()
-        return np.mean([acc, acc_split])
+            if self.save_cv:
+                write_pickle(cv_results, "cv_results.pickle")
+                cv_id = oa.upload_artifact(
+                    artifact_store=artifact_store,
+                    file_path="cv_results.pickle",
+                    study_or_trial=trial,
+                )
+                trial.set_user_attr("cv_id", cv_id)
+            all_accs.append(cv_results["misc"]["balanced_acc"].mean())
+        if split_fns is None and split_masks is None and cv_splits <= 1:
+            raise ValueError("Not training task given!")
+        split_res: dict = holdout(
+            classifier, adata, split_fns=split_fns, split_masks=split_masks
+        )
+        all_accs.append(split_res["misc"]["balanced_acc"].mean())
+        return np.mean(all_accs)
 
     def run_study(self, **kwargs) -> optuna.Study:
-        study = optuna.create_study(**kwargs)
-        study.optimize(self.objective)
+        defaults = {
+            "study_name": "optimize",
+            "direction": "maximize",
+        }
+        defaults.update(kwargs)
+        if "storage" not in kwargs and self.journal_file is not None:
+            kwargs["storage"] = oj.JournalStorage(
+                oj.JournalFileBackend(self.journal_file)
+            )
+        try:
+            study = optuna.create_study(**kwargs)
+            study.optimize(self.objective)
+        except ValueError:
+            study = optuna.load_study(**kwargs)
         return study
 
     def nested(
@@ -415,8 +435,8 @@ class Optimizer:
             if pruner is not None:
                 study_kwargs["pruner"] = pruner
             obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
-            if self.journal_dir is not None:  # This enables parallelization
-                out = self.journal_dir.joinpath(f"fold_{fold}.log")
+            if self.journal_file is not None:  # This enables parallelization
+                out = self.journal_file.joinpath(f"fold_{fold}.log")
                 jfile = oj.JournalFileBackend(str(out))
                 study_kwargs["storage"] = oj.JournalStorage(jfile)
             if self.artifact_dir is not None:
