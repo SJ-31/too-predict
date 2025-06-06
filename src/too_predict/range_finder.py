@@ -365,7 +365,6 @@ class RangeFinder:
 
 def get_rangefinder_best(
     obj: RangeFinder,
-    get_pareto: bool = False,
     n: int = 30,
     plot: bool = False,
     outdir: Path | None = None,
@@ -373,7 +372,7 @@ def get_rangefinder_best(
     save_fig_kwargs: dict | None = None,
     wanted_labels: set | None = None,
     **kwargs,
-) -> dict[str, list]:
+) -> tuple[dict[str, list], pd.DataFrame]:
     """Retrieve top n features for each label identified by range finder
 
     Features are ranked by their gini (im)purity across
@@ -391,7 +390,7 @@ def get_rangefinder_best(
         raise ValueError("The given RangeFinder hasn't been fit yet!")
     elif obj.id_metrics.shape == (0, 0):
         print("No passed ids in RangeFinder")
-        return {}
+        return {}, pd.DataFrame()
     if save_fig_kwargs is None:
         save_fig_kwargs = {"w": 15, "h": 12}
     if plot and outdir is None:
@@ -437,8 +436,7 @@ def get_rangefinder_best(
                 if "w" in save_fig_kwargs and "h" in save_fig_kwargs:
                     fig.set_size_inches((save_fig_kwargs["w"], save_fig_kwargs["h"]))
                 fig.savefig(outfile, bbox_inches="tight")
-
-    return result
+    return result, id_df
 
 
 # * Wrapper for predictor

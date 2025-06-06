@@ -36,6 +36,7 @@ import too_predict.explanation as ex
 import too_predict.filter as fil
 import too_predict.go_utils as gu
 import too_predict.model as tm
+import too_predict.multitask as multi
 import too_predict.plotting as tp
 import too_predict.r_utils as ru
 import too_predict.range_finder as tr
@@ -84,10 +85,19 @@ filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
 
 
-import too_predict.optimization as topt
+# #  --- CODE BLOCK ---
 
-searcher = topt.Optimizer(setup_fn=topt.FeaturesChooser.new)
-searcher.make_objective(
-    adata=filtered,
-    cv_splits=3,
+
+train, test = ut.train_test_split_ad(adata[:, :50])
+
+
+def get_labs(adata) -> np.ndarray:
+    return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
+
+
+model = multi.GBDTMO(
+    lib="/home/shannc/Bio_SDD/GBDTMO/build/gbdtmo.so", n_rounds=2, max_depth=3
 )
+
+model.fit(ut.xarray_if_sparse(train), get_labs(train))
+model.predict(ut.xarray_if_sparse(test))

@@ -11,7 +11,7 @@ from optuna.storages import JournalStorage
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
 from too_predict.model import AlrEstimator, PredBase
-from too_predict.optimization import Setup, Optimizer
+from too_predict.optimization import Optimizer, Setup
 from too_predict.utils import (
     RANDOM_STATE,
     get_data,
@@ -72,7 +72,7 @@ def test_pickle():
 
 def test_nested():
     search = Optimizer(
-        save_model=True, save_cv=True, journal_dir=jlog, artifact_dir=adir
+        save_model=True, save_cv=True, journal_file=jlog, artifact_dir=adir
     )
     best = search.nested(adata, n_outer=3, n_inner=2)
     print(best)
