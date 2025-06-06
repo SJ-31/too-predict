@@ -33,7 +33,7 @@ from too_predict.evaluation import write_cross_val
 from too_predict.filter import Filter, get_redundant_features
 from too_predict.imputer import Imputer
 from too_predict.model import PredBase, RandomForestPred, XGBEstimator
-from too_predict.range_finder import RangeFinder
+from too_predict.range_finder import RangeFinder, get_rangefinder_best
 from too_predict.transformer import Transformer
 from too_predict.utils import (
     ref_feature_lists_internal,
@@ -160,8 +160,7 @@ def ovp_filter(adata):
         sep="\t",
     )
     chosen_model = "clr_xgb3_1000_edger"
-    F, model_fn, T, B, R, C = read_model_spec(MODELS[chosen_model])
-    M = model_fn()
+    F, _, T, B, R, C = read_model_spec(MODELS[chosen_model])
     blacklist = ovp_top_tags.query("PValue <= 0.05")["GENEID"].to_list()
     filtered = adata[:, ~adata.var["GENEID"].isin(blacklist)]
     filtered = T.fit_transform(filtered)
@@ -169,12 +168,13 @@ def ovp_filter(adata):
     outdir.mkdir(exist_ok=True)
 
     # With rfecv
-    rfecv = fs.RFECV(estimator=M, step=1, cv=StratifiedKFold(5))
+    model = XGBEstimator(max_depth=3)
+    rfecv = fs.RFECV(estimator=model, step=1, cv=StratifiedKFold(5))
     counts = filtered.X.toarray()
     labels = filtered.obs["tumor_type"]
     rfecv.fit(counts, labels)
     x_train, x_test, y_train, y_test = train_test_split(counts, labels)
-    cv_score = cross_val_score(M, x_train, y_train)
+    cv_score = cross_val_score(rfecv, x_train, y_train)
     print(cv_score)
 
     df = pd.DataFrame({"GENEID": filtered.var["GENEID"], "ranking": rfecv.ranking_})
@@ -253,20 +253,36 @@ def range_finder(adata):
         (("tumor_type", "Sample_Type"), "combine"),
         (("tumor_type", "Sample_Type"), "mean"),
     ]
+    storage: Path = here("remote", "repos", "too-predict", "range_finder")
     outdir.mkdir(exist_ok=True)
     for label_col, mmethod in params:
         if mmethod is None:
-            cur_outdir = outdir.joinpath("single")
+            name = "single"
         else:
-            cur_outdir = outdir.joinpath(f"multitask_{mmethod}")
+            name = f"multitask_{mmethod}"
+        cur_outdir = outdir.joinpath(name)
         cur_outdir.mkdir(exist_ok=True)
-        rfinder = RangeFinder(label_col=label_col, multitask_method=mmethod)
-        rfinder.fit(transformed)
-        ut.write_pickle(rfinder, cur_outdir.joinpath("range_finder.pkl"))
-        rfinder.label_metrics.to_csv(
-            cur_outdir.joinpath("rf_label_metrics.csv"), index=False
-        )
-        rfinder.id_metrics.to_csv(cur_outdir.joinpath("rf_id_metrics.csv"), index=False)
+        outfile = storage.joinpath(f"range_finder_{name}.pkl")
+        if not outfile.exists():
+            rfinder = RangeFinder(label_col=label_col, multitask_method=mmethod)
+            rfinder.fit(transformed)
+            ut.write_pickle(rfinder, outfile)
+            rfinder.label_metrics.to_csv(
+                cur_outdir.joinpath("rf_label_metrics.csv"), index=False
+            )
+            rfinder.id_metrics.to_csv(
+                cur_outdir.joinpath("rf_id_metrics.csv"), index=False
+            )
+        else:
+            rfinder = ut.load_pickle(outfile)
+            mapping, df = get_rangefinder_best(
+                rfinder,
+                n=20,
+                plot=True,
+                wanted_labels={"CHOL", "LIHC", "PAAD", "COAD-READ"},
+                outdir=cur_outdir,
+            )
+            df.to_csv(cur_outdir.joinpath("rf_id_weighted_purity.csv"), index=False)
 
 
 # ** With optimization
@@ -439,7 +455,7 @@ if __name__ == "__main__":
     proportionality_file = here(OUTDIR, f"proportionality_matrix_{suffix}.csv")
     mutual_info_file = here(OUTDIR, f"mutual_info_{suffix}.csv")
 
-    with joblib.parallel_backend("loky", n_jobs=args.cores):
+    with joblib.parallel_backend("loky", n_jobs=int(args.cores)):
         # remove_redundant(adata)
         # variance = read_existing(variance_file, variance_threshold, pd.read_csv)
         # mutual_info = read_existing(mutual_info_file, mutual_info, pd.read_csv)
@@ -451,5 +467,5 @@ if __name__ == "__main__":
         # )
         # importance score with gain are the average gain across all trees
         # optimization_scanpy(adata)
-        ovp_filter(adata)
+        # ovp_filter(adata)
         range_finder(adata)
