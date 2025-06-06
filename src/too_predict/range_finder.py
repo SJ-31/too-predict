@@ -363,6 +363,84 @@ class RangeFinder:
         return ranges, range2contents, ginis, seen
 
 
+def get_rangefinder_best(
+    obj: RangeFinder,
+    get_pareto: bool = False,
+    n: int = 30,
+    plot: bool = False,
+    outdir: Path | None = None,
+    adata: ad.AnnData | None = None,
+    save_fig_kwargs: dict | None = None,
+    wanted_labels: set | None = None,
+    **kwargs,
+) -> dict[str, list]:
+    """Retrieve top n features for each label identified by range finder
+
+    Features are ranked by their gini (im)purity across
+        all of their ranges, weighted by the counts of labels contained within them
+
+    Parameters
+    ----------
+    param : argument
+
+    Returns
+    -------
+    Dictionary of label -> top_n_ids or pareto front of ids
+    """
+    if obj.id_metrics is None:
+        raise ValueError("The given RangeFinder hasn't been fit yet!")
+    elif obj.id_metrics.shape == (0, 0):
+        print("No passed ids in RangeFinder")
+        return {}
+    if save_fig_kwargs is None:
+        save_fig_kwargs = {"w": 15, "h": 12}
+    if plot and outdir is None:
+        raise ValueError("If plotting, outdir must not be None!")
+    plot_data: ad.AnnData = adata if adata is not None else obj.adata
+    id_df: pd.DataFrame = pd.DataFrame(
+        (
+            list(
+                map(
+                    lambda x: [
+                        x[0],  # ID
+                        np.mean(
+                            (1 - np.array(x[1].gini)) * x[1].contents.values.sum(axis=0)
+                        ),
+                        # Gini impurity converted to purity
+                        # so that a higher score is better
+                    ],
+                    obj.imap.items(),
+                )
+            )
+        ),
+        columns=[obj.id_col, "weighted_purity"],
+    )
+    result: dict = {}
+    for label, row in obj.label_metrics.iterrows():
+        if wanted_labels is not None:
+            if isinstance(label, str) and label not in wanted_labels:
+                continue
+            elif len(set(label) & wanted_labels) == 0:
+                continue
+        selected_ids = row[obj.id_col]
+        filtered = id_df.loc[id_df[obj.id_col].isin(selected_ids), :]
+        result[label] = (
+            filtered.sort_values(by=["weighted_purity"], ascending=False)
+            .iloc[:n, :][obj.id_col]
+            .to_list()
+        )
+        if plot and outdir:
+            label_name: str = "_".join(label) if not isinstance(label, str) else label
+            for i, id in enumerate(result[label]):
+                outfile = outdir.joinpath(f"{i}-{label_name}-{id}.png")
+                fig: Figure = obj.range_stripplot(id, adata=plot_data, **kwargs)
+                if "w" in save_fig_kwargs and "h" in save_fig_kwargs:
+                    fig.set_size_inches((save_fig_kwargs["w"], save_fig_kwargs["h"]))
+                fig.savefig(outfile, bbox_inches="tight")
+
+    return result
+
+
 # * Wrapper for predictor
 
 
