@@ -2,6 +2,7 @@
 import itertools
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, override
 
 import anndata as ad
@@ -14,6 +15,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 from sortedcontainers import SortedSet
 
+import too_predict.meta_markers as meta
 import too_predict.plotting as tp
 import too_predict.utils as ut
 from too_predict.filter import Filter
@@ -84,7 +86,7 @@ class RangeFinder:
         self.n_bins: int = n_bins
         self.multitask_method: Literal["combine", "mean", None] = multitask_method
         self.do_multitask: bool = (
-            not isinstance(self.label_col, str) or multitask_method is None
+            not isinstance(self.label_col, str) or multitask_method is not None
         )
         self.use_unique: bool = use_unique
         self.features_per: int = features_per_label
@@ -210,11 +212,12 @@ class RangeFinder:
             raise ValueError("Not fitted yet!")
         expr = self._get_id_expr(id)
         ranges, contents, ginis, labels = self._get_ranges_rx(id, expr, self.labels)
-        merged_contents = pd.concat(contents, axis=1)
-        merged_contents.columns = contents.keys()
-        self.imap[id] = RangeData(
-            rge=ranges, gini=ginis, labels=labels, contents=merged_contents
-        )
+        if ranges is not None:
+            merged_contents = pd.concat(contents, axis=1)
+            merged_contents.columns = contents.keys()
+            self.imap[id] = RangeData(
+                rge=ranges, gini=ginis, labels=labels, contents=merged_contents
+            )
 
     def _get_id_expr(self, id: str, adata: ad.AnnData | None = None) -> np.ndarray:
         if adata is None:
@@ -330,7 +333,7 @@ class RangeFinder:
             end = pair[0] if begin == pair[1] else pair[1]
             narrowed = expr[(begin <= expr) & (expr <= end)]
             counts = narrowed.index.value_counts()
-            if self.multitask_method != "mean" and self.do_multitask:
+            if self.multitask_method != "mean" or not self.do_multitask:
                 gini = self.gini_impurity(counts=counts, size=len(narrowed))
             else:
                 gini_tracker = []
@@ -349,7 +352,7 @@ class RangeFinder:
                 G.add_edge(i2n[begin], i2n[end], {"counts": counts, "gini": gini})
         if G.num_nodes() == 0:
             self.failed_ids.add(id)
-            return [], {}
+            return (None,) * 4
         ranges = []
         range2contents = {}
         ginis = []
