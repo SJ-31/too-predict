@@ -76,7 +76,7 @@ def helper(
         return adata
 
 
-# #  --- CODE BLOCK ---
+# %%
 
 VARS = ["tumor_type", "primary_site"]
 ALL_METRICS = []

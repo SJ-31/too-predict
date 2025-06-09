@@ -47,7 +47,7 @@ rm(utils)
 
 # TODO: can include the sequencing tech and the tumor type as factors to account
 # for their effects
-## --- CODE BLOCK ---
+# %%
 p_threshold <- 0.05
 group <- "tumor_type"
 ## technical_factors <- c("Sample_Type", "Project_ID") TODO: need to address confounding
@@ -178,7 +178,7 @@ gene_auroc_organoid <- read_existing(
 )
 
 ## * Marker-based
-## --- CODE BLOCK ---
+# %%
 cell_markers <- markers_meta_internal(grouped = FALSE)
 tissues <- unique(cell_markers$tissue)
 

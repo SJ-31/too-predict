@@ -12,7 +12,7 @@ import too_predict.evaluation as te
 import too_predict.utils as ut
 from pyhere import here
 
-# #  --- CODE BLOCK ---
+# %%
 
 PROJECTS_TO_CHECK = [
     "GSE235548",

@@ -30,7 +30,7 @@ TMP <- ut$ref_feature_lists_internal()
 REFS <- TMP[[2]]$edgeR_median_lfc_feature_list_3000
 
 
-## --- CODE BLOCK ---
+# %%
 lihc_cases <- c("CHULA_LIHC", "TCGA_LIHC")
 chol_cases <- c("CHULA_CHOL", "TCGA_CHOL")
 coad_cases <- c("CHULA_COAD_READ", "TCGA_COAD_READ")
@@ -135,7 +135,7 @@ ggsave(here(outdir_o, "tree_importance_plot.png"))
 # but this doesn't seem to be the case
 
 ## ** LFC between stypes vs. between ttypes
-## --- CODE BLOCK ---
+# %%
 make_plot <- function(tb, label, palette = "ggthemes::Blue-Teal") {
   tb |> ggplot(aes(x = abs(fc_organoid), y = abs(fc_all), color = abs_ratio)) +
     geom_point() +
@@ -173,7 +173,7 @@ between_type_comparison <- function(label, between_stype, between_ttype) {
     select(label, fc_organoid, fc_all, abs_ratio, GENEID)
 }
 
-## --- CODE BLOCK ---
+# %%
 at_least <- 8
 quantile_threshold <- 0.40
 

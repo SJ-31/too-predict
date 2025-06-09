@@ -83,7 +83,7 @@ n_features <- 500
 
 ## * Get features
 
-## --- CODE BLOCK ---
+# %%
 
 top_n_features <- lapply(names(feature_tbs), \(x) {
   features <- feature_tbs[[x]] |>
@@ -99,7 +99,7 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
   `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
 
-## --- CODE BLOCK ---
+# %%
 
 ## ** edgeR by type
 # Instead of aggregating by median lfc, will get disjoint feature sets for each tumor
@@ -139,7 +139,7 @@ writeLines(
 ## ** edgeR by type, considering organoid differences
 # Like the above, but do not accept features that are heavily DE in an
 # ovp (organoid vs primary) comparison
-## --- CODE BLOCK ---
+# %%
 ovp_tb <- read_tsv(here(
   "data",
   "output",
@@ -154,7 +154,7 @@ tissue_enriched <- read_csv(here(
 )) |>
   mutate(tissue = str_replace_all(tissue, " ", "_"))
 
-## --- CODE BLOCK ---
+# %%
 seen_ovp <- c()
 with_p_value <- TRUE
 # [2025-05-19 Mon] TODO: figure out why using only the ratio method fails
@@ -224,7 +224,7 @@ edger_type_flist_ovp <- lapply(ttypes, \(type) {
 }) |>
   bind_rows()
 writeLines(edger_type_flist_ovp$GENEID, ovp_fs_file)
-## --- CODE BLOCK ---
+# %%
 
 stop("Done")
 
@@ -350,7 +350,7 @@ log_fcs <- orf |> select(GENEID, contains("logFC"))
 
 
 ## * edgeR go
-## --- CODE BLOCK ---
+# %%
 
 get_edger_go <- function() {
   n_type <- 40

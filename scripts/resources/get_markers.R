@@ -282,7 +282,7 @@ source_tbs$panglaodb <- panglaodb |>
 
 ## * Enriched from hpa
 ## https://www.proteinatlas.org/humanproteome/single+cell/tissue+cell+type
-## --- CODE BLOCK ---
+# %%
 get_hpa_query <- function(query, ...) {
   base_url <- "www.proteinatlas.org/api/search_download.php?"
   string <- url_query_build(list(search = query, ...), .multi = "comma")

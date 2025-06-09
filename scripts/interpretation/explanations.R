@@ -48,7 +48,7 @@ chula_filtered <- sig_org |> filter(names %in% unique(unlist(chula_top)))
 # Strong association is an indicator of relibability
 
 # But strong association with the organoid-lfc features
-## --- CODE BLOCK ---
+# %%
 # You can add different levels of filters to see if the association still holds
 filter_levels <- c("none", "alpha", "shap_nonzero")
 plot_dir <- here(SDIR, "plots")
