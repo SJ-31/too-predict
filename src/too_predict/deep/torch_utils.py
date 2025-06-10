@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+from collections.abc import Sequence
 from typing import override
 
 import anndata as ad
@@ -7,6 +8,8 @@ import numpy as np
 import sklearn.preprocessing as sp
 import torch
 import torch.nn as nn
+from torch.optim import Optimizer
+from torch.utils.data import DataLoader
 
 import too_predict.utils as ut
 
@@ -75,4 +78,32 @@ class AnnDataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         return self.X[index, :], self.labels[index, :]
 
-    # def inverse_transform(self, labels: torch.Tensor) -> :
+
+class Module(nn.Module):
+    optimizer: Optimizer | None
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.optimizer = None
+
+    def fit(
+        self,
+        loader: DataLoader,
+        optimizer: Optimizer,
+        max_epochs: int = 1000,
+    ) -> None:
+        self.optimizer = optimizer
+        self.train()
+        for _ in range(max_epochs):
+            self._fit_epoch(loader)
+        self.eval()
+
+    def _fit_epoch(self, loader: DataLoader):
+        for X, y in loader:
+            self.optimizer.zero_grad()
+            loss: torch.Tensor = self.training_step(X, y)
+            loss.backward()
+            self.optimizer.step()
+
+    def training_step(self, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError()
