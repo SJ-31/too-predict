@@ -100,6 +100,7 @@ def train_model(
 ) -> pd.DataFrame:
     metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
     model.train()
+    record: bool = "record_metrics" in dir(model)
     for i in range(n_epochs):
         for j, (X, y) in enumerate(loader):
 
@@ -112,7 +113,8 @@ def train_model(
                 else:
                     loss = criterion(model, pred, y)
                 loss.backward()
-                model.record_metrics(metrics)
+                if record:
+                    model.record_metrics(metrics)
                 metrics["epoch"].append(i)
                 metrics["minibatch"].append(j)
                 metrics["loss"].append(loss.detach().numpy())
