@@ -90,23 +90,39 @@ def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
 
 
 def train_model(
-    model: nn.Module, loader: DataLoader, n_epochs: int = 1000
+    model: nn.Module,
+    loader: DataLoader,
+    optimizer: Optimizer,
+    criterion: Callable,
+    needs_model: bool = False,
+    needs_closure: bool = False,
+    n_epochs: int = 1000,
 ) -> pd.DataFrame:
     metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
-    optimizer: Optimizer = model.get_optimizers()
     model.train()
     for i in range(n_epochs):
         for j, (X, y) in enumerate(loader):
-            pred = model(X)
-            loss: torch.Tensor = model.make_criterion(pred, y)
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            def closure():
+                optimizer.zero_grad()
+                pred = model(X)
+                loss: torch.Tensor
+                if not needs_model:
+                    loss = criterion(pred, y)
+                else:
+                    loss = criterion(model, pred, y)
+                loss.backward()
+                model.record_metrics(metrics)
+                metrics["epoch"].append(i)
+                metrics["minibatch"].append(j)
+                metrics["loss"].append(loss.detach().numpy())
+                return loss
 
-            model.record_metrics(metrics)
-            metrics["epoch"].append(i)
-            metrics["minibatch"].append(j)
-            metrics["loss"].append(loss.detach().numpy())
+            if not needs_closure:
+                _ = closure()
+                optimizer.step()
+            else:
+                optimizer.step(closure)
+
     model.eval()
     return pd.DataFrame(metrics)
