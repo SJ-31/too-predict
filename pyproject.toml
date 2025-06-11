@@ -20,6 +20,8 @@ dependencies = [
   "numpy<2",
   "pyarrow>=19.0.0",
   "pyhere>=1.0.3",
+  "torch",
+  "skorch",
   "pyod>=2.0.3",
   "pypalettes",
   "marsilea",

@@ -85,50 +85,20 @@ class AnnDataset(torch.utils.data.Dataset):
         return self.X[index, :], self.labels[index, :]
 
 
-class Module(nn.Module):
-    optimizer: Optimizer | None
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self.optimizer = None
-
-    def prefit(self, data: Dataset) -> None:
-        """Things the model might need to do with access to do the entire dataset"""
-        print("No prefit specified")
-        return
-
-    def record_metrics(self, record: dict, **kwargs) -> None:
-        return
-
-    def get_optimizers(self, **kwargs) -> Optimizer:
-        raise NotImplementedError()
-
-    def objective(self, prediction: torch.Tensor, y: torch.Tensor):
-        """Objective function, computes loss to minimize
-
-        Parameters
-        ----------
-        predition : the result of Module.__call__()
-        y : true values
-
-        Returns
-        -------
-        A tensor capable of autograd
-        """
-        raise NotImplementedError()
+def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
+    return torch.utils.data.TensorDataset(torch.tensor(X), torch.tensor(y_true))
 
 
 def train_model(
-    model: Module, loader: DataLoader, n_epochs: int = 1000
+    model: nn.Module, loader: DataLoader, n_epochs: int = 1000
 ) -> pd.DataFrame:
     metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
     optimizer: Optimizer = model.get_optimizers()
     model.train()
-    model.prefit(loader.dataset)
     for i in range(n_epochs):
         for j, (X, y) in enumerate(loader):
             pred = model(X)
-            loss: torch.Tensor = model.objective(pred, y)
+            loss: torch.Tensor = model.make_criterion(pred, y)
 
             optimizer.zero_grad()
             loss.backward()
@@ -137,6 +107,6 @@ def train_model(
             model.record_metrics(metrics)
             metrics["epoch"].append(i)
             metrics["minibatch"].append(j)
-            metrics["loss"].append(loss)
+            metrics["loss"].append(loss.detach().numpy())
     model.eval()
     return pd.DataFrame(metrics)
