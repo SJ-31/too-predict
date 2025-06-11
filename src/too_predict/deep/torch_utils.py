@@ -1,17 +1,17 @@
 #!/usr/bin/env ipython
 
 from collections.abc import Sequence
-from typing import override
+from typing import Callable, override
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import sklearn.preprocessing as sp
+import too_predict.utils as ut
 import torch
 import torch.nn as nn
 from torch.optim import Optimizer
-from torch.utils.data import DataLoader
-
-import too_predict.utils as ut
+from torch.utils.data import DataLoader, Dataset
 
 
 class AnnDataset(torch.utils.data.Dataset):
@@ -39,10 +39,13 @@ class AnnDataset(torch.utils.data.Dataset):
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
         )
+        self.n_classes: dict = {}
         self.label_cols: tuple = to_encode
         for i, col in enumerate(to_encode):
             encoder = sp.LabelEncoder()
-            self.labels[:, i] = torch.as_tensor(encoder.fit_transform(adata.obs[col]))
+            labs = adata.obs[col]
+            self.n_classes[col] = len(labs.unique())
+            self.labels[:, i] = torch.as_tensor(encoder.fit_transform(labs))
             self.encoders[col] = encoder
 
     def decode(
@@ -51,7 +54,6 @@ class AnnDataset(torch.utils.data.Dataset):
         label_cols: Sequence | None = None,
         indices: Sequence | None = None,
     ) -> np.ndarray:
-        print(y)
         if indices is None:
             indices = list(range(len(self.encoders)))
         vals = []
@@ -71,6 +73,10 @@ class AnnDataset(torch.utils.data.Dataset):
                 vals.append(decoded)
         return np.hstack(vals)
 
+    @property
+    def shape(self) -> tuple:
+        return self.X.shape
+
     def __len__(self) -> int:
         return self.X.shape[0]
 
@@ -86,24 +92,51 @@ class Module(nn.Module):
         super().__init__(*args, **kwargs)
         self.optimizer = None
 
-    def fit(
-        self,
-        loader: DataLoader,
-        optimizer: Optimizer,
-        max_epochs: int = 1000,
-    ) -> None:
-        self.optimizer = optimizer
-        self.train()
-        for _ in range(max_epochs):
-            self._fit_epoch(loader)
-        self.eval()
+    def prefit(self, data: Dataset) -> None:
+        """Things the model might need to do with access to do the entire dataset"""
+        print("No prefit specified")
+        return
 
-    def _fit_epoch(self, loader: DataLoader):
-        for X, y in loader:
-            self.optimizer.zero_grad()
-            loss: torch.Tensor = self.training_step(X, y)
-            loss.backward()
-            self.optimizer.step()
+    def record_metrics(self, record: dict, **kwargs) -> None:
+        return
 
-    def training_step(self, X: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    def get_optimizers(self, **kwargs) -> Optimizer:
         raise NotImplementedError()
+
+    def objective(self, prediction: torch.Tensor, y: torch.Tensor):
+        """Objective function, computes loss to minimize
+
+        Parameters
+        ----------
+        predition : the result of Module.__call__()
+        y : true values
+
+        Returns
+        -------
+        A tensor capable of autograd
+        """
+        raise NotImplementedError()
+
+
+def train_model(
+    model: Module, loader: DataLoader, n_epochs: int = 1000
+) -> pd.DataFrame:
+    metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
+    optimizer: Optimizer = model.get_optimizers()
+    model.train()
+    model.prefit(loader.dataset)
+    for i in range(n_epochs):
+        for j, (X, y) in enumerate(loader):
+            pred = model(X)
+            loss: torch.Tensor = model.objective(pred, y)
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            model.record_metrics(metrics)
+            metrics["epoch"].append(i)
+            metrics["minibatch"].append(j)
+            metrics["loss"].append(loss)
+    model.eval()
+    return pd.DataFrame(metrics)
