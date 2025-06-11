@@ -95,9 +95,13 @@ def get_labs(adata) -> np.ndarray:
     return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
 
 
-model = multi.GBDTMO(
-    lib="/home/shannc/Bio_SDD/GBDTMO/build/gbdtmo.so", n_rounds=2, max_depth=3
-)
+# import
+# def make_annloader() -> ad.experimental.AnnLoader:
+import torch
 
-model.fit(ut.xarray_if_sparse(train), get_labs(train))
-model.predict(ut.xarray_if_sparse(test))
+to_encode = ["Sample_Type", "tumor_type", "primary_site"]
+label_encoders = {s: sp.LabelEncoder() for s in to_encode}
+for k, v in label_encoders.items():
+    v.fit(adata.obs[k])
+
+converters = {"obs": {k: v.transform for k, v in label_encoders.items()}}
