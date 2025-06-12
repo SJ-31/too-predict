@@ -10,6 +10,7 @@ import sklearn.preprocessing as sp
 import too_predict.utils as ut
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
@@ -146,17 +147,23 @@ def data_spec(
 
 
 def train_model(
-    model: nn.Module,
+    model: Module,
     loader: DataLoader,
-    optimizer: Optimizer,
-    criterion: Callable,
+    optimizer: Optimizer | None = None,
+    criterion: Callable | None = None,
     needs_model: bool = False,
     needs_closure: bool = False,
     n_epochs: int = 1000,
+    tol: float | None = None,
 ) -> pd.DataFrame:
     metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
     model.train()
     record: bool = "record_metrics" in dir(model)
+    best_loss: float = torch.inf
+    if criterion is None:
+        criterion = model.criterion
+    if optimizer is None:
+        optimizer = model.get_optimizers()
     for i in range(n_epochs):
         for j, (X, y) in enumerate(loader):
 
@@ -184,3 +191,6 @@ def train_model(
 
     model.eval()
     return pd.DataFrame(metrics)
+
+
+# def optimize():
