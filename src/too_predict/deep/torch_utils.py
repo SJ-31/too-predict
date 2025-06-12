@@ -32,7 +32,7 @@ class AnnDataset(torch.utils.data.Dataset):
         self,
         adata: ad.AnnData,
         device: str = "cpu",
-        to_encode=("Sample_Type", "tumor_type", "primary_site"),
+        to_encode: tuple[str] | str = ("Sample_Type", "tumor_type", "primary_site"),
     ) -> None:
         self.X: torch.Tensor = torch.tensor(ut.xarray_if_sparse(adata), device=device)
         self.encoders: dict[str, sp.LabelEncoder] = {}
@@ -41,6 +41,8 @@ class AnnDataset(torch.utils.data.Dataset):
         )
         self.n_classes: dict = {}
         self.label_cols: tuple = to_encode
+        if isinstance(to_encode, str):
+            to_encode = (to_encode,)
         for i, col in enumerate(to_encode):
             encoder = sp.LabelEncoder()
             labs = adata.obs[col]
