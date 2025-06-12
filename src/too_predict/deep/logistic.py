@@ -88,13 +88,103 @@ class MtcLrSkorch(skorch.NeuralNetClassifier):
             total_loss += nn.functional.cross_entropy(y_pred[0], y_true)
 
         # Regularization by distances between parameters
-        if len(self.module.lrs) > 1:
-            tuples = itertools.product(self.module.lrs.keys())
+        if len(self.module_.lrs) > 1:
+            tuples = itertools.product(self.module_.lrs.keys())
             for tup in tuples:
                 for combo in itertools.combinations(tup, 2):
-                    first = self.module.lrs[str(combo[0])].weight
-                    sec = self.module.lrs[str(combo[1])].weight
+                    first = self.module_.lrs[str(combo[0])].weight
+                    sec = self.module_.lrs[str(combo[1])].weight
                     summed_dist = torch.cdist(first, sec).flatten().sum()
                     total_loss -= summed_dist
+
+        return total_loss
+
+
+# * Implementation of [2]
+
+
+class DecomposedLinear(nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        theta: Tensor | None = None,
+        bias: bool = True,
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        if theta is None:
+            self.theta: Tensor = nn.Parameter()
+        else:
+            self.theta = theta  # shared weight
+        self.gamma: Tensor = nn.Parameter(
+            torch.normal(0, 1, size=(out_features, in_features))
+        )  # Shape of n_classes x n_features
+        # TODO: better way to initialize weights???
+        if bias:
+            self.bias: Tensor | float = nn.Parameter(torch.zeros(1))
+        else:
+            self.bias = 0
+
+    @override
+    def forward(self, X):
+        beta: Tensor = self.gamma.mul(self.theta)
+        # y = x * torch.transpose(beta, 0, 1) + self.bias
+        return nn.functional.linear(X, beta, self.bias)
+
+
+class MultiLevel(d_ut.Module):
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: Sequence[int],
+        lmbda_1: float = 1.0,
+        lmbda_2: float = 1.0,
+        bias: bool = True,
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.lrs: nn.ModuleDict = nn.ModuleDict()
+        self.theta: Tensor = nn.Parameter(torch.normal(0, 1, (in_features,)))
+        self.n_tasks: Tensor = len(n_classes_per_task)
+        self.task_label_map: dict = {}
+        for i, n_classes in enumerate(n_classes_per_task):
+            self.task_label_map[i] = list(range(n_classes))
+            self.lrs[str(i)] = DecomposedLinear(
+                in_features=in_features,
+                out_features=n_classes,
+                theta=self.theta,
+                bias=bias,
+            )
+            self.lrs[str(i)].register_forward_hook(logistic_hook)
+        self.lmbda_1: float = lmbda_1
+        self.lmbda_2: float = lmbda_2
+
+    @override
+    def forward(self, X) -> tuple[Tensor]:
+        results = []
+        for i in range(self.n_tasks):
+            results.append(self.lrs[str(i)](X))
+        return tuple(results)
+
+    @staticmethod
+    @override
+    def criterion(model: MultiLevel, y_pred: Tensor, y_true: Tensor) -> Tensor:
+        total_loss: Tensor = torch.tensor(0)
+        n_samples = y_pred.shape[0]
+        if model.n_tasks > 1:
+            total_loss += 1 / 2 * multitask_cross_entropy_loss(y_pred, y_true)
+        else:
+            total_loss += nn.functional.cross_entropy(y_pred, y_true)
+
+        # Regularization
+        reg_theta = model.lmbda_1 * torch.sum(torch.abs(model.theta))
+        reg_gamma = 0
+        for lr in model.lrs.values():
+            reg_gamma += torch.sum(torch.abs(lr.gamma), ord=1)
+        reg_gamma *= model.lmbda_2
+        total_loss = total_loss / n_samples + reg_theta + reg_gamma
 
         return total_loss
