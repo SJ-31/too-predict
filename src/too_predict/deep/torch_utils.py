@@ -89,6 +89,10 @@ def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
     return torch.utils.data.TensorDataset(torch.tensor(X), torch.tensor(y_true))
 
 
+def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
+    return len(x.shape) <= 1
+
+
 class Module(nn.Module):
     def predict(self, X: torch.Tensor | np.ndarray) -> np.ndarray:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
@@ -97,14 +101,46 @@ class Module(nn.Module):
             return np.hstack([p.argmax(dim=1).numpy().reshape(-1, 1) for p in proba])
         return proba.argmax(dim=1).numpy()
 
+    def get_optimizers(self) -> Optimizer:
+        return optim.Adam(self.named_parameters())
 
-def get_n_features(
-    X: Dataset | torch.Tensor | np.ndarray, y: torch.Tensor | np.ndarray
-) -> tuple[int, int]:
+    @staticmethod
+    def criterion(model, y_pred, y_true):
+        raise NotImplementedError
+
+
+def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
+    one_d = is_atomic(x)
+    if one_d and isinstance(x, torch.Tensor):
+        return x.unique().size()[0]
+    elif isinstance(x, torch.Tensor):
+        return x.flatten().unique().size()[0]
+    elif (one_d and isinstance(x, np.ndarray)) or isinstance(x, pd.Series):
+        return np.unique(x).shape[0]
+    return len(set(x))
+
+
+def data_spec(
+    X: Dataset | DataLoader | torch.Tensor | np.ndarray,
+    y: torch.Tensor | np.ndarray | None = None,
+) -> tuple:
+    """Return a tuple of (n_features, n_classes) for the given dataset
+    If multitask, the second element is a tuple of length n_tasks
+    """
+
+    def _for_dataset(data):
+        x, y = data[:]
+        if is_atomic(y) or y.shape[1] == 1:
+            n_classes = n_uniques(y)
+        else:
+            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
+        return x.shape[1], n_classes
+
     if isinstance(X, Dataset):
-        x, y = next(iter(X))
-        return x.shape[1], y.shape[1]
-    return X.shape[1], y.shape[1]
+        return _for_dataset(X)
+    elif isinstance(X, DataLoader):
+        return _for_dataset(X.dataset)
+    return X.shape[1], len(set(y))
 
 
 def train_model(
