@@ -150,7 +150,7 @@ class TrialSetup:
             classifier = AlrBase(
                 model,
                 references=transform_kwargs["references"],
-                imputation=self._get("imputation"),
+                imputation=self._get("imputation", features),
                 n_refs=transform_kwargs["n_refs"],
             )
             features.extend(transform_kwargs["references"])
@@ -164,7 +164,7 @@ class TrialSetup:
     def _suggest_transformation(self, tname) -> Transformer | None:
         if tname == "alr":
             return None
-        imputation = self._get("imputation")
+        imputation = self._get("imputation", None)
         kwargs = self._suggest_transformation_kwargs(tname)
         return Transformer(
             tname,
@@ -182,7 +182,7 @@ class TrialSetup:
                 if self.for_trial
                 else self.params.get("clr_subset")
             )
-            if ref_set is not None:
+            if ref_set is not None and ref_set in REFS:
                 transform_kwargs["features"] = REFS[ref_set]
         elif tname == "alr":
             ref_set = (
@@ -234,7 +234,7 @@ class TrialSetup:
     def _get(
         self,
         value: Literal["transformation", "classifier", "imputation"],
-        features: list,
+        features: list | None,
     ) -> Filter | Transformer | PredBase | list | None | str:
         vals = self.user_opts.get(value)
         if vals is None:
@@ -387,15 +387,17 @@ class Optimizer:
             "direction": "maximize",
             "load_if_exists": True,
         }
-        defaults.update(kwargs)
         if "storage" not in kwargs and self.journal_file is not None:
             kwargs["storage"] = oj.JournalStorage(
                 oj.JournalFileBackend(self.journal_file)
             )
+        defaults.update(kwargs)
         try:
             study = optuna.create_study(**defaults)
             study.optimize(self.objective)
         except ValueError:
+            del defaults["direction"]
+            del defaults["load_if_exists"]
             study = optuna.load_study(**defaults)
         return study
 
