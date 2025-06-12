@@ -1,6 +1,6 @@
 #!/usr/bin/env ipython
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Callable, override
 
 import anndata as ad
@@ -11,6 +11,7 @@ import too_predict.utils as ut
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
@@ -191,6 +192,14 @@ def train_model(
 
     model.eval()
     return pd.DataFrame(metrics)
+
+
+def iter_cols(x: Tensor | np.ndarray) -> Iterable:
+    if isinstance(x, Tensor):
+        to_iter = torch.unbind(x, dim=1)
+    else:
+        to_iter = [x[:, i] for i in range(x.shape[1])]
+    return to_iter
 
 
 # def optimize():
