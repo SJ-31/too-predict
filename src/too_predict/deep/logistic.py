@@ -43,9 +43,9 @@ class DummyLR(d_ut.Module):
 
 
 def multitask_cross_entropy_loss(y_pred: Tensor, y_true: Tensor) -> Tensor:
-    total_loss: Tensor = torch.tensor(0)
-    for task_pred, task_y in enumerate(
-        zip(y_pred, torch.unbind(y_true, dim=1))
+    total_loss: Tensor = 0
+    for task_pred, task_y in zip(
+        y_pred, torch.unbind(y_true, dim=1)
     ):  # Gives y_hat = softmax(Xw + b)
         # tensor of shape n_samples, n_classes
         total_loss += nn.functional.cross_entropy(task_pred, task_y)
@@ -253,8 +253,8 @@ class MultiLevel(d_ut.Module):
     @staticmethod
     @override
     def criterion(model: MultiLevel, y_pred: Tensor, y_true: Tensor) -> Tensor:
-        total_loss: Tensor = torch.tensor(0)
-        n_samples = y_pred.shape[0]
+        total_loss: Tensor = 0
+        n_samples: int = y_true.shape[0]
         if model.n_tasks > 1:
             total_loss += 1 / 2 * multitask_cross_entropy_loss(y_pred, y_true)
         else:
@@ -264,7 +264,7 @@ class MultiLevel(d_ut.Module):
         reg_theta = model.lmbda_1 * torch.sum(torch.abs(model.theta))
         reg_gamma = 0
         for lr in model.lrs.values():
-            reg_gamma += torch.sum(torch.abs(lr.gamma), ord=1)
+            reg_gamma += torch.sum(torch.abs(lr.gamma))
         reg_gamma *= model.lmbda_2
         total_loss = total_loss / n_samples + reg_theta + reg_gamma
 
