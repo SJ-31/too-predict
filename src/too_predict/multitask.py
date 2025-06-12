@@ -1,8 +1,12 @@
 #!/usr/bin/env ipython
 
+from typing import Sequence
 
+import anndata as ad
 import numpy as np
 import sklearn.preprocessing as sp
+
+import too_predict.model as tm
 
 
 class MultiEncoder:
@@ -51,3 +55,33 @@ class MultiEncoder:
 
     def inverse_transform(self, arr: np.ndarray) -> np.ndarray:
         return self._t_helper(arr, True)
+
+
+class BaselinePred:
+    def __init__(
+        self,
+        models: Sequence[tm.PredBase],
+        make_dense: bool = False,
+    ) -> None:
+        self.models: dict[int, tm.PredBase] = {}
+        for i, model in enumerate(models):
+            self.models[i] = model
+        self.tasks: None | tuple = None
+
+    def fit(self, X: ad.AnnData, ys: Sequence[str]) -> None:
+        for i, y in enumerate(ys):
+            self.models[i].fit(X, y=y)
+        self.tasks = tuple(ys)
+
+    def predict(self, X: ad.AnnData) -> np.ndarray:
+        """Return matrix of predictions for X
+
+        Returns
+        -------
+        A matrix of shape n_samples x n_tasks where the k-th column are
+            the predictions for the samples in X on the k-th task
+        """
+        predictions = []
+        for i, _ in enumerate(self.tasks):
+            predictions.append(self.models[i].predict(X))
+        return np.array(predictions).transpose()
