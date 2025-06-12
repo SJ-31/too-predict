@@ -98,12 +98,28 @@ def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
 
 
 class Module(nn.Module):
-    def predict(self, X: torch.Tensor | np.ndarray) -> np.ndarray:
+    def _predict(self, X: np.ndarray) -> np.ndarray:
+        proba = self.predict_proba(X)
+        if isinstance(proba, tuple):
+            return np.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
+        return proba.argmax(axis=1)
+
+    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
+        if isinstance(X, DataLoader):
+            prediction = []
+            for x, _ in X:
+                prediction.append(self._predict(x))
+            return np.vstack(prediction)
+        if isinstance(X, Dataset):
+            X = X[:]
+        return self._predict(X)
+
+    def predict_proba(self, X) -> np.ndarray | tuple:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self(X)
         if isinstance(proba, tuple):
-            return np.hstack([p.argmax(dim=1).numpy().reshape(-1, 1) for p in proba])
-        return proba.argmax(dim=1).numpy()
+            return tuple(p.detach().numpy() for p in proba)
+        return proba.detach().numpy()
 
     def get_optimizers(self) -> Optimizer:
         return optim.Adam(self.named_parameters())
