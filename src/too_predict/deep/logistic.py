@@ -1,36 +1,91 @@
 #!/usr/bin/env ipython
+from __future__ import annotations
+
 import itertools
-from typing import override
+from typing import Sequence, override
 
 import numpy as np
 import sklearn.linear_model as sl
 import skorch
+import too_predict.deep.torch_utils as d_ut
 import torch
 from torch import Tensor, nn
+
+"""
+References
+[1] X. Gu, F. -L. Chung, H. Ishibuchi and S. Wang, "Multitask Coupled Logistic Regression and its Fast Implementation for Large Multitask Datasets," in IEEE Transactions on Cybernetics, vol. 45, no. 9, pp. 1953-1966, Sept. 2015, doi: 10.1109/TCYB.2014.2362771.
+[2] Aurélie C. Lozano and Grzegorz Swirszcz. 2012. Multi-level lasso for sparse multi-task regression. In Proceedings of the 29th International Coference on International Conference on Machine Learning (ICML'12). Omnipress, Madison, WI, USA, 595–602.
+
+"""
+# * Utils
 
 
 def logistic_hook(_m, _input, output) -> Tensor:
     return nn.functional.softmax(output, dim=1)
 
 
+class DummyLR(d_ut.Module):
+    def __init__(self, n_classes_per_task, l2=1) -> None:
+        super().__init__()
+        self.linear: nn.LazyLinear = nn.LazyLinear(out_features=n_classes_per_task)
+        self.l2: float = l2
+        self.softmax: nn.Softmax = nn.Softmax(dim=1)
+
+    @override
+    def forward(self, X):
+        return self.softmax(self.linear(X))
+
+    @staticmethod
+    def criterion(model, X, y):
+        cel = nn.functional.cross_entropy(input=X, target=y)
+        l2 = cel + model.l2 * torch.sum(model.linear.weight**2)
+        return l2
+
+
+def multitask_cross_entropy_loss(y_pred: Tensor, y_true: Tensor) -> Tensor:
+    total_loss: Tensor = torch.tensor(0)
+    for task_pred, task_y in enumerate(
+        zip(y_pred, torch.unbind(y_true, dim=1))
+    ):  # Gives y_hat = softmax(Xw + b)
+        # tensor of shape n_samples, n_classes
+        total_loss += nn.functional.cross_entropy(task_pred, task_y)
+        # Get loss on tasks separately
+    return total_loss
+
+
+# * Implementation of [1]
+
+
 class MtcLr(nn.Module):
+    """Implementation of multitask logistic regression by [1]
+
+    Parameters
+    ----------
+    l2 : l2 regularization parameter for multiclass cross-entropy loss
+    lmbda : parameter controlling influence of weight regularization between tasks
+    intial_fit : dictionary mapping task indices to sklearn LogisticRegression
+       models, fitted independently on their corresponding task
+    n_classes_per_task : Sequence where the i-th entry is the number of classes in the
+        i-th learning task
+    """
+
     def __init__(
         self,
         n_features: int,
-        task_spec: list[int],
+        n_classes_per_task: list[int],
         lmbda: float = 5.0,
+        l2: float = 1,
         initial_fit: dict | None = None,
-        sk_kwargs: dict | None = None,
     ) -> None:
         super().__init__()
-        self.n_tasks: int = len(task_spec)
+        self.n_tasks: int = len(n_classes_per_task)
         self.lmbda: float = lmbda
+        self.l2: float = l2
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.task_label_map: dict = {}
-        self.sk_kwargs: dict = sk_kwargs if sk_kwargs else {}
-        for i, n_classes in enumerate(task_spec):
+        for i, n_classes in enumerate(n_classes_per_task):
             # Initialize LR model for each task
-            lr = nn.Linear(n_features, n_classes)
+            lr = nn.LazyLinear(n_classes)
             lr.register_forward_hook(logistic_hook)
             self.lrs[str(i)] = lr
         if initial_fit is not None:
@@ -61,19 +116,45 @@ class MtcLr(nn.Module):
             )
 
     @override
-    def forward(self, X) -> list[Tensor]:
+    def forward(self, X) -> tuple[Tensor]:
         results = []
         for i in range(self.n_tasks):
             results.append(self.lrs[str(i)](X))
-        return results
+        return tuple(results)
+
+    @staticmethod
+    def criterion(model: MtcLr, y_pred, y_true):
+        total_loss = 0.0
+        if len(y_pred) > 1:
+            total_loss += multitask_cross_entropy_loss(y_pred, y_true)
+        else:
+            total_loss += nn.functional.cross_entropy(y_pred[0], y_true) + model._l2(0)
+
+        # Regularization by distances between parameters
+        if len(model.lrs) > 1:
+            tuples = itertools.product(model.lrs.keys())
+            distance_reg: float = 0
+            for tup in tuples:
+                for combo in itertools.combinations(tup, 2):
+                    first = model.lrs[str(combo[0])].weight
+                    sec = model.lrs[str(combo[1])].weight
+                    summed_dist = torch.cdist(first, sec).flatten().sum()
+                    distance_reg += summed_dist
+            total_loss -= model.lmbda * distance_reg
+
+        return total_loss
 
 
 class MtcLrSkorch(skorch.NeuralNetClassifier):
+    # BUG: these parameters won't update correctly
+    @classmethod
+    def new(cls, **kwargs):
+        return cls(module=MtcLr, **kwargs)
+
     @override
     def get_loss(self, y_pred, y_true, *args, **kwargs):
-        print("custom loss used")
         total_loss = 0.0
-        if len(y_pred.shape) > 1:
+        if len(y_pred) > 1:
             for task_pred, task_y in zip(
                 y_pred, torch.unbind(y_true, dim=1)
             ):  # Gives y_hat = softmax(Xw + b)
