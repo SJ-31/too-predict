@@ -89,6 +89,24 @@ def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
     return torch.utils.data.TensorDataset(torch.tensor(X), torch.tensor(y_true))
 
 
+class Module(nn.Module):
+    def predict(self, X: torch.Tensor | np.ndarray) -> np.ndarray:
+        X = torch.tensor(X) if isinstance(X, np.ndarray) else X
+        proba = self(X)
+        if isinstance(proba, tuple):
+            return np.hstack([p.argmax(dim=1).numpy().reshape(-1, 1) for p in proba])
+        return proba.argmax(dim=1).numpy()
+
+
+def get_n_features(
+    X: Dataset | torch.Tensor | np.ndarray, y: torch.Tensor | np.ndarray
+) -> tuple[int, int]:
+    if isinstance(X, Dataset):
+        x, y = next(iter(X))
+        return x.shape[1], y.shape[1]
+    return X.shape[1], y.shape[1]
+
+
 def train_model(
     model: nn.Module,
     loader: DataLoader,
