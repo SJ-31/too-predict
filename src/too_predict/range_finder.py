@@ -213,8 +213,11 @@ class RangeFinder:
         expr = self._get_id_expr(id)
         ranges, contents, ginis, labels = self._get_ranges_rx(id, expr, self.labels)
         if ranges is not None:
-            merged_contents = pd.concat(contents, axis=1)
-            merged_contents.columns = contents.keys()
+            if contents:
+                merged_contents = pd.concat(contents, axis=1)
+                merged_contents.columns = contents.keys()
+            else:
+                merged_contents = pd.DataFrame()
             self.imap[id] = RangeData(
                 rge=ranges, gini=ginis, labels=labels, contents=merged_contents
             )
