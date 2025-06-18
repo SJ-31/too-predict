@@ -99,6 +99,9 @@ def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
     return len(x.shape) <= 1
 
 
+# * Custom module
+
+
 class Module(nn.Module):
     def __init__(self, n_tasks: int = 1) -> None:
         super().__init__()
@@ -166,6 +169,9 @@ def data_spec(
     elif isinstance(X, DataLoader):
         return _for_dataset(X.dataset)
     return X.shape[1], len(set(y))
+
+
+# * Trainer
 
 
 class Trainer:
@@ -298,6 +304,8 @@ class Trainer:
 
         for i in range(self.n_epochs):
             losses = []
+
+            # Minibatch training loop
             for j, (X, y) in enumerate(loader):
                 self.optimizer.zero_grad()
                 out = self.model(X)
@@ -324,6 +332,10 @@ class Trainer:
                     losses.append(loss)
                 self.optimizer.step()
 
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+            # Per-epoch metrics
             if not self.at_batch_level:
                 with torch.no_grad():
                     self.metrics["epoch"].append(i)
