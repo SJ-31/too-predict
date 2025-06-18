@@ -1,16 +1,18 @@
 #!/usr/bin/env ipython
 
 from collections.abc import Iterable, Sequence
-from typing import Callable, override
+from typing import Callable, Literal, override
 
 import anndata as ad
 import numpy as np
 import pandas as pd
+import sklearn.metrics as met
 import sklearn.preprocessing as sp
 import too_predict.utils as ut
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.optim.lr_scheduler as schedule
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -98,6 +100,10 @@ def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
 
 
 class Module(nn.Module):
+    def __init__(self, n_tasks: int = 1) -> None:
+        super().__init__()
+        self.n_tasks: int = n_tasks
+
     def _predict(self, X: np.ndarray) -> np.ndarray:
         proba = self.predict_proba(X)
         if isinstance(proba, tuple):
@@ -124,8 +130,7 @@ class Module(nn.Module):
     def get_optimizers(self) -> Optimizer:
         return optim.Adam(self.named_parameters())
 
-    @staticmethod
-    def criterion(model, y_pred, y_true):
+    def criterion(self, y_pred, y_true):
         raise NotImplementedError
 
 
@@ -163,51 +168,161 @@ def data_spec(
     return X.shape[1], len(set(y))
 
 
-def train_model(
-    model: Module,
-    loader: DataLoader,
-    optimizer: Optimizer | None = None,
-    criterion: Callable | None = None,
-    needs_model: bool = False,
-    needs_closure: bool = False,
-    n_epochs: int = 1000,
-    tol: float | None = None,
-) -> pd.DataFrame:
-    metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
-    model.train()
-    record: bool = "record_metrics" in dir(model)
-    best_loss: float = torch.inf
-    if criterion is None:
-        criterion = model.criterion
-    if optimizer is None:
-        optimizer = model.get_optimizers()
-    for i in range(n_epochs):
-        for j, (X, y) in enumerate(loader):
+class Trainer:
+    """Wrapper class for training pytorch models
 
-            def closure():
-                optimizer.zero_grad()
-                pred = model(X)
-                loss: torch.Tensor
-                if not needs_model:
-                    loss = criterion(pred, y)
-                else:
-                    loss = criterion(model, pred, y)
+    Parameters
+    ----------
+    model : class inheriting torch_utils.Module, to take advantage of custom methods
+    tol : tolerance to .. TODO:
+    scheduler : custom scheduler
+    score_metric : Built-in function to measure model performance at each iteration.
+        Supports most scores in sklearn.metrics (pass without "_score")
+    score_fn : If score_metric is not provided, a Callable with the signature:
+        (y_true, y_pred) -> float
+    output_names : Names of the output tasks in a multitask model. A column with
+        name_<score_metric> will be added for each entry here
+
+    Returns
+    -------
+    Pandas dataframe containing training metrics, namely `loss` and the
+        performance measurement
+
+    Notes
+    -----
+    This function modifies `model` inplace
+    """
+
+    def __init__(
+        self,
+        model: Module,
+        optimizer: Optimizer | None = None,
+        n_epochs: int = 1000,
+        tol: float | None = None,
+        scheduler: schedule.LRScheduler | None = None,
+        score_metric: Literal[
+            "accuracy",
+            "balanced_accuracy",
+            "f1",
+            "precision",
+            "mean_squared_error",
+            "recall",
+        ] = "accuracy",
+        score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
+        score_fn_name: str = "custom_metric",
+        record_train_score: bool = True,
+        record_test_score: bool = True,
+        output_names: Sequence | None = None,
+        at_batch_level: bool = True,
+    ) -> None:
+        self.evaluate: Callable
+        self.n_epochs: int = n_epochs
+        self.optimizer: Optimizer = (
+            optimizer if optimizer is not None else model.get_optimizers()
+        )
+        self.at_batch_level: bool = at_batch_level
+        self.scheduler: schedule.LRScheduler | None = None
+        self.model: Module = model
+        self.record_train_score: bool = record_train_score
+        self.record_test_score: bool = record_test_score
+
+        if score_fn is not None:
+            self.train_score_key: str = f"train_{score_fn_name}"
+            self.test_score_key: str = f"test_{score_fn_name}"
+            self.evaluate = score_fn
+        else:
+            self.train_score_key = f"train_{score_metric}"
+            self.test_score_key = f"test_{score_metric}"
+            if score_metric == "accuracy":
+                self.evaluate = met.accuracy_score
+            elif score_metric == "balanced_accuracy":
+                self.evaluate = met.balanced_accuracy_score
+            elif score_metric == "f1":
+                self.evaluate = met.f1_score
+            elif score_metric == "precision":
+                self.evaluate = met.precision_score
+            elif score_metric == "mean_squared_error":
+                self.evaluate = met.mean_squared_error
+            elif score_metric == "recall":
+                self.evaluate = met.recall_score
+
+        self.metrics: dict = {"epoch": []}
+        if self.at_batch_level:
+            self.metrics["minibatch"] = []
+            self.metrics["loss"] = []
+        else:
+            self.metrics["avg_loss"] = []
+        if model.n_tasks > 1 and output_names is None:
+            output_names = range(model.n_tasks)
+
+        self.train_keys: list = []
+        self.test_keys: list = []
+        if model.n_tasks == 1:
+            if record_train_score:
+                self.metrics[self.train_score_key] = []
+            if record_test_score:
+                self.metrics[self.test_score_key] = []
+        elif output_names is not None:
+            for name in output_names:
+                if record_train_score:
+                    key = f"{name}_{self.train_score_key}"
+                    self.train_keys.append(key)
+                    self.metrics[key] = []
+                if record_test_score:
+                    key = f"{name}_{self.test_score_key}"
+                    self.test_keys.append(key)
+                    self.metrics[key] = []
+
+    def _record(self, X, y, single_key: str, multi_key: list[str]):
+        self.model.eval()
+        y_pred = self.model.predict(X)
+        if self.train_keys:
+            for i, k in enumerate(multi_key):
+                self.metrics[k].append(self.evaluate(y_pred[:, i], y[:, i]))
+        else:
+            score = self.evaluate(y_pred, y)
+            self.metrics[single_key].append(score)
+        self.model.train()
+
+    def __call__(self, loader: DataLoader) -> pd.DataFrame:
+        self.model.train()
+        for i in range(self.n_epochs):
+            losses = []
+            for j, (X, y) in enumerate(loader):
+                self.optimizer.zero_grad()
+                out = self.model(X)
+                loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=y)
                 loss.backward()
-                if record:
-                    model.record_metrics(metrics)
-                metrics["epoch"].append(i)
-                metrics["minibatch"].append(j)
-                metrics["loss"].append(loss.detach().numpy())
-                return loss
 
-            if not needs_closure:
-                _ = closure()
-                optimizer.step()
-            else:
-                optimizer.step(closure)
+                if self.record_train_score and self.at_batch_level:
+                    self._record(
+                        X, y, multi_key=self.train_keys, single_key=self.train_score_key
+                    )
+                if self.record_test_score and self.at_batch_level:
+                    self._record()  # TODO: how to do this
 
-    model.eval()
-    return pd.DataFrame(metrics)
+                if self.at_batch_level:
+                    self.metrics["epoch"].append(i)
+                    self.metrics["minibatch"].append(j)
+                    self.metrics["loss"].append(loss.detach().numpy())
+                else:
+                    losses.append(loss)
+                self.optimizer.step()
+
+            if not self.at_batch_level:
+                with torch.no_grad():
+                    self.metrics["epoch"].append(i)
+                    self.metrics["avg_loss"].append(np.mean(losses))
+                x_train, y_train = loader.dataset[:]
+                self._record(
+                    x_train,
+                    y_train,
+                    multi_key=self.train_keys,
+                    single_key=self.train_score_key,
+                )
+
+        self.model.eval()
+        return pd.DataFrame(self.metrics)
 
 
 def iter_cols(x: Tensor | np.ndarray) -> Iterable:
