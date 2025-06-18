@@ -6,13 +6,11 @@ from pathlib import Path
 
 import anndata as ad
 import numpy as np
-import pandas as pd
 import sklearn.metrics as met
 import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.transformer as tt
 import too_predict.utils as ut
-import torch
 import torch.utils.data as tdata
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
@@ -94,7 +92,6 @@ def holdout(
     to_encode: tuple[str],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
-    transformer: tt.Transformer | None = None,
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
@@ -106,19 +103,14 @@ def holdout(
 
     Parameters
     ---------
+    Same parameters as original holdout
     split_fn: A dictionary of function that splits adata into a tuple of train, test
     split_indices: A dictionary of mapping test set names to (train, test) boolean indices
 
     Return
     ------
-    A dictionary containing model evaluation results for each unique instance of
-        `group_col`
-
-    Notes
-    -----
-    - Only use in place of cross_validate with StratifiedGroupKFold
-        when the group category to be evaluated is
-        confounded with the target labels
+    A dictionary containing model evaluation results for each task
+    If `minimal`, is a dictionary of split->dict[task->accuracy]
     """
     if load_kwargs is None:
         load_kwargs = {}
@@ -145,9 +137,6 @@ def holdout(
             x_test.obs.to_csv(
                 save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
             )
-        if transformer is not None:
-            x_train = transformer.fit_transform(x_train)
-            x_test = transformer.fit_transform(x_test)
         train_l = DataLoader(
             d_ut.AnnDataset(x_train, to_encode=to_encode), **load_kwargs
         )
