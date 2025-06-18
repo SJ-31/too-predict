@@ -5,7 +5,7 @@
 import pickle
 from functools import partial
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, override
 
 import anndata as ad
 import numpy as np
@@ -22,9 +22,6 @@ from optuna.trial import TrialState
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.pipeline import Pipeline
 
-import too_predict._train_utils as tt
-import too_predict.utils as ut
-from too_predict._train_utils import ADDITIONAL_SPLITS
 from too_predict.evaluation import cross_validate, holdout
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
@@ -50,6 +47,285 @@ def get_options(file: str | Path | None = None) -> dict:
 
 
 class TrialSetup:
+    def __init__(
+        self, trial: optuna.Trial | None = None, trial_params: dict | None = None
+    ) -> None:
+        self.user_opts: dict
+        self.for_trial: bool = trial is not None
+        self.trial: optuna.Trial | None = trial
+        self.params: dict | None = trial_params
+        if trial is None and trial_params is None:
+            raise ValueError("One of trial or trial_params must be provided!")
+
+    def _suggest_param_or_default(self, param_name: str) -> Any:
+        """
+            Read a default value of a hyperparameter from user options, or suggest a
+            selection to the optuna trial
+            If the value of `param_name` in user_opts is a tuple, the first and
+        second values are interpreted as start, end of a range and the last
+        as the step
+            If a list, interpreted as categorical options
+        """
+        val = self.user_opts.get(param_name)
+        if val is None:
+            raise ValueError(f"Missing default value for {param_name}!")
+        if isinstance(val, list):
+            return self.trial.suggest_categorical(param_name, val)
+        elif isinstance(val, tuple):
+            if len(val) != 3:
+                raise ValueError("Values for tuple params must be (start, stop, step)")
+            start, stop, step = val
+            if isinstance(start, float):
+                return self.trial.suggest_float(param_name, start, stop, step=step)
+            else:
+                return self.trial.suggest_int(param_name, start, stop, step=step)
+        return val
+
+    def __call__(self, opts: dict | None = None) -> tuple:
+        raise NotImplementedError()
+
+
+def ignore_duplicated(
+    trial: optuna.Trial, states=(TrialState.COMPLETE, TrialState.PRUNED)
+) -> tuple[bool, float | None]:
+    consider = trial.study.get_trials(deepcopy=False, states=states)
+    for t in reversed(consider):
+        if t.params == trial.params:
+            return True, t.value
+    return False, 0.0
+
+
+# * Base optimizer
+
+
+class BaseOptimizer:
+    def __init__(
+        self,
+        score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
+        label_col: str = "tumor_type",
+        save_model: bool = True,
+        save_cv: bool = True,
+        ignore_duplicated: bool = True,
+        journal_file: Path | str | None = None,
+        artifact_dir: Path | None = None,
+    ) -> None:
+        self.label_col: str = label_col
+        self.save_model: bool = save_model
+        self.save_cv: bool = save_cv
+        self.journal_file: str | None = (
+            str(journal_file) if isinstance(journal_file, Path) else journal_file
+        )
+        self.artifact_dir: Path | None = artifact_dir
+        self.ignore_duplicated: bool = ignore_duplicated
+        self.score_fn: Callable = score_fn
+        self.objective: Callable[[optuna.Trial], float]
+
+    def make_objective(self, **kwargs):
+        if "artifact_store" not in kwargs and self.artifact_dir is not None:
+            kwargs["artifact_store"] = oa.FileSystemArtifactStore(self.artifact_dir)
+        self.objective = partial(self._objective, **kwargs)
+
+    def _objective(
+        self,
+        trial: optuna.Trial,
+        adata: ad.AnnData,
+        split_fns: dict | None = None,
+        split_masks: dict | None = None,
+        cv_splits=5,
+        opts: dict | None = None,
+        artifact_store: oa.FileSystemArtifactStore | None = None,
+        **kwargs,
+    ):
+        raise NotImplementedError()
+
+    def run_study(self, **kwargs) -> optuna.Study:
+        defaults = {
+            "study_name": "optimize",
+            "direction": "maximize",
+            "load_if_exists": True,
+        }
+        if "storage" not in kwargs and self.journal_file is not None:
+            kwargs["storage"] = oj.JournalStorage(
+                oj.JournalFileBackend(self.journal_file)
+            )
+        defaults.update(kwargs)
+        try:
+            study = optuna.create_study(**defaults)
+            study.optimize(self.objective)
+        except ValueError:
+            del defaults["direction"]
+            del defaults["load_if_exists"]
+            study = optuna.load_study(**defaults)
+        return study
+
+
+#
+# * For shallow models
+
+
+class Optimizer(BaseOptimizer):
+    def __init__(
+        self,
+        score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
+        label_col: str = "tumor_type",
+        save_model: bool = True,
+        save_cv: bool = True,
+        group_col: None | str = None,
+        ignore_duplicated: bool = True,
+        journal_file: Path | str | None = None,
+        artifact_dir: Path | None = None,
+    ) -> None:
+        super().__init__(
+            score_fn,
+            label_col,
+            save_model,
+            save_cv,
+            ignore_duplicated,
+            journal_file,
+            artifact_dir,
+        )
+        self.group_col: str = group_col
+
+    @override
+    def _objective(
+        self,
+        trial: optuna.Trial,
+        adata: ad.AnnData,
+        split_fns: dict | None = None,
+        split_masks: dict | None = None,
+        cv_splits=5,
+        opts: dict | None = None,
+        artifact_store: oa.FileSystemArtifactStore | None = None,
+        **kwargs,
+    ):
+        if self.ignore_duplicated:
+            is_duplicated, val = ignore_duplicated(trial)
+            if is_duplicated:
+                return val
+
+        setup = ShallowSetup(trial=trial, **kwargs)
+        # Suggest values to the trial object, it'll track which values have been
+        # seen
+        transform, classifier, pipeline = setup(
+            opts=opts if opts is not None else get_options()
+        )
+        if self.save_model:
+            write_pickle(pipeline, "save.pickle")
+            artifact_id = oa.upload_artifact(
+                artifact_store=artifact_store,
+                file_path="save.pickle",
+                study_or_trial=trial,
+            )
+            trial.set_user_attr("artifact_id", artifact_id)
+
+        adata = transform(adata.copy())
+        all_accs = []
+        if cv_splits > 1:
+            cv_results: dict = cross_validate(
+                classifier,
+                adata,
+                label_col=self.label_col,
+                n_splits=cv_splits,
+                trial=trial,
+                get_report_val=lambda x: x["kappa"],
+            )
+            if self.save_cv:
+                write_pickle(cv_results, "cv_results.pickle")
+                cv_id = oa.upload_artifact(
+                    artifact_store=artifact_store,
+                    file_path="cv_results.pickle",
+                    study_or_trial=trial,
+                )
+                trial.set_user_attr("cv_id", cv_id)
+            all_accs.append(cv_results["misc"]["balanced_acc"].mean())
+        if split_fns is None and split_masks is None and cv_splits <= 1:
+            raise ValueError("Not training task given!")
+        split_res: dict = holdout(
+            classifier, adata, split_fns=split_fns, split_masks=split_masks
+        )
+        all_accs.append(split_res["misc"]["balanced_acc"].mean())
+        return np.mean(all_accs)
+
+    def nested(
+        self,
+        adata: ad.AnnData,
+        n_outer: int,
+        n_inner: int,
+        pruner: BasePruner | None = None,
+        sampler_fn: Callable[[int], BaseSampler] | None = None,
+    ):
+        outer_results = []
+        if not self.group_col:
+            cv = ms.StratifiedKFold(
+                n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
+            )
+            outer_splits = cv.split(adata, adata.obs[self.label_col])
+        else:
+            cv = ms.StratifiedGroupKFold(
+                n_splits=n_outer, random_state=RANDOM_STATE, shuffle=True
+            )
+            outer_splits = cv.split(
+                adata, adata.obs[self.label_col], groups=adata.obs[self.group_col]
+            )
+        a_store = None
+        if self.artifact_dir is None and self.save_model:
+            raise ValueError("Must supply artifact store if `save_model` is True!")
+        for fold, (train_i, test_i) in enumerate(outer_splits):
+            # Search hyperparameter space in inner loop
+            x_train = adata[train_i]
+            x_test, y_test = adata[test_i], adata.obs[self.label_col].iloc[test_i]
+            sampler: BaseSampler = (
+                TPESampler(seed=fold) if sampler_fn is None else sampler_fn(fold)
+            )  # Sampler function takes seed as param
+            study_kwargs = {
+                "study_name": "optimize_predictions",
+                "direction": "maximize",
+                "sampler": sampler,
+            }
+            if pruner is not None:
+                study_kwargs["pruner"] = pruner
+            obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
+            if self.journal_file is not None:  # This enables parallelization
+                out = self.journal_file.joinpath(f"fold_{fold}.log")
+                jfile = oj.JournalFileBackend(str(out))
+                study_kwargs["storage"] = oj.JournalStorage(jfile)
+            if self.artifact_dir is not None:
+                a_store_dir = self.artifact_dir.joinpath(f"fold_{fold}")
+                a_store_dir.mkdir(exist_ok=True, parents=True)
+                a_store = oa.FileSystemArtifactStore(a_store_dir)
+                obj_kwargs["artifact_store"] = a_store
+
+            study = optuna.create_study(**study_kwargs)
+            obj = partial(self._objective, **obj_kwargs)
+            study.optimize(obj)
+
+            # Test optimal hyperparameters with inner test set
+            best_params = study.best_params
+            if self.save_model:
+                oa.download_artifact(
+                    artifact_store=a_store,
+                    artifact_id=study.best_trial.user_attrs["artifact_id"],
+                    file_path="best_model.pickle",
+                )
+                pipeline: Pipeline = pickle.load("best_model.pickle")
+                pipeline.fit(x_train, y=x_train.obs[self.label_col])
+                y_hat = pipeline.predict(x_test)
+            else:
+                cons = self.setup_fn()
+                transform, model, _ = cons()
+                model.fit(transform(x_train))
+                y_hat = model.predict(transform(x_test))
+            score = (
+                self.score_fn(y_test, y_hat)
+                if self.score_fn is not None
+                else sm.accuracy_score(y_test, y_hat)
+            )
+            outer_results.append((fold, best_params, score))
+
+        return outer_results
+
+
+class ShallowSetup(TrialSetup):
     """Helper class to transform data and get predictor from params
 
     Returns
@@ -77,17 +353,6 @@ class TrialSetup:
         or a tuple of [object, True] to indicate
             that the object be used as is. e.g. [PredBase(model), True]
     """
-
-    # * Trial setup init
-    def __init__(
-        self, trial: optuna.Trial | None = None, trial_params: dict | None = None
-    ) -> None:
-        self.user_opts: dict
-        self.for_trial: bool = trial is not None
-        self.trial: optuna.Trial | None = trial
-        self.params: dict | None = trial_params
-        if trial is None and trial_params is None:
-            raise ValueError("One of trial or trial_params must be provided!")
 
     def _suggest_gradient_booster(self, name: str):
         if self.for_trial and not self.user_opts.get("classifier_default"):
@@ -207,30 +472,6 @@ class TrialSetup:
             raise ValueError("Not recognized!")
         return transform_kwargs
 
-    def _suggest_param_or_default(self, param_name: str):
-        """
-        Read a default value of a hyperparameter from user options, or suggest a
-        selection to the optuna trial
-        If the value of `param_name` in user_opts is a tuple, the first and
-            second values are interpreted as start, end of a range and the last
-            as the step
-        If a list, interpreted as categorical options
-        """
-        val = self.user_opts.get(param_name)
-        if val is None:
-            raise ValueError(f"Missing default value for {param_name}!")
-        if isinstance(val, list):
-            return self.trial.suggest_categorical(param_name, val)
-        elif isinstance(val, tuple):
-            if len(val) != 3:
-                raise ValueError("Values for tuple params must be (start, stop, step)")
-            start, stop, step = val
-            if isinstance(start, float):
-                return self.trial.suggest_float(param_name, start, stop, step=step)
-            else:
-                return self.trial.suggest_int(param_name, start, stop, step=step)
-        return val
-
     def _get(
         self,
         value: Literal["transformation", "classifier", "imputation"],
@@ -249,9 +490,8 @@ class TrialSetup:
             return self._suggest_classifier(read, features=features)
         return read
 
-    def __call__(
-        self, opts: dict | None = None
-    ) -> tuple[Callable[[ad.AnnData], ad.AnnData], PredBase, Pipeline]:
+    @override
+    def __call__(self, opts: dict | None = None) -> tuple:
         transform: bool = True
         # Set up pipeline parameters
         if opts is None:
@@ -281,200 +521,3 @@ class TrialSetup:
             return x
 
         return transform_fn, classifier, Pipeline(pipeline_lst)
-
-
-def ignore_duplicated(
-    trial: optuna.Trial, states=(TrialState.COMPLETE, TrialState.PRUNED)
-) -> tuple[bool, float | None]:
-    consider = trial.study.get_trials(deepcopy=False, states=states)
-    for t in reversed(consider):
-        if t.params == trial.params:
-            return True, t.value
-    return False, 0.0
-
-
-class Optimizer:
-    def __init__(
-        self,
-        score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
-        label_col: str = "tumor_type",
-        save_model: bool = True,
-        save_cv: bool = True,
-        ignore_duplicated: bool = True,
-        group_col: None | str = None,
-        journal_file: Path | str | None = None,
-        artifact_dir: Path | None = None,
-    ) -> None:
-        self.label_col: str = label_col
-        self.save_model: bool = save_model
-        self.group_col: None | str = group_col
-        self.save_cv: bool = save_cv
-        self.journal_file: str | None = (
-            str(journal_file) if isinstance(journal_file, Path) else journal_file
-        )
-        self.artifact_dir: Path | None = artifact_dir
-        self.ignore_duplicated: bool = ignore_duplicated
-        self.score_fn: Callable = score_fn
-        self.objective: Callable[[optuna.Trial], float]
-
-    def make_objective(self, **kwargs):
-        if "artifact_store" not in kwargs and self.artifact_dir is not None:
-            kwargs["artifact_store"] = oa.FileSystemArtifactStore(self.artifact_dir)
-        self.objective = partial(self._objective, **kwargs)
-
-    def _objective(
-        self,
-        trial: optuna.Trial,
-        adata: ad.AnnData,
-        split_fns: dict | None = None,
-        split_masks: dict | None = None,
-        cv_splits=5,
-        opts: dict | None = None,
-        artifact_store: oa.FileSystemArtifactStore | None = None,
-        **kwargs,
-    ):
-        if self.ignore_duplicated:
-            is_duplicated, val = ignore_duplicated(trial)
-            if is_duplicated:
-                return val
-
-        setup = TrialSetup(trial=trial, **kwargs)
-        # Suggest values to the trial object, it'll track which values have been
-        # seen
-        transform, classifier, pipeline = setup(
-            opts=opts if opts is not None else get_options()
-        )
-        if self.save_model:
-            write_pickle(pipeline, "save.pickle")
-            artifact_id = oa.upload_artifact(
-                artifact_store=artifact_store,
-                file_path="save.pickle",
-                study_or_trial=trial,
-            )
-            trial.set_user_attr("artifact_id", artifact_id)
-
-        adata = transform(adata.copy())
-        all_accs = []
-        if cv_splits > 1:
-            cv_results: dict = cross_validate(
-                classifier,
-                adata,
-                label_col=self.label_col,
-                n_splits=cv_splits,
-                trial=trial,
-                get_report_val=lambda x: x["kappa"],
-            )
-            if self.save_cv:
-                write_pickle(cv_results, "cv_results.pickle")
-                cv_id = oa.upload_artifact(
-                    artifact_store=artifact_store,
-                    file_path="cv_results.pickle",
-                    study_or_trial=trial,
-                )
-                trial.set_user_attr("cv_id", cv_id)
-            all_accs.append(cv_results["misc"]["balanced_acc"].mean())
-        if split_fns is None and split_masks is None and cv_splits <= 1:
-            raise ValueError("Not training task given!")
-        split_res: dict = holdout(
-            classifier, adata, split_fns=split_fns, split_masks=split_masks
-        )
-        all_accs.append(split_res["misc"]["balanced_acc"].mean())
-        return np.mean(all_accs)
-
-    def run_study(self, **kwargs) -> optuna.Study:
-        defaults = {
-            "study_name": "optimize",
-            "direction": "maximize",
-            "load_if_exists": True,
-        }
-        if "storage" not in kwargs and self.journal_file is not None:
-            kwargs["storage"] = oj.JournalStorage(
-                oj.JournalFileBackend(self.journal_file)
-            )
-        defaults.update(kwargs)
-        try:
-            study = optuna.create_study(**defaults)
-            study.optimize(self.objective)
-        except ValueError:
-            del defaults["direction"]
-            del defaults["load_if_exists"]
-            study = optuna.load_study(**defaults)
-        return study
-
-    def nested(
-        self,
-        adata: ad.AnnData,
-        n_outer: int,
-        n_inner: int,
-        pruner: BasePruner | None = None,
-        sampler_fn: Callable[[int], BaseSampler] | None = None,
-    ):
-        outer_results = []
-        if not self.group_col:
-            cv = ms.StratifiedKFold(
-                n_splits=n_outer, shuffle=True, random_state=RANDOM_STATE
-            )
-            outer_splits = cv.split(adata, adata.obs[self.label_col])
-        else:
-            cv = ms.StratifiedGroupKFold(
-                n_splits=n_outer, random_state=RANDOM_STATE, shuffle=True
-            )
-            outer_splits = cv.split(
-                adata, adata.obs[self.label_col], groups=adata.obs[self.group_col]
-            )
-        a_store = None
-        if self.artifact_dir is None and self.save_model:
-            raise ValueError("Must supply artifact store if `save_model` is True!")
-        for fold, (train_i, test_i) in enumerate(outer_splits):
-            # Search hyperparameter space in inner loop
-            x_train = adata[train_i]
-            x_test, y_test = adata[test_i], adata.obs[self.label_col].iloc[test_i]
-            sampler: BaseSampler = (
-                TPESampler(seed=fold) if sampler_fn is None else sampler_fn(fold)
-            )  # Sampler function takes seed as param
-            study_kwargs = {
-                "study_name": "optimize_predictions",
-                "direction": "maximize",
-                "sampler": sampler,
-            }
-            if pruner is not None:
-                study_kwargs["pruner"] = pruner
-            obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
-            if self.journal_file is not None:  # This enables parallelization
-                out = self.journal_file.joinpath(f"fold_{fold}.log")
-                jfile = oj.JournalFileBackend(str(out))
-                study_kwargs["storage"] = oj.JournalStorage(jfile)
-            if self.artifact_dir is not None:
-                a_store_dir = self.artifact_dir.joinpath(f"fold_{fold}")
-                a_store_dir.mkdir(exist_ok=True, parents=True)
-                a_store = oa.FileSystemArtifactStore(a_store_dir)
-                obj_kwargs["artifact_store"] = a_store
-
-            study = optuna.create_study(**study_kwargs)
-            obj = partial(self._objective, **obj_kwargs)
-            study.optimize(obj)
-
-            # Test optimal hyperparameters with inner test set
-            best_params = study.best_params
-            if self.save_model:
-                oa.download_artifact(
-                    artifact_store=a_store,
-                    artifact_id=study.best_trial.user_attrs["artifact_id"],
-                    file_path="best_model.pickle",
-                )
-                pipeline: Pipeline = pickle.load("best_model.pickle")
-                pipeline.fit(x_train, y=x_train.obs[self.label_col])
-                y_hat = pipeline.predict(x_test)
-            else:
-                cons = self.setup_fn()
-                transform, model, _ = cons()
-                model.fit(transform(x_train))
-                y_hat = model.predict(transform(x_test))
-            score = (
-                self.score_fn(y_test, y_hat)
-                if self.score_fn is not None
-                else sm.accuracy_score(y_test, y_hat)
-            )
-            outer_results.append((fold, best_params, score))
-
-        return outer_results
