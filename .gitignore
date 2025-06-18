@@ -10,6 +10,7 @@ reports
 !reports/templates
 rust/Cargo.lock
 wheels/
+*.jupyter_ystore*
 *.egg-info
 
 # Virtual environments
