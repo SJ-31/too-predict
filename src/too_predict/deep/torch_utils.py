@@ -284,8 +284,18 @@ class Trainer:
             self.metrics[single_key].append(score)
         self.model.train()
 
-    def __call__(self, loader: DataLoader) -> pd.DataFrame:
+    def __call__(
+        self, loader: DataLoader, validation: Dataset | None = None
+    ) -> pd.DataFrame:
         self.model.train()
+
+        if validation is not None:
+            validate: bool = True
+            valid_x, valid_y = validation[:]
+        else:
+            valid_x, valid_y = None, None
+            validate = False
+
         for i in range(self.n_epochs):
             losses = []
             for j, (X, y) in enumerate(loader):
@@ -298,8 +308,13 @@ class Trainer:
                     self._record(
                         X, y, multi_key=self.train_keys, single_key=self.train_score_key
                     )
-                if self.record_test_score and self.at_batch_level:
-                    self._record()  # TODO: how to do this
+                if validate and self.record_test_score and self.at_batch_level:
+                    self._record(
+                        valid_x,
+                        valid_y,
+                        multi_key=self.test_keys,
+                        single_key=self.test_score_key,
+                    )  # TODO: maybe you should vary the validation set a bit?
 
                 if self.at_batch_level:
                     self.metrics["epoch"].append(i)
@@ -313,13 +328,21 @@ class Trainer:
                 with torch.no_grad():
                     self.metrics["epoch"].append(i)
                     self.metrics["avg_loss"].append(np.mean(losses))
-                x_train, y_train = loader.dataset[:]
-                self._record(
-                    x_train,
-                    y_train,
-                    multi_key=self.train_keys,
-                    single_key=self.train_score_key,
-                )
+                if self.record_train_score:
+                    x_train, y_train = loader.dataset[:]
+                    self._record(
+                        x_train,
+                        y_train,
+                        multi_key=self.train_keys,
+                        single_key=self.train_score_key,
+                    )
+                if validate and self.record_test_score:
+                    self._record(
+                        valid_x,
+                        valid_y,
+                        multi_key=self.test_keys,
+                        single_key=self.test_score_key,
+                    )
 
         self.model.eval()
         return pd.DataFrame(self.metrics)
