@@ -472,16 +472,19 @@ def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
 
 
 def training_data_internal_test(
-    sample: float = 0.3, label: str = "tumor_type"
+    sample: float = 0.3, label: str = "tumor_type", minimal: bool = False
 ) -> ad.AnnData:
-    adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
-    sc.pp.subsample(adata, sample)
-    sc.pp.filter_genes(adata, min_cells=10)
-    sc.pp.filter_cells(adata, min_counts=5000)
-    sc.pp.filter_genes(adata, min_counts=200)
-    adata, discarded_types = filter_by_obs(adata, [label], min=20)
-    print(f"Discarded {label}: {discarded_types}")
-    print(f"Test data shape: {adata.shape}")
+    if not minimal:
+        adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
+        sc.pp.subsample(adata, sample)
+        sc.pp.filter_genes(adata, min_cells=10)
+        sc.pp.filter_cells(adata, min_counts=5000)
+        sc.pp.filter_genes(adata, min_counts=200)
+        adata, discarded_types = filter_by_obs(adata, [label], min=20)
+        print(f"Discarded {label}: {discarded_types}")
+        print(f"Test data shape: {adata.shape}")
+    else:
+        adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST_MINIMAL.h5ad"))
     return adata
 
 
