@@ -1,12 +1,16 @@
 #!/usr/bin/env ipython
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 
+import anndata as ad
 import numpy as np
+import pandas as pd
 import sklearn.metrics as met
 import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
+import too_predict.transformer as tt
 import too_predict.utils as ut
 import torch
 import torch.utils.data as tdata
@@ -82,3 +86,90 @@ def train_test_split_torch(
     indices -= set(test_indices)
     train_indices = ut.RNG.choice(indices, size=train_size)
     return _final([tdata.Subset(train_indices), tdata.Subset(test_indices)])
+
+
+def holdout(
+    trainer: d_ut.Trainer,
+    adata: ad.AnnData,
+    to_encode: tuple[str],
+    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
+    | None = None,
+    transformer: tt.Transformer | None = None,
+    save_split_path: Path | None = None,
+    split_masks: dict[str, tuple] | None = None,
+    verbose: bool = False,
+    minimal: bool = False,
+    load_kwargs: dict | None = None,
+) -> dict:
+    """Wrapper function for doing the classic holdout method (train-test-split) with
+    torch module
+
+    Parameters
+    ---------
+    split_fn: A dictionary of function that splits adata into a tuple of train, test
+    split_indices: A dictionary of mapping test set names to (train, test) boolean indices
+
+    Return
+    ------
+    A dictionary containing model evaluation results for each unique instance of
+        `group_col`
+
+    Notes
+    -----
+    - Only use in place of cross_validate with StratifiedGroupKFold
+        when the group category to be evaluated is
+        confounded with the target labels
+    """
+    if load_kwargs is None:
+        load_kwargs = {}
+    if split_fns is None and split_masks is None:
+        raise ValueError("Either split_fns or split_indices must be given!")
+
+    split_is_fn: bool = split_fns is not None
+
+    def helper(set_label, splitter, cur_adata):
+        cur_adata = cur_adata.copy()
+        if split_is_fn:
+            x_train, x_test = splitter(cur_adata)
+        else:
+            x_train = cur_adata[splitter[0], :]
+            x_test = cur_adata[splitter[1], :]
+        if verbose:
+            print(
+                f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
+            )
+        if save_split_path is not None:
+            x_train.obs.to_csv(
+                save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
+            )
+            x_test.obs.to_csv(
+                save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
+            )
+        if transformer is not None:
+            x_train = transformer.fit_transform(x_train)
+            x_test = transformer.fit_transform(x_test)
+        train_l = DataLoader(
+            d_ut.AnnDataset(x_train, to_encode=to_encode), **load_kwargs
+        )
+        test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
+        x_test_tensor, y_true = test_dset[:]
+
+        trainer(train_l)
+
+        if not minimal:
+            task_classes = [list(np.unique(adata.obs[t])) for t in to_encode]
+            proba = trainer.model.predict_proba(x_test_tensor)
+            y_true = test_dset.decode(y_true)
+            res: dict = multitask_all_metrics(
+                y_true, proba, task_names=to_encode, task_classes=task_classes
+            )
+            return res
+        pred = trainer.model.predict(x_test_tensor)
+
+        return multitask_acc(y_true=y_true, predictions=pred, task_names=to_encode)
+
+    splitters: dict = split_fns if split_fns is not None else split_masks
+    result: dict = {}
+    for set_label, splitter in splitters.items():
+        result[set_label] = helper(set_label, splitter, adata)
+    return result
