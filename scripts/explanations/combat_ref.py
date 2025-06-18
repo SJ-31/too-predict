@@ -32,9 +32,9 @@ label_col = "tumor_type"
 # Test original
 def compare_new_original(adata):
     specs = [
-        ("clr_xgb3_edger_combat_ref", "original", True),
-        ("clr_xgb3_edger_combat_ref_org_rbatch", "org_as_ref", True),
-        ("clr_xgboost_edger_per_type_ovp_t_enriched", "clr_xgb3", False),
+        ("clr_xgb3_edger_combat_ref", "original", False),
+        ("clr_xgb3_edger_combat_ref_org_rbatch", "org_as_ref", False),
+        ("clr_xgboost_edger_per_type_ovp_t_enriched", "clr_xgb3", True),
     ]
     for model_name, prefix, skip in specs:
         if skip:
@@ -68,6 +68,7 @@ def compare_new_original(adata):
                 outdir=otest_dir,
                 correction_mode="on_train",
                 save_split_path=otest_dir,
+                with_randoms=False,
             )
         elif prefix == "original":
             # Upper limit to test against, can't use this for real
@@ -84,6 +85,7 @@ def compare_new_original(adata):
                 outdir=otest_dir,
                 correction_mode="before_split",
                 save_split_path=otest_dir,
+                with_randoms=False,
             )
         else:
             otest_dir = outdir.joinpath(f"{prefix}_organoid_test")
@@ -95,6 +97,7 @@ def compare_new_original(adata):
                 adata=adata.copy(),
                 model_spec=MODELS[model_name],
                 outdir=otest_dir,
+                with_randoms=False,
                 save_split_path=otest_dir,
             )
         te.write_cross_val(

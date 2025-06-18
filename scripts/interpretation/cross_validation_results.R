@@ -14,17 +14,26 @@ LABEL <- "tumor_type"
 if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
-  parser <- add_option(parser, c("-s", "--subdirectory"),
+  parser <- add_option(
+    parser,
+    c("-s", "--subdirectory"),
     type = "character",
     help = "subdirectory within the model result directory to pull data from",
     default = "" # e.g. [2025-03-11 Tue] use this to get stuff for "organoid_test_split"
   )
-  parser <- add_option(parser, c("-v", "--var"),
-    type = "character", help = "Name of column denoting different evaluation sets",
+  parser <- add_option(
+    parser,
+    c("-v", "--var"),
+    type = "character",
+    help = "Name of column denoting different evaluation sets",
     default = "fold"
   )
-  parser <- add_option(parser, c("-l", "--label"),
-    type = "character", help = "Label that was predicted in cross validation", default = "tumor_type"
+  parser <- add_option(
+    parser,
+    c("-l", "--label"),
+    type = "character",
+    help = "Label that was predicted in cross validation",
+    default = "tumor_type"
   )
   args <- parse_args(parser)
   OUTDIR <- here(OUTDIR, args$subdirectory)
@@ -34,9 +43,16 @@ if (sys.nframe() == 0) {
 }
 
 
-DIRS <- list.files(here("data", "output", "cross_validation"), full.names = TRUE) |>
+DIRS <- list.files(
+  here("data", "output", "cross_validation"),
+  full.names = TRUE
+) |>
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
-  discard(\(x) basename_no_ext(x) %in% c("test", "confusion_matrices", "additional_splits"))
+  discard(
+    \(x)
+      basename_no_ext(x) %in%
+        c("test", "confusion_matrices", "additional_splits")
+  )
 
 
 ## * Data retrieval
@@ -90,7 +106,10 @@ get_prec_recall <- function(label) {
           mutate(
             step = seq_len(n()),
             class_avg_precision = average_precision,
-            average_precision = as.numeric(str_remove(average_precision, ".*: "))
+            average_precision = as.numeric(str_remove(
+              average_precision,
+              ".*: "
+            ))
           ) |>
           ungroup()
       })
@@ -127,7 +146,7 @@ if (!is.null(pr)) {
 
 ## * Hypothesis testing
 
-## --- CODE BLOCK ---
+# %%
 
 # Metrics to test on (suitable for imbalanced data)
 # - Kappa
@@ -135,13 +154,18 @@ if (!is.null(pr)) {
 # - PRC AUC
 # - F1 score
 metrics <- list(
-  kappa = misc, mcc = misc,
-  `f1-score` = filter(report, !grepl("avg", class)) |> mutate(
-    !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))
-  )
+  kappa = misc,
+  mcc = misc,
+  `f1-score` = filter(report, !grepl("avg", class)) |>
+    mutate(
+      !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))
+    )
 )
 if (!is.null(pr_auc)) {
-  metrics[["prc_auc"]] <- mutate(pr_auc, !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR)))
+  metrics[["prc_auc"]] <- mutate(
+    pr_auc,
+    !!as.symbol(VAR) := paste0(class, !!as.symbol(VAR))
+  )
 }
 
 
@@ -163,9 +187,15 @@ get_tests <- function() {
 
   wilcox_tt <- lapply(significant_tt, \(m) {
     tb <- metrics[[m]]
-    tidy_pairwise(tb$model, tb[[m]], \(x, y) {
-      wilcox.test(x, y)
-    }, \(x) p.adjust(x, method = "bonferroni")) |> mutate(metric = m)
+    tidy_pairwise(
+      tb$model,
+      tb[[m]],
+      \(x, y) {
+        wilcox.test(x, y)
+      },
+      \(x) p.adjust(x, method = "bonferroni")
+    ) |>
+      mutate(metric = m)
   }) |>
     bind_rows()
   # TODO: is there a better post-hoc test to use?
@@ -174,15 +204,20 @@ get_tests <- function() {
 
 try(get_tests())
 
-## --- CODE BLOCK ---
+# %%
 
 # [2025-03-10 Mon] We probably want to maximize TPR
 # should do this with weights
 
 # List mapping desired metrics to logicals which are TRUE if higher values are better for the
 # given metric
-## --- CODE BLOCK ---
-metric_rankings <- list(kappa = TRUE, `f1-score` = TRUE, prc_auc = TRUE, mcc = TRUE)
+# %%
+metric_rankings <- list(
+  kappa = TRUE,
+  `f1-score` = TRUE,
+  prc_auc = TRUE,
+  mcc = TRUE
+)
 if (is.null(pr_auc)) {
   metric_rankings$prc_auc <- NULL
 }
@@ -214,7 +249,7 @@ combined |>
   group_by(model) |>
   select(-fold) |>
   summarize(across(where(is.numeric), mean)) |>
-  write_csv(here(OUTDIR, glue("combined_metrics_{LABEl}_folded.csv")))
+  write_csv(here(OUTDIR, glue("combined_metrics_{LABEL}_folded.csv")))
 
 
 max_score <- length(metric_rankings) * length(unique(combined[[VAR]]))
@@ -223,7 +258,10 @@ models <- unique(combined$model)
 
 get_top <- rank_by_metrics("model", VAR, combined, metric_rankings)
 write_csv(get_top$table, here(OUTDIR, glue("rank_score_tracker_{LABEL}.csv")))
-write_csv(as_tibble(as.list(get_top$top)), here(OUTDIR, glue("model_ranks_{LABEL}.csv")))
+write_csv(
+  as_tibble(as.list(get_top$top)),
+  here(OUTDIR, glue("model_ranks_{LABEL}.csv"))
+)
 
 ## * Plots
 
@@ -254,7 +292,11 @@ roc_plot <- local({
 })
 
 dir <- "/home/shannc/Bio_SDD/too-predict/data/output/cross_validation/alr_random_forest_edger_lfc/additional_splits"
-m_files <- list.files(dir, pattern = glue("{LABEL}.*cm.*csv"), full.names = TRUE)
+m_files <- list.files(
+  dir,
+  pattern = glue("{LABEL}.*cm.*csv"),
+  full.names = TRUE
+)
 
 ## * Confusion matrices
 
@@ -262,7 +304,11 @@ cm_outdir <- here(OUTDIR, "confusion_matrices")
 dir.create(cm_outdir)
 summarize_cm <- function(directory, label, pattern = NULL, outname = NULL) {
   if (is.null(pattern)) {
-    m_files <- list.files(directory, pattern = glue("{label}.*cm.*csv"), full.names = TRUE)
+    m_files <- list.files(
+      directory,
+      pattern = glue("{label}.*cm.*csv"),
+      full.names = TRUE
+    )
   } else {
     m_files <- list.files(directory, pattern = pattern, full.names = TRUE)
   }
@@ -276,8 +322,10 @@ summarize_cm <- function(directory, label, pattern = NULL, outname = NULL) {
       group_by(x, y) |>
       summarise(value = mean(value)) |>
       ungroup()
-    plot <- plot_confusion_matrix(average_m,
-      x_label = "True", y_label = "Prediction",
+    plot <- plot_confusion_matrix(
+      average_m,
+      x_label = "True",
+      y_label = "Prediction",
       fill_label = "Average count"
     )
     if (nchar(SUBDIRECTORY) == 0) {
@@ -301,13 +349,15 @@ all_cm <- lapply(DIRS, \(x) summarize_cm(here(x, SUBDIRECTORY), LABEL))
 # Look at chula organoid CM
 if (SUBDIRECTORY == "additional_splits") {
   lapply(DIRS, \(x) {
-    summarize_cm(here(x, SUBDIRECTORY),
+    summarize_cm(
+      here(x, SUBDIRECTORY),
       pattern = glue("{LABEL}.*cm.*CHULA.csv"),
       outname = glue("{LABEL}-chula_avg_cm")
     )
   })
   lapply(DIRS, \(x) {
-    summarize_cm(here(x, SUBDIRECTORY),
+    summarize_cm(
+      here(x, SUBDIRECTORY),
       pattern = glue("{LABEL}.*cm.*GEO.csv"),
       outname = glue("{LABEL}-geo_avg_cm")
     )

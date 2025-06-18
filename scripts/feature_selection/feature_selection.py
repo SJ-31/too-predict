@@ -264,7 +264,9 @@ def range_finder(adata):
         cur_outdir.mkdir(exist_ok=True)
         outfile = storage.joinpath(f"range_finder_{name}.pkl")
         if not outfile.exists():
-            rfinder = RangeFinder(label_col=label_col, multitask_method=mmethod)
+            rfinder = RangeFinder(
+                label_col=label_col, multitask_method=mmethod, min_label_within_p=0.7
+            )
             rfinder.fit(transformed)
             ut.write_pickle(rfinder, outfile)
             rfinder.label_metrics.to_csv(
@@ -275,6 +277,7 @@ def range_finder(adata):
             )
         else:
             rfinder = ut.load_pickle(outfile)
+            print(f"Loaded {outfile}")
             mapping, df = get_rangefinder_best(
                 rfinder,
                 n=20,
