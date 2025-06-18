@@ -15,10 +15,14 @@ from torch.utils.data import DataLoader, Dataset
 
 
 def multitask_acc(
-    y_true: Tensor | np.ndarray,
+    y_true: Tensor | np.ndarray | DataLoader | Dataset,
     predictions: Tensor | np.ndarray,
     task_names: Sequence[str] | None = None,
 ) -> dict:
+    if isinstance(y_true, Dataset):
+        y_true = y_true[:][1]
+    elif isinstance(y_true, DataLoader):
+        y_true = y_true.dataset[:][1]
     y_iter = d_ut.iter_cols(y_true)
     pred_iter = d_ut.iter_cols(predictions)
     if task_names is None:
