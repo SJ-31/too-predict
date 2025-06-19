@@ -6,14 +6,14 @@ from pathlib import Path
 
 import anndata as ad
 import numpy as np
+import pandas as pd
 import sklearn.metrics as met
+import sklearn.model_selection as ms
 import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
-import too_predict.transformer as tt
 import too_predict.utils as ut
-import torch.utils.data as tdata
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Subset, random_split
 
 
 def multitask_acc(
@@ -21,6 +21,19 @@ def multitask_acc(
     predictions: Tensor | np.ndarray,
     task_names: Sequence[str] | None = None,
 ) -> dict:
+    """Compute accuracy independently on each prediction task
+
+    Parameters
+    ----------
+    y_true : true values, of shape n_samples x n_tasks
+    predictions : multitask predictions, same shape as y_true
+    task_names : names of prediction tasks
+
+    Returns
+    -------
+    Dictionary of task_name->task_accuracy. If names not provided, indices in
+        y_true are used instead
+    """
     if isinstance(y_true, Dataset):
         y_true = y_true[:][1]
     elif isinstance(y_true, DataLoader):
@@ -75,7 +88,7 @@ def train_test_split_torch(
         if train_size is None:
             train_size = 1 - test_size
         if isinstance(train_size, float):
-            return _final(tdata.random_split(dataset, (train_size, test_size)))
+            return _final(random_split(dataset, (train_size, test_size)))
         test_size = math.floor(len(dataset) * test_size)
     elif train_size is None:
         train_size = n_samples - test_size
@@ -83,7 +96,7 @@ def train_test_split_torch(
     test_indices = ut.RNG.choice(indices, size=test_size)
     indices -= set(test_indices)
     train_indices = ut.RNG.choice(indices, size=train_size)
-    return _final([tdata.Subset(train_indices), tdata.Subset(test_indices)])
+    return _final([Subset(train_indices), Subset(test_indices)])
 
 
 def holdout(
@@ -96,7 +109,7 @@ def holdout(
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
     minimal: bool = False,
-    load_kwargs: dict | None = None,
+    **kwargs,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split) with
     torch module
@@ -112,8 +125,6 @@ def holdout(
     A dictionary containing model evaluation results for each task
     If `minimal`, is a dictionary of split->dict[task->accuracy]
     """
-    if load_kwargs is None:
-        load_kwargs = {}
     if split_fns is None and split_masks is None:
         raise ValueError("Either split_fns or split_indices must be given!")
 
@@ -137,9 +148,7 @@ def holdout(
             x_test.obs.to_csv(
                 save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
             )
-        train_l = DataLoader(
-            d_ut.AnnDataset(x_train, to_encode=to_encode), **load_kwargs
-        )
+        train_l = DataLoader(d_ut.AnnDataset(x_train, to_encode=to_encode), **kwargs)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
         x_test_tensor, y_true = test_dset[:]
 
