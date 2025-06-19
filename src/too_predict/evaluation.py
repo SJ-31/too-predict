@@ -9,6 +9,7 @@ import optuna
 import pandas as pd
 import rpy2
 import sklearn.metrics as me
+import sklearn.metrics as met
 import sklearn.model_selection as ms
 from rpy2.rinterface_lib.embedded import RRuntimeError
 
@@ -364,6 +365,7 @@ def holdout(
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
+    minimal: bool = False,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
 
@@ -427,19 +429,22 @@ def holdout(
             x_train = transformer.fit_transform(x_train)
             x_test = transformer.fit_transform(x_test)
         model.fit(x_train, y=label_col)
-        proba = model.predict_proba(x_test)
-        y_true = x_test.obs[label_col]
-        y_uniques = y_true.unique()
-        res: dict = get_all_metrics(y_true, proba, model.classes_)
-        for k, v in res.items():
-            if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
-                if k == "cm":
-                    continue
-                res[k] = v.loc[v["class"].isin(y_uniques), :]
+        if not minimal:
+            proba = model.predict_proba(x_test)
+            y_true = x_test.obs[label_col]
+            y_uniques = y_true.unique()
+            res: dict = get_all_metrics(y_true, proba, model.classes_)
+            for k, v in res.items():
+                if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
+                    if k == "cm":
+                        continue
+                    res[k] = v.loc[v["class"].isin(y_uniques), :]
 
-        res["misses"] = get_misses(x_test, y_true, res["pred"])
-        res["split_prop"] = split_prop
-        return res
+            res["misses"] = get_misses(x_test, y_true, res["pred"])
+            res["split_prop"] = split_prop
+            return res
+        pred = model.predict(x_test)
+        return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}
 
     dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": [], "misses": []}
     misc_tmp = {
@@ -452,10 +457,13 @@ def holdout(
         "mcc": [],
     }
     cms = {}
+    minimal_accs = {}
     splitters: dict = split_fns if split_fns is not None else split_masks
     for set_label, splitter in splitters.items():
         try:
             cur = helper(set_label, splitter, adata)
+            if minimal:
+                minimal_accs[set_label] = cur
         except RRuntimeError as e:
             print("Error in R runtime: ", e)
             print("ignoring...")
@@ -471,10 +479,12 @@ def holdout(
             if df is not None:
                 df["test_set"] = set_label
                 dfs[d].append(df)
-    concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0}
-    concat["cm"] = cms
-    concat["misc"] = pd.DataFrame(misc_tmp)
-    return concat
+    if not minimal:
+        concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0}
+        concat["cm"] = cms
+        concat["misc"] = pd.DataFrame(misc_tmp)
+        return concat
+    return minimal_accs
 
 
 def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
