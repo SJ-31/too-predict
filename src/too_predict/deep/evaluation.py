@@ -171,3 +171,38 @@ def holdout(
     for set_label, splitter in splitters.items():
         result[set_label] = helper(set_label, splitter, adata)
     return result
+
+
+def cross_validate(
+    trainer: d_ut.Trainer,
+    adset: d_ut.AnnDataset,
+    random_state: int | None = ut.RANDOM_STATE,
+    n_splits: int = 5,
+    save_intermediate: bool = False,
+    intermediate_out: Path | None = None,
+    **kwargs,
+) -> pd.DataFrame:
+    cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
+    splits = cv.split(adset)
+    metrics: dict = {"fold": []}
+    tasks = adset.label_cols
+    for task in tasks:
+        metrics[task] = []
+    for fold, (train_idx, test_idx) in enumerate(splits):
+        train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
+        test: Dataset = Subset(adset, test_idx)
+
+        y_true = test[:][1]
+
+        cur_fold = trainer(train)
+        if save_intermediate and intermediate_out:
+            cur_fold.write_csv(
+                intermediate_out.joinpath(f"fold_{fold}_training.csv"), index=False
+            )
+
+        y_pred = trainer.model.predict(test[:][0])
+        acc = multitask_acc(y_true, y_pred, task_names=tasks)
+        for t in tasks:
+            metrics[t].append(acc[t])
+        metrics["fold"].append(fold)
+    return pd.DataFrame(metrics)
