@@ -2,10 +2,11 @@
 import itertools
 import math
 from abc import abstractmethod
+from datetime import date
 from functools import reduce
 from os import replace
 from pathlib import Path
-from typing import Literal, Sequence, override
+from typing import Literal, override
 
 import anndata as ad
 import h5py
@@ -31,6 +32,8 @@ import sklearn.model_selection as ms
 import sklearn.neighbors as sn
 import sklearn.preprocessing as sp
 import too_predict._rust_helpers as rh
+import too_predict.deep.evaluation as d_ev
+import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.explanation as ex
 import too_predict.filter as fil
@@ -42,6 +45,7 @@ import too_predict.r_utils as ru
 import too_predict.range_finder as tr
 import too_predict.recoder as rt
 import too_predict.utils as ut
+import torch
 from joblib import Parallel, delayed, parallel
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
@@ -58,9 +62,12 @@ from too_predict._train_utils import (
     read_model_spec,
 )
 from too_predict.corrector import Corrector
+from too_predict.deep.logistic import MultiLevel
 from too_predict.transformer import Transformer
+from torch.utils.data import DataLoader
 
-# #  --- CODE BLOCK ---
+# %%
+
 #
 base = importr("base")
 ensembldb = importr("ensembldb")
@@ -69,8 +76,6 @@ obs = pd.read_csv(here("data", "training_data_obs.csv"))
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
 adata = ut.training_data_internal_test()
 
-
-# #  --- CODE BLOCK ---
 
 spc = MODELS["clr_ranks_mean_xgb_edger_per_type_ovp"]
 
@@ -84,10 +89,6 @@ adata = adata[
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
 
-
-# #  --- CODE BLOCK ---
-
-
 train, test = ut.train_test_split_ad(adata[:, :50])
 
 
@@ -95,13 +96,14 @@ def get_labs(adata) -> np.ndarray:
     return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
 
 
-# import
-# def make_annloader() -> ad.experimental.AnnLoader:
-import torch
+# %%
 
-to_encode = ["Sample_Type", "tumor_type", "primary_site"]
-label_encoders = {s: sp.LabelEncoder() for s in to_encode}
-for k, v in label_encoders.items():
-    v.fit(adata.obs[k])
+torch.set_default_dtype(torch.float64)
+adset = d_ut.AnnDataset(filtered, to_encode=("tumor_type", "Sample_Type"))
 
-converters = {"obs": {k: v.transform for k, v in label_encoders.items()}}
+n_features, n_classes = d_ut.data_spec(adset)
+model = MultiLevel(in_features=n_features, n_classes_per_task=n_classes)
+opti = model.get_optimizers()
+trainer = d_ut.Trainer(model, n_epochs=5, record_test_score=False)
+
+cv_res = d_ev.cross_validate(trainer, adset, batch_size=64)

@@ -118,9 +118,6 @@ def test_multilevel():
 
 # %%
 
-mll = test_multilevel()
-
-par = next(mll.named_parameters())[1]
 
 # smodel = test_dummy()
 # dummy = test_dummy()

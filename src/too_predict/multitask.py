@@ -1,6 +1,6 @@
 #!/usr/bin/env ipython
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import anndata as ad
 import numpy as np
