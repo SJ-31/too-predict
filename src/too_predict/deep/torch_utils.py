@@ -123,6 +123,8 @@ class Module(nn.Module):
             X = X[:]
         return self._predict(X)
 
+    # def reset_params(self):
+
     def predict_proba(self, X) -> np.ndarray | tuple:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self(X)
@@ -172,6 +174,8 @@ def data_spec(
 
 
 # * Trainer
+
+# TODO: need to add a method to reset the model params on __call__
 
 
 class Trainer:
@@ -252,29 +256,38 @@ class Trainer:
             elif score_metric == "recall":
                 self.evaluate = met.recall_score
 
-        self.metrics: dict = {"epoch": []}
+        self.metrics: dict
+        self.train_keys: list
+        self.test_keys: list
+        self.output_names: Sequence | None
+
+        if self.model.n_tasks > 1 and output_names is None:
+            self.output_names = range(self.model.n_tasks)
+        else:
+            self.output_names = output_names
+
+    def _init_metrics(self):
+        self.metrics = {"epoch": []}
+        self.train_keys = []
+        self.test_keys = []
+
         if self.at_batch_level:
             self.metrics["minibatch"] = []
             self.metrics["loss"] = []
         else:
             self.metrics["avg_loss"] = []
-        if model.n_tasks > 1 and output_names is None:
-            output_names = range(model.n_tasks)
-
-        self.train_keys: list = []
-        self.test_keys: list = []
-        if model.n_tasks == 1:
-            if record_train_score:
+        if self.model.n_tasks == 1:
+            if self.record_train_score:
                 self.metrics[self.train_score_key] = []
-            if record_test_score:
+            if self.record_test_score:
                 self.metrics[self.test_score_key] = []
-        elif output_names is not None:
-            for name in output_names:
-                if record_train_score:
+        if self.output_names is not None:
+            for name in self.output_names:
+                if self.record_train_score:
                     key = f"{name}_{self.train_score_key}"
                     self.train_keys.append(key)
                     self.metrics[key] = []
-                if record_test_score:
+                if self.record_test_score:
                     key = f"{name}_{self.test_score_key}"
                     self.test_keys.append(key)
                     self.metrics[key] = []
@@ -293,7 +306,12 @@ class Trainer:
     def __call__(
         self, loader: DataLoader, validation: Dataset | None = None
     ) -> pd.DataFrame:
+        self._init_metrics()
+        # TODO: reset model params here
         self.model.train()
+
+        if validation is None and self.record_test_score:
+            raise ValueError("Can't record test score without validation set!")
 
         if validation is not None:
             validate: bool = True
