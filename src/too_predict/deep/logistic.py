@@ -102,6 +102,11 @@ class MtcLr(d_ut.Module):
             result[str(i)] = lr
         return result
 
+    @override
+    def reset_parameters(self):
+        for v in self.lrs.values():
+            v.reset_parameters()
+
     def init_lr_weights(self, initial_fit: dict) -> None:
         """Initialize weights in model's lr objects as an independent fit on the
         different tasks
@@ -157,22 +162,28 @@ class DecomposedLinear(nn.Module):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
+        self.bias: Tensor
+        self.theta: Tensor
+        self.gamma: Tensor
         if theta is None:
-            self.theta: Tensor = nn.Parameter()
+            self.theta = nn.Parameter()
         else:
             self.theta = theta  # shared weight
-        self.gamma: Tensor = nn.Parameter(
-            torch.normal(0, 1, size=(out_features, in_features))
-        )  # Shape of n_classes x n_features
-        # TODO: better way to initialize weights???
+        self.gamma = nn.Parameter(torch.empty((out_features, in_features)))
+        # Shape of n_classes x n_features
         if bias:
-            self.bias: Tensor | float = nn.Parameter(torch.zeros(1))
+            self.bias = nn.Parameter(torch.empty(out_features))
         else:
-            self.bias = 0
+            self.register_parameter("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        d_ut.linear_reset_parameters(weight=self.gamma, bias=self.bias)
 
     def forward(self, X):
         beta: Tensor = self.gamma.mul(self.theta)
         # y = x * torch.transpose(beta, 0, 1) + self.bias
+        # (n_samples x n_features) * (n_features x n_classes)
         return nn.functional.linear(X, beta, self.bias)
 
 
@@ -189,7 +200,7 @@ class MultiLevel(d_ut.Module):
     ) -> None:
         super().__init__(n_tasks=len(n_classes_per_task), *args, **kwargs)
         self.lrs: nn.ModuleDict = nn.ModuleDict()
-        self.theta: Tensor = nn.Parameter(torch.normal(0, 1, (in_features,)))
+        self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
         self.task_label_map: dict = {}
         for i, n_classes in enumerate(n_classes_per_task):
             self.task_label_map[i] = list(range(n_classes))
@@ -202,6 +213,13 @@ class MultiLevel(d_ut.Module):
             self.lrs[str(i)].register_forward_hook(logistic_hook)
         self.lmbda_1: float = lmbda_1
         self.lmbda_2: float = lmbda_2
+        self.reset_parameters()
+
+    @override
+    def reset_parameters(self):
+        d_ut.linear_reset_parameters(self.theta)
+        for model in self.lrs.values():
+            model.reset_parameters()
 
     @override
     def forward(self, X) -> tuple[Tensor]:
