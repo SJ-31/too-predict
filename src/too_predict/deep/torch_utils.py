@@ -397,8 +397,8 @@ def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
 
 
 def data_spec(
-    X: Dataset | DataLoader | torch.Tensor | np.ndarray,
-    y: torch.Tensor | np.ndarray | None = None,
+    X: Dataset | DataLoader | torch.Tensor | np.ndarray | ad.AnnData,
+    y: torch.Tensor | np.ndarray | None | pd.DataFrame = None,
 ) -> tuple:
     """Return a tuple of (n_features, n_classes) for the given dataset
     If multitask, the second element is a tuple of length n_tasks
@@ -412,8 +412,21 @@ def data_spec(
             n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
         return x.shape[1], n_classes
 
+    if (
+        isinstance(y, tuple)
+        and isinstance(next(iter(y)), str)
+        and isinstance(X, ad.AnnData)
+    ):
+        y = X.obs.loc[:, y]
+    if isinstance(X, ad.AnnData):
+        X = ut.xarray_if_sparse(X)
+
     if isinstance(X, Dataset):
         return _for_dataset(X)
     elif isinstance(X, DataLoader):
         return _for_dataset(X.dataset)
+    elif isinstance(y, pd.DataFrame):
+        return X.shape[1], tuple([len(y[s].unique()) for s in y])
+    elif isinstance(y, np.ndarray) and len(y.shape) > 1:
+        return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
     return X.shape[1], len(set(y))
