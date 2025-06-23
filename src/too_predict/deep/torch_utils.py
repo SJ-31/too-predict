@@ -161,43 +161,15 @@ class Module(nn.Module):
         raise NotImplementedError
 
 
-def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
-    one_d = is_atomic(x)
-    if one_d and isinstance(x, torch.Tensor):
-        return x.unique().size()[0]
-    elif isinstance(x, torch.Tensor):
-        return x.flatten().unique().size()[0]
-    elif (one_d and isinstance(x, np.ndarray)) or isinstance(x, pd.Series):
-        return np.unique(x).shape[0]
-    return len(set(x))
+# ** Subclass for multi-label classifier
 
 
-def data_spec(
-    X: Dataset | DataLoader | torch.Tensor | np.ndarray,
-    y: torch.Tensor | np.ndarray | None = None,
-) -> tuple:
-    """Return a tuple of (n_features, n_classes) for the given dataset
-    If multitask, the second element is a tuple of length n_tasks
-    """
-
-    def _for_dataset(data):
-        x, y = data[:]
-        if is_atomic(y) or y.shape[1] == 1:
-            n_classes = n_uniques(y)
-        else:
-            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
-        return x.shape[1], n_classes
-
-    if isinstance(X, Dataset):
-        return _for_dataset(X)
-    elif isinstance(X, DataLoader):
-        return _for_dataset(X.dataset)
-    return X.shape[1], len(set(y))
+class MultiModule(Module):
+    def __init__(self, in_features: int, n_classes_per_task: list[int]) -> None:
+        super().__init__(n_tasks=len(n_classes_per_task))
 
 
 # * Trainer
-
-# TODO: need to add a method to reset the model params on __call__
 
 
 class Trainer:
@@ -400,6 +372,9 @@ class Trainer:
         return pd.DataFrame(self.metrics)
 
 
+# * Utility functions
+
+
 def iter_cols(x: Tensor | np.ndarray) -> Iterable:
     if isinstance(x, Tensor):
         to_iter = torch.unbind(x, dim=1)
@@ -409,3 +384,36 @@ def iter_cols(x: Tensor | np.ndarray) -> Iterable:
 
 
 # def optimize():
+#
+def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
+    one_d = is_atomic(x)
+    if one_d and isinstance(x, torch.Tensor):
+        return x.unique().size()[0]
+    elif isinstance(x, torch.Tensor):
+        return x.flatten().unique().size()[0]
+    elif (one_d and isinstance(x, np.ndarray)) or isinstance(x, pd.Series):
+        return np.unique(x).shape[0]
+    return len(set(x))
+
+
+def data_spec(
+    X: Dataset | DataLoader | torch.Tensor | np.ndarray,
+    y: torch.Tensor | np.ndarray | None = None,
+) -> tuple:
+    """Return a tuple of (n_features, n_classes) for the given dataset
+    If multitask, the second element is a tuple of length n_tasks
+    """
+
+    def _for_dataset(data):
+        x, y = data[:]
+        if is_atomic(y) or y.shape[1] == 1:
+            n_classes = n_uniques(y)
+        else:
+            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
+        return x.shape[1], n_classes
+
+    if isinstance(X, Dataset):
+        return _for_dataset(X)
+    elif isinstance(X, DataLoader):
+        return _for_dataset(X.dataset)
+    return X.shape[1], len(set(y))

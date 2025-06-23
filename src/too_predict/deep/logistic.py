@@ -56,7 +56,7 @@ def multitask_cross_entropy_loss(y_pred: Tensor, y_true: Tensor) -> Tensor:
 # * Implementation of [1]
 
 
-class MtcLr(d_ut.Module):
+class MtcLr(d_ut.MultiModule):
     """Implementation of multitask logistic regression by [1]
 
     Parameters
@@ -71,13 +71,13 @@ class MtcLr(d_ut.Module):
 
     def __init__(
         self,
-        n_features: int,
+        in_features: int,
         n_classes_per_task: list[int],
         lmbda: float = 5.0,
         l2: float = 1,
         initial_fit: dict | None = None,
     ) -> None:
-        super().__init__(n_tasks=len(n_classes_per_task))
+        super().__init__(in_features=in_features, n_classes_per_task=n_classes_per_task)
         self.lmbda: float = lmbda
         self.l2: float = l2
         self.lrs: nn.ModuleDict = nn.ModuleDict()
@@ -187,7 +187,7 @@ class DecomposedLinear(nn.Module):
         return nn.functional.linear(X, beta, self.bias)
 
 
-class MultiLevel(d_ut.Module):
+class MultiLevel(d_ut.MultiModule):
     def __init__(
         self,
         in_features: int,
@@ -195,10 +195,8 @@ class MultiLevel(d_ut.Module):
         lmbda_1: float = 1.0,
         lmbda_2: float = 1.0,
         bias: bool = True,
-        *args,
-        **kwargs,
     ) -> None:
-        super().__init__(n_tasks=len(n_classes_per_task), *args, **kwargs)
+        super().__init__(in_features=in_features, n_classes_per_task=n_classes_per_task)
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
         self.task_label_map: dict = {}
