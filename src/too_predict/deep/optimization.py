@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import override
 
@@ -84,14 +84,13 @@ class DlOptimizer(topt.BaseOptimizer):
         artifact_dir: Path | None = None,
     ) -> None:
         super().__init__(
-            None,
-            label_col,
-            False,
-            save_cv,
-            ignore_duplicated,
-            None,
-            journal_file,
-            artifact_dir,
+            score_fn=None,
+            label_col=label_col,
+            save_model=False,
+            save_cv=save_cv,
+            ignore_duplicated=ignore_duplicated,
+            journal_file=journal_file,
+            artifact_dir=artifact_dir,
         )
 
     @override
