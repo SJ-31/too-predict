@@ -12,9 +12,10 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.filter as fil
 import too_predict.optimization as topt
 import too_predict.transformer as tt
+import too_predict.utils as ut
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-from too_predict.deep.evaluation import holdout
+from too_predict.deep.evaluation import cross_validate, holdout
 from torch.optim import Optimizer
 
 
@@ -66,12 +67,12 @@ class DlTrialSetup(topt.TrialSetup):
     @override
     def __call__(self, opts: dict | None = None) -> tuple:
         self.user_opts: dict = opts
-        module = self._suggest_param_or_default("module")
-        optimizer: Optimizer = self._suggest_optimizer(module)
-        scheduler = self._suggest_scheduler(optimizer)
+        module_fn = self._suggest_param_or_default("module")
+        optimizer_fn: Callable = self._suggest_optimizer()
+        scheduler_fn: Callable = self._suggest_scheduler()
         transformer: tt.Transformer = self._suggest_param_or_default("transformer")
         filter: fil.Filter = self._suggest_param_or_default("filter")
-        return module, optimizer, scheduler, transformer, filter
+        return module_fn, optimizer_fn, scheduler_fn, transformer, filter
 
 
 class DlOptimizer(topt.BaseOptimizer):
@@ -98,16 +99,29 @@ class DlOptimizer(topt.BaseOptimizer):
         self,
         trial: optuna.Trial,
         adata: ad.AnnData,
+        do_splits: bool = True,
+        do_cv: bool = True,
         split_fns: dict | None = None,
         split_masks: dict | None = None,
         cv_splits=5,
+        labels=("Sample_Type", "tumor_type"),
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
         **kwargs,
     ):
+        if not do_splits and not do_cv:
+            raise ValueError("One of do_splits or do_cv must be true!")
         setup = DlTrialSetup(trial=trial, **kwargs)
-        module, optimizer, scheduler, transformer, filter = setup(opts=opts)
+        module_fn, optimizer_fn, scheduler_fn, transformer, filter = setup(opts=opts)
         n_epochs = setup._suggest_param_or_default("n_epochs")
+        n_features, n_classes = d_ut.data_spec(
+            ut.xarray_if_sparse(adata), y=adata.obs[labels]
+        )
+        module: d_ut.MultiModule = module_fn(
+            in_features=n_features, n_classes_per_task=n_classes
+        )
+        optimizer = optimizer_fn(module)
+        scheduler = scheduler_fn(optimizer)
         trainer = d_ut.Trainer(
             model=module,
             optimizer=optimizer,
@@ -119,13 +133,24 @@ class DlOptimizer(topt.BaseOptimizer):
             adata = filter.fit_transform(adata)
         if transformer != -1:
             adata = transformer.fit_transform(adata)
-        result: dict = holdout(
-            trainer=trainer,
-            adata=adata,
-            to_encode=self.label_col,
-            split_fns=split_fns,
-            split_masks=split_masks,
-            minimal=True,
-            verbose=False,
-        )
-        return np.mean(result.values())
+        vals = []
+        if do_splits:
+            result: dict = holdout(
+                trainer=trainer,
+                adata=adata,
+                to_encode=self.label_col,
+                split_fns=split_fns,
+                split_masks=split_masks,
+                minimal=True,
+                verbose=False,
+            )
+            vals.append(np.mean(result.values()))
+
+        if do_cv:
+            cv_results = cross_validate(
+                trainer=trainer,
+                adset=d_ut.AnnDataset(adata, to_encode=labels),
+                n_splits=cv_splits,
+            )
+            vals.append(np.mean(cv_results.values[:, 1:]))
+        return np.mean(vals)
