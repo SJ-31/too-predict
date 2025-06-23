@@ -217,7 +217,7 @@ class MultiLevel(d_ut.Module):
 
     @override
     def reset_parameters(self):
-        d_ut.linear_reset_parameters(self.theta)
+        nn.init.normal_(self.theta)
         for model in self.lrs.values():
             model.reset_parameters()
 
