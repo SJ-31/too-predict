@@ -104,7 +104,6 @@ class DlOptimizer(topt.BaseOptimizer):
         split_fns: dict | None = None,
         split_masks: dict | None = None,
         cv_splits=5,
-        labels=("Sample_Type", "tumor_type"),
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
         **kwargs,
@@ -114,13 +113,11 @@ class DlOptimizer(topt.BaseOptimizer):
         setup = DlTrialSetup(trial=trial, **kwargs)
         module_fn, optimizer_fn, scheduler_fn, transformer, filter = setup(opts=opts)
         n_epochs = setup._suggest_param_or_default("n_epochs")
-        n_features, n_classes = d_ut.data_spec(
-            ut.xarray_if_sparse(adata), y=adata.obs[labels]
-        )
+        n_features, n_classes = d_ut.data_spec(adata, y=self.label_col)
         module: d_ut.MultiModule = module_fn(
             in_features=n_features, n_classes_per_task=n_classes
         )
-        optimizer = optimizer_fn(module)
+        optimizer = optimizer_fn(module.named_parameters())
         scheduler = scheduler_fn(optimizer)
         trainer = d_ut.Trainer(
             model=module,
@@ -128,6 +125,7 @@ class DlOptimizer(topt.BaseOptimizer):
             scheduler=scheduler,
             n_epochs=n_epochs,
             tol=8,
+            record_test_score=False,
         )
         if filter != -1:
             adata = filter.fit_transform(adata)
@@ -149,7 +147,7 @@ class DlOptimizer(topt.BaseOptimizer):
         if do_cv:
             cv_results = cross_validate(
                 trainer=trainer,
-                adset=d_ut.AnnDataset(adata, to_encode=labels),
+                adset=d_ut.AnnDataset(adata, to_encode=self.label_col),
                 n_splits=cv_splits,
             )
             vals.append(np.mean(cv_results.values[:, 1:]))

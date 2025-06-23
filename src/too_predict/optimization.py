@@ -134,7 +134,6 @@ class BaseOptimizer:
         split_fns: dict | None = None,
         split_masks: dict | None = None,
         cv_splits=5,
-        labels: tuple | str | None = None,
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
         **kwargs,
