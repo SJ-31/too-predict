@@ -69,7 +69,7 @@ def multitask_all_metrics(
     for task, truth, score, class_names in zip(
         task_names, to_iter, scores, task_classes
     ):
-        result[task] = te.get_all_metrics(truth, score, classes=class_names)
+        result[task] = te.get_all_metrics(truth, score, classes=sorted(class_names))
     return result
 
 
