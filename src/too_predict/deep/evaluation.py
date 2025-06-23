@@ -109,6 +109,7 @@ def holdout(
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
     minimal: bool = False,
+    outdir: Path | None = None,
     **kwargs,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split) with
@@ -122,7 +123,8 @@ def holdout(
 
     Return
     ------
-    A dictionary containing model evaluation results for each task
+    A dictionary containing model evaluation results for each task i.e.
+        split->task->results_dict
     If `minimal`, is a dictionary of split->dict[task->accuracy]
     """
     if split_fns is None and split_masks is None:
@@ -155,7 +157,7 @@ def holdout(
         trainer(train_l)
 
         if not minimal:
-            task_classes = [list(np.unique(adata.obs[t])) for t in to_encode]
+            task_classes = [list(set(adata.obs[t])) for t in to_encode]
             proba = trainer.model.predict_proba(x_test_tensor)
             y_true = test_dset.decode(y_true)
             res: dict = multitask_all_metrics(
@@ -170,6 +172,20 @@ def holdout(
     result: dict = {}
     for set_label, splitter in splitters.items():
         result[set_label] = helper(set_label, splitter, adata)
+        if outdir is not None and not minimal:
+            cur_outdir = outdir.joinpath(set_label)
+            cur_outdir.mkdir(exist_ok=True)
+            for task in to_encode:
+                te.write_cross_val(
+                    result[set_label][task], outdir=cur_outdir, prefix=f"{task}_"
+                )
+    if outdir is not None and minimal:
+        tasks = list(next(iter(result.values())).keys())
+        to_df = {"set": result.keys()}
+        for t in tasks:
+            to_df[t] = [v[t] for v in result.values()]
+        df = pd.DataFrame(to_df)
+        df.to_csv(outdir.joinpath("accuracy.csv"), index=False)
     return result
 
 
