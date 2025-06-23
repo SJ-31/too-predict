@@ -3,13 +3,17 @@
 import joblib
 import pandas as pd
 import too_predict.utils as ut
+import torch
 from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS
+from too_predict.deep.logistic import MultiLevel
 from too_predict.deep.optimization import DlOptimizer
 
-OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journaldir")
+OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
 OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
 OUTDIR = here("data", "output", "optimization")
+
+torch.set_default_dtype(torch.float64)
 
 
 @ut.SaveOrLoad(
@@ -67,9 +71,11 @@ def choose_optimization(dct, adata) -> None:
     logdir=here("log"),
 )
 def choose_epochs(dct, adata) -> None:
+    print("Choosing epochs...")
     journal_file = here(OPTUNA_JOURNALS, "torch_n_epochs.log")
     artifact_dir = here(OPTUNA_STORAGE, "torch_epochs")
     sample_opts = {
+        "module": lambda **kwargs: MultiLevel(**kwargs),
         "optimizer": "Adam",
         "betas": [(0.9, 0.999)],
         "amsgrad": False,
@@ -87,11 +93,13 @@ def choose_epochs(dct, adata) -> None:
         journal_file=journal_file,
         artifact_dir=artifact_dir,
     )
-    searcher.make_objective(adata=adata, opts=sample_opts, split_fns=ADDITIONAL_SPLITS)
+    searcher.make_objective(
+        adata=adata, opts=sample_opts, split_fns=ADDITIONAL_SPLITS, do_splits=False
+    )
     study = searcher.run_study(study_name="best_n_epochs")
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()
-    df.write_csv(dct["trial_df"], index=False)
+    df.to_csv(dct["trial_df"], index=False)
     return
 
 
@@ -99,8 +107,6 @@ def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--input")
-    parser.add_argument("-o", "--output")
     parser.add_argument("-t", "--test", default=False, help="", action="store_true")
     args = vars(parser.parse_args())  # convert to dict
     return args
@@ -113,4 +119,4 @@ if __name__ == "__main__":
     else:
         adata = ut.training_data_internal()
     # choose_optimization(adata) # TODO: run these
-    # choose_epochs(adata) # TODO: run these
+    choose_epochs(adata)  # TODO: run these
