@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import math
 from collections.abc import Iterable, Sequence
 from typing import Callable, Literal, override
 
@@ -11,6 +12,7 @@ import sklearn.preprocessing as sp
 import too_predict.utils as ut
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from torch import Tensor
@@ -102,6 +104,25 @@ def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
 # * Custom module
 
 
+def linear_reset_parameters(weight: Tensor, bias: Tensor | None = None) -> None:
+    """Reset parameters for a linear model
+
+    Parameters
+    ----------
+    weight : Tensor storing weights (must be an attribute of a instantiated module)
+    bias : Tensor storing bias
+
+    Notes
+    -----
+    Taken directly from pytorch repo
+    """
+    init.kaiming_uniform_(weight, a=math.sqrt(5))
+    if bias is not None:
+        fan_in, _ = init._calculate_fan_in_and_fan_out(weight)
+        bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+        init.uniform_(bias, -bound, bound)
+
+
 class Module(nn.Module):
     def __init__(self, n_tasks: int = 1) -> None:
         super().__init__()
@@ -123,7 +144,8 @@ class Module(nn.Module):
             X = X[:]
         return self._predict(X)
 
-    # def reset_params(self):
+    def reset_parameters(self):
+        raise NotImplementedError
 
     def predict_proba(self, X) -> np.ndarray | tuple:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
@@ -307,7 +329,7 @@ class Trainer:
         self, loader: DataLoader, validation: Dataset | None = None
     ) -> pd.DataFrame:
         self._init_metrics()
-        # TODO: reset model params here
+        self.model.reset_parameters()
         self.model.train()
 
         if validation is None and self.record_test_score:
