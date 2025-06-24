@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import itertools
-from typing import Sequence, override
+from collections.abc import Sequence
+from typing import override
 
 import numpy as np
 import sklearn.linear_model as sl
@@ -119,6 +120,7 @@ class MtcLr(d_ut.MultiModule):
                 torch.tensor(model.intercept_, dtype=torch.float64)
             )
 
+    @override
     def forward(self, X) -> tuple[Tensor]:
         results = []
         for i in range(self.n_tasks):
@@ -180,6 +182,7 @@ class DecomposedLinear(nn.Module):
     def reset_parameters(self):
         d_ut.linear_reset_parameters(weight=self.gamma, bias=self.bias)
 
+    @override
     def forward(self, X):
         beta: Tensor = self.gamma.mul(self.theta)
         # y = x * torch.transpose(beta, 0, 1) + self.bias

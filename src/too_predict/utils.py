@@ -993,6 +993,7 @@ class SaveOrLoad:
                 log.write_text("Completed successfully")
                 return value
             except Exception as e:
+                print(e)
                 log.write_text("Failed with exception:\n------------")
                 log.write_text(str(e))
 

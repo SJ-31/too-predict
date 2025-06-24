@@ -128,6 +128,10 @@ class Module(nn.Module):
         super().__init__()
         self.n_tasks: int = n_tasks
 
+    @override
+    def forward(self, X):
+        raise NotImplementedError()
+
     def _predict(self, X: np.ndarray) -> np.ndarray:
         proba = self.predict_proba(X)
         if isinstance(proba, tuple):
@@ -145,7 +149,7 @@ class Module(nn.Module):
         return self._predict(X)
 
     def reset_parameters(self):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def predict_proba(self, X) -> np.ndarray | tuple:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
@@ -158,7 +162,7 @@ class Module(nn.Module):
         return optim.Adam(self.named_parameters())
 
     def criterion(self, y_pred, y_true):
-        raise NotImplementedError
+        raise NotImplementedError()
 
 
 # ** Subclass for multi-label classifier
@@ -167,6 +171,30 @@ class Module(nn.Module):
 class MultiModule(Module):
     def __init__(self, in_features: int, n_classes_per_task: list[int]) -> None:
         super().__init__(n_tasks=len(n_classes_per_task))
+
+    @override
+    def forward(self, X):
+        return super().forward(X)
+
+    @override
+    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
+        return super().predict(X)
+
+    @override
+    def predict_proba(self, X) -> np.ndarray | tuple:
+        return super().predict_proba(X)
+
+    @override
+    def reset_parameters(self):
+        return super().reset_parameters()
+
+    @override
+    def get_optimizers(self) -> Optimizer:
+        return super().get_optimizers()
+
+    @override
+    def criterion(self, y_pred, y_true):
+        return super().criterion(y_pred, y_true)
 
 
 # * Trainer
@@ -373,6 +401,18 @@ class Trainer:
 
 
 # * Utility functions
+
+
+def reset_sequential(mod: nn.Module) -> None:
+    def reset(m):
+        if (
+            isinstance(m, nn.Conv2d)
+            or isinstance(m, nn.Linear)
+            or isinstance(m, Module)
+        ):
+            m.reset_parameters()
+
+    mod.apply(reset)
 
 
 def iter_cols(x: Tensor | np.ndarray) -> Iterable:
