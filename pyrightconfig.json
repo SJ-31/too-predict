@@ -2,6 +2,8 @@
     "reportArgumentType": false,
     "reportAttributeAccessIssue": false,
     "reportOptionalSubscript": false,
+    "reportAny": false,
+    "reportPrivateUsage": false,
     "reportOptionalMemberAccess": false,
     "reportAssignmentType": false,
     "reportUnusedCallResult": false,
@@ -16,5 +18,8 @@
     "reportUnknownLambdaType": false,
     "reportMissingTypeArgument": false,
     "reportMissingParameterType": false,
-    "reportMissingTypeStubs": false
+    "reportMissingTypeStubs": false,
+    "reportUntypedFunctionDecorator": false,
+    "reportUnboundVariable": false,
+    "reportUnnecessaryIsInstance": false
 }

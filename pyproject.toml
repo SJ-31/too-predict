@@ -46,3 +46,7 @@ build-backend = "maturin"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 module-name = "too_predict._rust_helpers"
+
+
+[tool.pyright]
+venvPath = "/home/shannc/Bio_SDD/miniforge3/envs/too-predict"
