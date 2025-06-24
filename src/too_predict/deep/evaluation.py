@@ -14,6 +14,7 @@ import too_predict.evaluation as te
 import too_predict.utils as ut
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
+from xgboost import XGBClassifier
 
 
 def multitask_acc(
@@ -222,3 +223,29 @@ def cross_validate(
             metrics[t].append(acc[t])
         metrics["fold"].append(fold)
     return pd.DataFrame(metrics)
+
+
+class Baseline:
+    """A baseline class for multitask prediction. Consists of XGBoost models
+    trained independently on each task
+    """
+
+    def __init__(self, in_features: int, n_classes_per_task: list[int], **kwargs):
+        """ """
+        self.models: list = [XGBClassifier(**kwargs) for _ in n_classes_per_task]
+
+    def fit(self, X, y):
+        if isinstance(X, Tensor):
+            X = X.numpy()
+        for model, y in zip(self.models, d_ut.iter_cols(y)):
+            model.fit(X, y)
+
+    def predict(self, X):
+        if isinstance(X, Tensor):
+            X = X.numpy()
+        return np.column_stack(tuple(m.predict(X) for m in self.models))
+
+    def predict_proba(self, X):
+        if isinstance(X, Tensor):
+            X = X.numpy()
+        return tuple(m.predict_proba(X) for m in self.models)
