@@ -39,7 +39,7 @@ class Disyak(d_ut.MultiModule):
             n_units = in_features
         self.hlayers: nn.ModuleList = nn.ModuleList()
         self.olayers: nn.ModuleList = nn.ModuleList()
-        self.relu: nn.ReLU = nn.ReLU()
+        self.acti: nn.Module = nn.Tanh()
         self.softmax: nn.Softmax = nn.Softmax()
         self.dropout: nn.Dropout = nn.Dropout()
         for n_classes in n_classes_per_task:
@@ -50,12 +50,13 @@ class Disyak(d_ut.MultiModule):
 
     def _activate(self, input: Tensor) -> Tensor:
         if self.training:
-            return self.dropout(self.relu(input))
-        return self.relu(input)
+            return self.dropout(self.acti(input))
+        return self.acti(input)
 
     @override
     def reset_parameters(self):
-        for m in self.hlayers:
+        for m, o in zip(self.hlayers, self.olayers):
+            d_ut.reset_sequential(o)
             d_ut.reset_sequential(m)
 
     @override
