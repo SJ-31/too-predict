@@ -1,11 +1,13 @@
 #!/usr/bin/env ipython
 
+from collections.abc import Sequence
 from typing import override
 
 import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
-from too_predict.deep.logistic import multitask_cross_entropy_loss
+from too_predict.deep.evaluation import multitask_cross_entropy_loss
+from torch import Tensor
 
 """
 References
@@ -23,15 +25,23 @@ class Disyak(d_ut.MultiModule):
         so that the more specific tasks can make use of all hidden layers
     """
 
-    def __init__(self, in_features: int, n_classes_per_task: list[int]) -> None:
-        super().__init__(in_features, n_classes_per_task)
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        reduce_features: bool = True,
+        task_weights: Tensor | Sequence | None = None,
+    ) -> None:
+        super().__init__(in_features, n_classes_per_task, task_weights)
         n_units = 2000
+        if not reduce_features:
+            n_units = in_features
         self.layers: nn.ModuleList = nn.ModuleList()
+        self.relu: nn.ReLU = nn.ReLU()
+        self.dropout: nn.Dropout = nn.Dropout()
         self.sum_to: list = []
         for n_classes in n_classes_per_task:
-            self.layers.append(
-                nn.Sequential(nn.LazyLinear(n_units), nn.Tanh(), nn.Dropout(p=0.2))
-            )
+            self.layers.append(nn.LazyLinear(n_units))
             self.sum_to.append(torch.ones((n_units, n_classes)))
 
     @override
@@ -43,11 +53,11 @@ class Disyak(d_ut.MultiModule):
     def forward(self, X):
         modules, sums = iter(self.layers), iter(self.sum_to)
         result = []
-        hidden: torch.Tensor = next(modules)(X)
+        hidden: torch.Tensor = self.dropout(self.relu(next(modules)(X)))
         s1: torch.Tensor = next(sums)
         result.append(torch.matmul(hidden, s1))
         for sum, m in zip(sums, modules):
-            hidden = m(hidden)
+            hidden = self.dropout(self.relu(m(hidden)))
             result.append(torch.matmul(hidden, sum))
         return tuple(result)
 
@@ -55,7 +65,9 @@ class Disyak(d_ut.MultiModule):
     def criterion(self, y_pred, y_true):
         total_loss: torch.Tensor = 0
         if self.n_tasks > 1:
-            total_loss += multitask_cross_entropy_loss(y_pred, y_true)
+            total_loss += multitask_cross_entropy_loss(
+                y_pred, y_true, weights=self.task_weights
+            )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
         return total_loss

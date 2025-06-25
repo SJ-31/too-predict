@@ -12,6 +12,8 @@ import sklearn.model_selection as ms
 import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.utils as ut
+import torch
+import torch.nn as nn
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from xgboost import XGBClassifier
@@ -249,3 +251,18 @@ class Baseline:
         if isinstance(X, Tensor):
             X = X.numpy()
         return tuple(m.predict_proba(X) for m in self.models)
+
+
+def multitask_cross_entropy_loss(
+    y_pred: Tensor, y_true: Tensor, weights: Tensor | None = None
+) -> Tensor:
+    losses: Tensor = torch.empty(y_true.shape[1])
+    for i, (task_pred, task_y) in enumerate(
+        zip(y_pred, torch.unbind(y_true, dim=1))
+    ):  # Gives y_hat = softmax(Xw + b)
+        # tensor of shape n_samples, n_classes
+        losses[i] = nn.functional.cross_entropy(task_pred, task_y)
+        # Get loss on tasks separately
+    if weights is not None and len(weights) == len(losses):
+        losses = losses * weights
+    return losses.sum()

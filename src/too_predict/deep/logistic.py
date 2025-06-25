@@ -9,6 +9,7 @@ import numpy as np
 import sklearn.linear_model as sl
 import too_predict.deep.torch_utils as d_ut
 import torch
+from too_predict.deep.evaluation import multitask_cross_entropy_loss
 from torch import Tensor, nn
 
 """
@@ -43,17 +44,6 @@ class DummyLR(d_ut.Module):
         return l2
 
 
-def multitask_cross_entropy_loss(y_pred: Tensor, y_true: Tensor) -> Tensor:
-    total_loss: Tensor = 0
-    for task_pred, task_y in zip(
-        y_pred, torch.unbind(y_true, dim=1)
-    ):  # Gives y_hat = softmax(Xw + b)
-        # tensor of shape n_samples, n_classes
-        total_loss += nn.functional.cross_entropy(task_pred, task_y)
-        # Get loss on tasks separately
-    return total_loss
-
-
 # * Implementation of [1]
 
 
@@ -74,11 +64,16 @@ class MtcLr(d_ut.MultiModule):
         self,
         in_features: int,
         n_classes_per_task: list[int],
+        task_weights: None | Sequence | Tensor = None,
         lmbda: float = 5.0,
         l2: float = 1,
         initial_fit: dict | None = None,
     ) -> None:
-        super().__init__(in_features=in_features, n_classes_per_task=n_classes_per_task)
+        super().__init__(
+            in_features=in_features,
+            n_classes_per_task=n_classes_per_task,
+            task_weights=task_weights,
+        )
         self.lmbda: float = lmbda
         self.l2: float = l2
         self.lrs: nn.ModuleDict = nn.ModuleDict()
@@ -131,7 +126,9 @@ class MtcLr(d_ut.MultiModule):
     def criterion(self, y_pred, y_true):
         total_loss = 0.0
         if len(y_pred) > 1:
-            total_loss += multitask_cross_entropy_loss(y_pred, y_true)
+            total_loss += multitask_cross_entropy_loss(
+                y_pred, y_true, weights=self.task_weights
+            )
         else:
             total_loss += nn.functional.cross_entropy(y_pred[0], y_true) + self._l2(0)
 
@@ -195,11 +192,16 @@ class MultiLevel(d_ut.MultiModule):
         self,
         in_features: int,
         n_classes_per_task: Sequence[int],
+        task_weights: None | Sequence | Tensor = None,
         lmbda_1: float = 1.0,
         lmbda_2: float = 1.0,
         bias: bool = True,
     ) -> None:
-        super().__init__(in_features=in_features, n_classes_per_task=n_classes_per_task)
+        super().__init__(
+            in_features=in_features,
+            n_classes_per_task=n_classes_per_task,
+            task_weights=task_weights,
+        )
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
         self.task_label_map: dict = {}
@@ -234,7 +236,13 @@ class MultiLevel(d_ut.MultiModule):
         total_loss: Tensor = 0
         n_samples: int = y_true.shape[0]
         if self.n_tasks > 1:
-            total_loss += 1 / 2 * multitask_cross_entropy_loss(y_pred, y_true)
+            total_loss += (
+                1
+                / 2
+                * multitask_cross_entropy_loss(
+                    y_pred, y_true, weights=self.task_weights
+                )
+            )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
 

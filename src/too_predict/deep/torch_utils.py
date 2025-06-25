@@ -169,8 +169,18 @@ class Module(nn.Module):
 
 
 class MultiModule(Module):
-    def __init__(self, in_features: int, n_classes_per_task: list[int]) -> None:
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        task_weights: Tensor | Sequence | None = None,
+    ) -> None:
         super().__init__(n_tasks=len(n_classes_per_task))
+        self.task_weights: Tensor = None
+        if task_weights is not None and not isinstance(task_weights, Tensor):
+            self.task_weights = torch.tensor(task_weights)
+        elif task_weights is not None:
+            self.task_weights = task_weights
 
     @override
     def forward(self, X):
