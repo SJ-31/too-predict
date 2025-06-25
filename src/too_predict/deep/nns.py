@@ -7,6 +7,7 @@ import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
 from too_predict.deep.evaluation import multitask_cross_entropy_loss
+from too_predict.deep.logistic import logistic_hook
 from torch import Tensor
 
 """
@@ -36,29 +37,37 @@ class Disyak(d_ut.MultiModule):
         n_units = 2000
         if not reduce_features:
             n_units = in_features
-        self.layers: nn.ModuleList = nn.ModuleList()
+        self.hlayers: nn.ModuleList = nn.ModuleList()
+        self.olayers: nn.ModuleList = nn.ModuleList()
         self.relu: nn.ReLU = nn.ReLU()
+        self.softmax: nn.Softmax = nn.Softmax()
         self.dropout: nn.Dropout = nn.Dropout()
-        self.sum_to: list = []
         for n_classes in n_classes_per_task:
-            self.layers.append(nn.LazyLinear(n_units))
-            self.sum_to.append(torch.ones((n_units, n_classes)))
+            self.hlayers.append(nn.LazyLinear(n_units))
+            out = nn.LazyLinear(n_classes)
+            out.register_forward_hook(logistic_hook)
+            self.olayers.append(out)
+
+    def _activate(self, input: Tensor) -> Tensor:
+        if self.training:
+            return self.dropout(self.relu(input))
+        return self.relu(input)
 
     @override
     def reset_parameters(self):
-        for m in self.layers:
+        for m in self.hlayers:
             d_ut.reset_sequential(m)
 
     @override
     def forward(self, X):
-        modules, sums = iter(self.layers), iter(self.sum_to)
+        modules, outs = iter(self.hlayers), iter(self.olayers)
         result = []
-        hidden: torch.Tensor = self.dropout(self.relu(next(modules)(X)))
-        s1: torch.Tensor = next(sums)
-        result.append(torch.matmul(hidden, s1))
-        for sum, m in zip(sums, modules):
-            hidden = self.dropout(self.relu(m(hidden)))
-            result.append(torch.matmul(hidden, sum))
+        hidden: torch.Tensor = self._activate(next(modules)(X))
+        o1 = next(outs)
+        result.append(o1(hidden))
+        for out, m in zip(outs, modules):
+            hidden = self._activate(m(hidden))
+            result.append(out(hidden))
         return tuple(result)
 
     @override

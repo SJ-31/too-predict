@@ -43,6 +43,10 @@ class DummyLR(d_ut.Module):
         # TODO: this naive implementation hinders performance...
         return l2
 
+    @override
+    def reset_parameters(self):
+        self.linear.reset_parameters()
+
 
 # * Implementation of [1]
 
