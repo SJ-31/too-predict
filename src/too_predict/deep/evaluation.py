@@ -80,26 +80,64 @@ def train_test_split_torch(
     dataset: Dataset,
     train_size: float | int | None = None,
     test_size: float | int = 0.25,
+    valid: float | int | None | bool = None,
     **kwargs,
-) -> tuple[DataLoader, DataLoader]:
+) -> tuple[DataLoader, ...]:
+    """Get train, test and optionally validation splits from dataset
+
+    Parameters
+    ----------
+    train_size : count or proportion of train dataset
+    test_size : count or proportion of test dataset
+    valid_size : if a boolean True, valid_size is interpreted as
+        valid_size = 1 - train_size - test_size (if both are given)
+        valid_size = test_size (if train_size is not given)
+
+    Returns
+    -------
+    Tuple of DataLoaders
+    """
     n_samples = len(dataset)
+    if isinstance(train_size, int):
+        train_size = math.floor(train_size / n_samples)
+    if isinstance(test_size, int):
+        test_size = math.floor(test_size / n_samples)
+    if (
+        not isinstance(valid, bool)
+        and valid is not None
+        and not isinstance(valid, float)
+    ):
+        valid = math.floor(valid / n_samples)
 
-    def _final(dsets):
-        return DataLoader(dsets[0], **kwargs), DataLoader(dsets[1], **kwargs)
+    if not test_size:
+        raise ValueError("A test split must be provided!")
 
-    if isinstance(test_size, float):
-        if train_size is None:
-            train_size = 1 - test_size
-        if isinstance(train_size, float):
-            return _final(random_split(dataset, (train_size, test_size)))
-        test_size = math.floor(len(dataset) * test_size)
-    elif train_size is None:
-        train_size = n_samples - test_size
-    indices = set(range(n_samples))
-    test_indices = ut.RNG.choice(indices, size=test_size)
-    indices -= set(test_indices)
-    train_indices = ut.RNG.choice(indices, size=train_size)
-    return _final([Subset(train_indices), Subset(test_indices)])
+    # Only test size provided, valid True
+    if isinstance(valid, bool) and valid and train_size is None:
+        valid = test_size
+        lengths = (1 - test_size - valid, test_size, valid)
+    # Only test provided, valid float
+    elif isinstance(valid, float) and train_size is None:
+        lengths = (1 - test_size - valid, test_size, valid)
+    # Test and train provided, valid True
+    elif isinstance(valid, bool) and valid and train_size:
+        valid = 1 - train_size - test_size
+        lengths = (train_size, test_size, valid)
+    # Test size provided, valid False|None
+    elif test_size and train_size is None and not valid:
+        lengths = (1 - test_size, test_size)
+    # Test and train provided, valid False|None
+    elif train_size and test_size and not valid:
+        lengths = (train_size, test_size)
+    # All provided
+    else:
+        lengths = (train_size, test_size, valid)
+
+    print(f"Split proportions: {lengths}")
+    if np.sum(lengths) > 1:
+        raise ValueError("Invalid split sizes provided!")
+
+    return tuple(DataLoader(d, **kwargs) for d in random_split(dataset, lengths))
 
 
 def holdout(
@@ -215,7 +253,7 @@ def cross_validate(
 
         cur_fold = trainer(train)
         if save_intermediate and intermediate_out:
-            cur_fold.write_csv(
+            cur_fold.to_csv(
                 intermediate_out.joinpath(f"fold_{fold}_training.csv"), index=False
             )
 
