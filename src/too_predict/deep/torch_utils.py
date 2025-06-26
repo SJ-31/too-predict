@@ -1,5 +1,7 @@
 #!/usr/bin/env ipython
 
+from __future__ import annotations
+
 import math
 from collections.abc import Iterable, Sequence
 from typing import Callable, Literal, override
@@ -257,92 +259,146 @@ class Trainer:
         output_names: Sequence | None = None,
         at_batch_level: bool = True,
     ) -> None:
-        self.evaluate: Callable
-        self.n_epochs: int = n_epochs
+        self._evaluate: Callable
+        self._n_epochs: int = n_epochs
         self.optimizer: Optimizer = (
             optimizer if optimizer is not None else model.get_optimizers()
         )
-        self.at_batch_level: bool = at_batch_level
+        self._es: EarlyStopper | None = None
+        self._at_batch_level: bool = at_batch_level
         self.scheduler: schedule.LRScheduler | None = None
         self.model: Module = model
-        self.record_train_score: bool = record_train_score
-        self.record_test_score: bool = record_test_score
 
+        # Obtain score function
         if score_fn is not None:
-            self.train_score_key: str = f"train_{score_fn_name}"
-            self.test_score_key: str = f"test_{score_fn_name}"
-            self.evaluate = score_fn
+            self._train_score_key: str = f"train_{score_fn_name}"
+            self._test_score_key: str = f"test_{score_fn_name}"
+            self._evaluate = score_fn
         else:
-            self.train_score_key = f"train_{score_metric}"
-            self.test_score_key = f"test_{score_metric}"
+            self._train_score_key = f"train_{score_metric}"
+            self._test_score_key = f"test_{score_metric}"
             if score_metric == "accuracy":
-                self.evaluate = met.accuracy_score
+                self._evaluate = met.accuracy_score
             elif score_metric == "balanced_accuracy":
-                self.evaluate = met.balanced_accuracy_score
+                self._evaluate = met.balanced_accuracy_score
             elif score_metric == "f1":
-                self.evaluate = met.f1_score
+                self._evaluate = met.f1_score
             elif score_metric == "precision":
-                self.evaluate = met.precision_score
+                self._evaluate = met.precision_score
             elif score_metric == "mean_squared_error":
-                self.evaluate = met.mean_squared_error
+                self._evaluate = met.mean_squared_error
             elif score_metric == "recall":
-                self.evaluate = met.recall_score
+                self._evaluate = met.recall_score
 
-        self.metrics: dict
-        self.train_keys: list
-        self.test_keys: list
-        self.output_names: Sequence | None
+        # Training metric attributes
+        self._record_train_score: bool = record_train_score
+        self._record_test_score: bool = record_test_score
+        self._metrics: dict
+        self._train_keys: list
+        self._test_keys: list
+        self._output_names: Sequence | None
 
         if self.model.n_tasks > 1 and output_names is None:
-            self.output_names = range(self.model.n_tasks)
+            self._output_names = range(self.model.n_tasks)
         else:
-            self.output_names = output_names
+            self._output_names = output_names
 
     def _init_metrics(self):
-        self.metrics = {"epoch": []}
-        self.train_keys = []
-        self.test_keys = []
+        self._metrics = {"epoch": []}
+        self._train_keys = []
+        self._test_keys = []
 
-        if self.at_batch_level:
-            self.metrics["minibatch"] = []
-            self.metrics["loss"] = []
+        if self._at_batch_level:
+            self._metrics["minibatch"] = []
+            self._metrics["loss"] = []
         else:
-            self.metrics["avg_loss"] = []
+            self._metrics["avg_loss"] = []
         if self.model.n_tasks == 1:
-            if self.record_train_score:
-                self.metrics[self.train_score_key] = []
-            if self.record_test_score:
-                self.metrics[self.test_score_key] = []
-        if self.output_names is not None:
-            for name in self.output_names:
-                if self.record_train_score:
-                    key = f"{name}_{self.train_score_key}"
-                    self.train_keys.append(key)
-                    self.metrics[key] = []
-                if self.record_test_score:
-                    key = f"{name}_{self.test_score_key}"
-                    self.test_keys.append(key)
-                    self.metrics[key] = []
+            if self._record_train_score:
+                self._metrics[self._train_score_key] = []
+            if self._record_test_score:
+                self._metrics[self._test_score_key] = []
+        if self._output_names is not None:
+            for name in self._output_names:
+                if self._record_train_score:
+                    key = f"{name}_{self._train_score_key}"
+                    self._train_keys.append(key)
+                    self._metrics[key] = []
+                if self._record_test_score:
+                    key = f"{name}_{self._test_score_key}"
+                    self._test_keys.append(key)
+                    self._metrics[key] = []
 
-    def _record(self, X, y, single_key: str, multi_key: list[str]):
+    def _record(self, X, y, single_key: str, multi_key: list[str]) -> Tensor:
         self.model.eval()
         y_pred = self.model.predict(X)
-        if self.train_keys:
+        if self._train_keys:
+            score = torch.empty(len(self._train_keys))
             for i, k in enumerate(multi_key):
-                self.metrics[k].append(self.evaluate(y_pred[:, i], y[:, i]))
+                s = self._evaluate(y_pred[:, i], y[:, i])
+                self._metrics[k].append(s)
+                score[i] = s
         else:
-            score = self.evaluate(y_pred, y)
-            self.metrics[single_key].append(score)
+            score = self._evaluate(y_pred, y)
+            self._metrics[single_key].append(score)
         self.model.train()
+        return score
+
+    def _train_minibatch(
+        self,
+        train_x: Tensor,
+        train_y: Tensor,
+        vx: Tensor,
+        vy: Tensor,
+        validate: bool,
+        epoch: int,
+        iter: int,
+        losses: list,
+    ) -> Tensor | None:
+        self.optimizer.zero_grad()
+        out = self.model(train_x)
+        loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=train_y)
+        loss.backward()
+
+        v_score: Tensor | None = None
+        if self._record_train_score and self._at_batch_level:
+            _ = self._record(
+                train_x,
+                train_y,
+                multi_key=self._train_keys,
+                single_key=self._train_score_key,
+            )
+        if validate and self._record_test_score and self._at_batch_level:
+            v_score = self._record(
+                vx,
+                vy,
+                multi_key=self._test_keys,
+                single_key=self._test_score_key,
+            )
+        if self._at_batch_level:
+            self._metrics["epoch"].append(epoch)
+            self._metrics["minibatch"].append(iter)
+            self._metrics["loss"].append(loss.detach().numpy())
+        else:
+            losses.append(loss)
+        self.optimizer.step()
+        return v_score
+
+    def register_early_stop(self, es: EarlyStopper) -> None:
+        self._es = es
 
     def __call__(
         self, loader: DataLoader, validation: Dataset | None = None
     ) -> pd.DataFrame:
         self._init_metrics()
         self.model.reset_parameters()
+        if self._es and validation is None:
+            raise ValueError("Can't perform early stopping without a validation set!")
+        if self._es:
+            self._es._reset()
         self.model.train()
 
-        if validation is None and self.record_test_score:
+        if validation is None and self._record_test_score:
             raise ValueError("Can't record test score without validation set!")
 
         if validation is not None:
@@ -352,62 +408,124 @@ class Trainer:
             valid_x, valid_y = None, None
             validate = False
 
-        for i in range(self.n_epochs):
+        stop: bool = False
+        n_updates: int = 0
+        for i in range(self._n_epochs):
             losses = []
-
-            # Minibatch training loop
             for j, (X, y) in enumerate(loader):
-                self.optimizer.zero_grad()
-                out = self.model(X)
-                loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=y)
-                loss.backward()
-
-                if self.record_train_score and self.at_batch_level:
-                    self._record(
-                        X, y, multi_key=self.train_keys, single_key=self.train_score_key
-                    )
-                if validate and self.record_test_score and self.at_batch_level:
-                    self._record(
-                        valid_x,
-                        valid_y,
-                        multi_key=self.test_keys,
-                        single_key=self.test_score_key,
-                    )  # TODO: maybe you should vary the validation set a bit?
-
-                if self.at_batch_level:
-                    self.metrics["epoch"].append(i)
-                    self.metrics["minibatch"].append(j)
-                    self.metrics["loss"].append(loss.detach().numpy())
-                else:
-                    losses.append(loss)
-                self.optimizer.step()
-
+                v_score = self._train_minibatch(
+                    train_x=X,
+                    train_y=y,
+                    vx=valid_x,
+                    vy=valid_y,
+                    validate=validate,
+                    losses=losses,
+                    iter=j,
+                    epoch=i,
+                )
+                if self._es and self._es._on_update:
+                    if self._es._should_stop(v_score, n_updates):
+                        stop = True
+                        break
+                n_updates += 1
             if self.scheduler is not None:
                 self.scheduler.step()
-
-            # Per-epoch metrics
-            if not self.at_batch_level:
+            if not self._at_batch_level:  # Per-epoch metrics
                 with torch.no_grad():
-                    self.metrics["epoch"].append(i)
-                    self.metrics["avg_loss"].append(np.mean(losses))
-                if self.record_train_score:
+                    self._metrics["epoch"].append(i)
+                    self._metrics["avg_loss"].append(np.mean(losses))
+                if self._record_train_score:
                     x_train, y_train = loader.dataset[:]
                     self._record(
                         x_train,
                         y_train,
-                        multi_key=self.train_keys,
-                        single_key=self.train_score_key,
+                        multi_key=self._train_keys,
+                        single_key=self._train_score_key,
                     )
-                if validate and self.record_test_score:
-                    self._record(
+                if validate and self._record_test_score:
+                    v_score = self._record(
                         valid_x,
                         valid_y,
-                        multi_key=self.test_keys,
-                        single_key=self.test_score_key,
+                        multi_key=self._test_keys,
+                        single_key=self._test_score_key,
                     )
+                    if self._es and not self._es._on_update:
+                        stop = self._es._should_stop(v_score, i)
+            if stop:
+                break
 
         self.model.eval()
-        return pd.DataFrame(self.metrics)
+        return pd.DataFrame(self._metrics)
+
+
+# * Early stopping
+#
+
+
+class EarlyStopper:
+    """A class implementing different early stopping techniques
+
+    Parameters
+    ----------
+    trainer : Trainer class to apply early stopping with
+    mode : type of early stopping to perform
+    on_update : whether or not early stopping checks after each paramer update or
+        each epoch (this also affects the "units" of `best_stop`)
+    patience : tolerated number of iterations or epochs of no improvement
+        in validation set error
+    TODO: is it better to update on epochs or iterations? Seems that
+        on_update = False should be better
+    all : in the multi-task setting, the step is penalized unless
+        improvements occur in ALL tasks of the validation set
+
+
+    """
+
+    def __init__(
+        self,
+        mode: Literal["simple"] = "simple",
+        patience: int = 40,
+        on_update: bool = True,
+        all: bool = False,
+    ) -> None:
+        self._mode: str = mode
+        self._patience: int = patience
+        self._all: bool = all
+        self._on_update: bool = on_update
+        self._tracker: int
+        self._best_vset: Tensor
+        self.best_stop: int
+
+    def _reset(self) -> None:
+        self._tracker = 0
+        self._best_vset = torch.inf
+        self.best_stop = 0
+
+    def _should_stop(self, score: Tensor, step: int) -> bool:
+        """Check the current validation score
+
+        Return
+        ------
+        True if the model has failed to improve the validation score for n > `_patience`
+            rounds
+        """
+        if self._mode == "simple":
+            passed: bool = False
+            bools = score < self._best_vset
+            if len(bools) == 1:
+                passed = bools
+            else:
+                if (self._all and all(bools)) or any(bools):
+                    passed = True
+
+            if not passed:
+                self._tracker += 1
+            else:
+                self._tracker = 0
+                self.best_stop = step
+            return self._tracker > self._patience
+
+        raise NotImplementedError("Early stopping mode not supported yet")
 
 
 # * Utility functions
