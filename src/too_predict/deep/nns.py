@@ -32,6 +32,7 @@ class Disyak(d_ut.MultiModule):
         n_classes_per_task: list[int],
         reduce_features: bool = True,
         task_weights: Tensor | Sequence | None = None,
+        dropout_p: float = 0.2,
     ) -> None:
         super().__init__(in_features, n_classes_per_task, task_weights)
         n_units = 2000
@@ -41,17 +42,18 @@ class Disyak(d_ut.MultiModule):
         self.olayers: nn.ModuleList = nn.ModuleList()
         self.acti: nn.Module = nn.Tanh()
         self.softmax: nn.Softmax = nn.Softmax()
-        self.dropout: nn.Dropout = nn.Dropout()
+        self.dropout: nn.Dropout = nn.Dropout(p=dropout_p)
         for n_classes in n_classes_per_task:
             self.hlayers.append(nn.LazyLinear(n_units))
             out = nn.LazyLinear(n_classes)
+            # TODO: this part could be a frozen layer with weights that
+            # don't update, to restrict all learning to the hidden layers
+            # but then you have to be careful with initialization...
             out.register_forward_hook(logistic_hook)
             self.olayers.append(out)
 
     def _activate(self, input: Tensor) -> Tensor:
-        if self.training:
-            return self.dropout(self.acti(input))
-        return self.acti(input)
+        return self.dropout(self.acti(input))
 
     @override
     def reset_parameters(self):
