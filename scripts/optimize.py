@@ -51,7 +51,7 @@ def choose_feature_set_run(adata, label_col):
     user_opts = {
         "imputation": "plus_one",
         "transformation": "clr",
-        "clr_subset": "none",
+        "clr_subset": None,
         "feature_set": [
             "edgeR_15_per_type_ovp_tissue_enriched",
             "edgeR_30_per_type_ovp_tissue_enriched",

@@ -18,8 +18,15 @@ suppressMessages({
 })
 
 
-ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod = TRUE,
-                       genewise.disp = FALSE) {
+ComBat_ref <- function(
+  counts,
+  batch,
+  group = NULL,
+  covar_mod = NULL,
+  full_mod = TRUE,
+  genewise.disp = FALSE,
+  reference_batch = NULL
+) {
   ########  Preparation  ########
   counts <- as.matrix(counts)
 
@@ -78,15 +85,21 @@ ComBat_ref <- function(counts, batch, group = NULL, covar_mod = NULL, full_mod =
   ## Check if the design is confounded
   if (qr(design)$rank < ncol(design)) {
     if (ncol(design) == (n_batch + 1)) {
-      stop("The covariate is confounded with batch! Remove the covariate and rerun ComBat-Seq")
+      stop(
+        "The covariate is confounded with batch! Remove the covariate and rerun ComBat-Seq"
+      )
     }
     if (ncol(design) > (n_batch + 1)) {
       if ((qr(design[, -c(1:n_batch)])$rank < ncol(design[, -c(1:n_batch)]))) {
-        stop("The covariates are confounded!
-Please remove one or more of the covariates so the design is not confounded")
+        stop(
+          "The covariates are confounded!
+Please remove one or more of the covariates so the design is not confounded"
+        )
       } else {
-        stop("At least one covariate is confounded with batch!
-Please remove confounded covariates and rerun ComBat-Seq")
+        stop(
+          "At least one covariate is confounded with batch!
+Please remove confounded covariates and rerun ComBat-Seq"
+        )
       }
     }
   }
@@ -94,19 +107,45 @@ Please remove confounded covariates and rerun ComBat-Seq")
   cat("Estimating dispersions\n")
   ## Estimate common dispersion within each batch
   disp_common <- sapply(1:n_batch, function(i) {
-    if ((n_batches[i] <= ncol(design) - ncol(batchmod) + 1) |
-      qr(mod[batches_ind[[i]], ])$rank < ncol(mod)) {
+    if (
+      (n_batches[i] <= ncol(design) - ncol(batchmod) + 1) |
+        qr(mod[batches_ind[[i]], ])$rank < ncol(mod)
+    ) {
       # not enough residual degree of freedom
-      estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = NULL, subset = nrow(counts))
+      estimateGLMCommonDisp(
+        counts[, batches_ind[[i]]],
+        design = NULL,
+        subset = nrow(counts)
+      )
     } else {
-      estimateGLMCommonDisp(counts[, batches_ind[[i]]], design = mod[batches_ind[[i]], ], subset = nrow(counts))
+      estimateGLMCommonDisp(
+        counts[, batches_ind[[i]]],
+        design = mod[batches_ind[[i]], ],
+        subset = nrow(counts)
+      )
     }
   })
   for (i in 1:n_batch) {
-    cat("Batch ", levels(batch)[i], "(", i, ") dispersion = ", disp_common[i], "\n")
+    cat(
+      "Batch ",
+      levels(batch)[i],
+      "(",
+      i,
+      ") dispersion = ",
+      disp_common[i],
+      "\n"
+    )
   }
-  # Choose the batch with the smallest dispersion as the reference batch
-  ref_batch <- 1
+
+  if (is.null(reference_batch)) {
+    # Choose the batch with the smallest dispersion as the reference batch
+    ref_batch <- 1
+  } else {
+    ref_batch <- match(reference_batch, levels(batch))
+    stopifnot(
+      "The reference batch was not named correctly!" = !is.na(ref_batch)
+    )
+  }
   for (i in 2:n_batch) {
     if (disp_common[i] < disp_common[ref_batch]) {
       ref_batch <- i
@@ -145,13 +184,18 @@ Please remove confounded covariates and rerun ComBat-Seq")
 
   if (genewise.disp) {
     genewise_disp_lst <- lapply(1:n_batch, function(j) {
-      if ((n_batches[j] <= ncol(design) - ncol(batchmod) + 1) | qr(mod[batches_ind[[j]], ])$rank < ncol(mod)) {
+      if (
+        (n_batches[j] <= ncol(design) - ncol(batchmod) + 1) |
+          qr(mod[batches_ind[[j]], ])$rank < ncol(mod)
+      ) {
         # not enough residual degrees of freedom - use the common dispersion
         rep(disp_common[j], nrow(counts))
       } else {
-        estimateGLMTagwiseDisp(counts[, batches_ind[[j]]],
+        estimateGLMTagwiseDisp(
+          counts[, batches_ind[[j]]],
           design = mod[batches_ind[[j]], ],
-          dispersion = disp_common[j], prior.df = 0
+          dispersion = disp_common[j],
+          prior.df = 0
         )
       }
     })
@@ -165,11 +209,19 @@ Please remove confounded covariates and rerun ComBat-Seq")
   ## construct dispersion matrix
   phi_matrix <- matrix(NA, nrow = nrow(counts), ncol = ncol(counts))
   for (k in 1:n_batch) {
-    phi_matrix[, batches_ind[[k]]] <- vec2mat(genewise_disp_lst[[k]], n_batches[k])
+    phi_matrix[, batches_ind[[k]]] <- vec2mat(
+      genewise_disp_lst[[k]],
+      n_batches[k]
+    )
   }
   ########  Estimate parameters from NB GLM  ########
   cat("Fitting the GLM model\n")
-  glm_f <- glmFit(dge_obj, design = design, dispersion = phi_matrix, prior.count = 1e-4)
+  glm_f <- glmFit(
+    dge_obj,
+    design = design,
+    dispersion = phi_matrix,
+    prior.count = 1e-4
+  )
 
   gamma_hat <- as.matrix(glm_f$coefficients[, 1:(n_batch - 1)])
   mu_hat <- glm_f$fitted.values
@@ -188,17 +240,27 @@ Please remove confounded covariates and rerun ComBat-Seq")
     increased_genes <- which(gamma_hat[, kk - 1] < -0.2)
     ncol <- ncol(new_mu)
     ref_max <- vec2mat(rowMaxs(mu_hat[, batches_ind[[1]]]), ncol)
-    new_mu[increased_genes, ] <- pmin(new_mu[increased_genes, ], ref_max[increased_genes, ])
+    new_mu[increased_genes, ] <- pmin(
+      new_mu[increased_genes, ],
+      ref_max[increased_genes, ]
+    )
     new_phi <- phi_hat[, 1]
     adjust_counts[, batches_ind[[kk]]] <- match_quantiles(
       counts_sub = counts_sub,
-      old_mu = old_mu, old_phi = old_phi,
-      new_mu = new_mu, new_phi = new_phi, keep_zero = FALSE
+      old_mu = old_mu,
+      old_phi = old_phi,
+      new_mu = new_mu,
+      new_phi = new_phi,
+      keep_zero = FALSE
     )
   }
 
   ## Add back genes with only 0 counts in any batch (so that dimensions won't change)
-  adjust_counts_whole <- matrix(NA, nrow = nrow(countsOri), ncol = ncol(countsOri))
+  adjust_counts_whole <- matrix(
+    NA,
+    nrow = nrow(countsOri),
+    ncol = ncol(countsOri)
+  )
   dimnames(adjust_counts_whole) <- dimnames(countsOri)
   adjust_counts_whole[keep, ] <- adjust_counts
   adjust_counts_whole[rm, ] <- countsOri[rm, ]
@@ -210,10 +272,16 @@ vec2mat <- function(vec, n_times) {
 }
 
 
-
 ####  Match quantiles
 # keep_zero: zero values in the original counts don't change
-match_quantiles <- function(counts_sub, old_mu, old_phi, new_mu, new_phi, keep_zero = TRUE) {
+match_quantiles <- function(
+  counts_sub,
+  old_mu,
+  old_phi,
+  new_mu,
+  new_phi,
+  keep_zero = TRUE
+) {
   new_counts_sub <- matrix(NA, nrow = nrow(counts_sub), ncol = ncol(counts_sub))
   for (a in 1:nrow(counts_sub)) {
     for (b in 1:ncol(counts_sub)) {
@@ -221,22 +289,35 @@ match_quantiles <- function(counts_sub, old_mu, old_phi, new_mu, new_phi, keep_z
         if (counts_sub[a, b] <= 1) {
           new_counts_sub[a, b] <- counts_sub[a, b]
         } else {
-          tmp_p <- pnbinom(counts_sub[a, b] - 1, mu = old_mu[a, b], size = 1 / old_phi[a])
+          tmp_p <- pnbinom(
+            counts_sub[a, b] - 1,
+            mu = old_mu[a, b],
+            size = 1 / old_phi[a]
+          )
           if (abs(tmp_p - 1) < 1e-4) {
             new_counts_sub[a, b] <- counts_sub[a, b]
             # for outlier count, if p==1, will return Inf values -> use original count instead
           } else {
-            new_counts_sub[a, b] <- 1 + qnbinom(tmp_p, mu = new_mu[a, b], size = 1 / new_phi[a])
+            new_counts_sub[a, b] <- 1 +
+              qnbinom(tmp_p, mu = new_mu[a, b], size = 1 / new_phi[a])
           }
         }
       } else {
-        tmp_p <- pnbinom(counts_sub[a, b], mu = old_mu[a, b], size = 1 / old_phi[a])
+        tmp_p <- pnbinom(
+          counts_sub[a, b],
+          mu = old_mu[a, b],
+          size = 1 / old_phi[a]
+        )
 
         if (abs(tmp_p - 1) < 1e-6) {
           new_counts_sub[a, b] <- counts_sub[a, b]
           # for outlier count, if p==1, will return Inf values -> use original count instead
         } else {
-          new_counts_sub[a, b] <- qnbinom(tmp_p, mu = new_mu[a, b], size = 1 / new_phi[a])
+          new_counts_sub[a, b] <- qnbinom(
+            tmp_p,
+            mu = new_mu[a, b],
+            size = 1 / new_phi[a]
+          )
         }
       }
     }

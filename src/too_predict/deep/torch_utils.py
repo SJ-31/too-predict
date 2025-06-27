@@ -400,6 +400,9 @@ class Trainer:
         self._es = es
         self._at_batch_level = es._on_update
 
+    def deregister_early_stop(self) -> None:
+        self._es = None
+
     def __call__(
         self, loader: DataLoader, validation: Dataset | None = None
     ) -> pd.DataFrame:
