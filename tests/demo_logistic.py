@@ -9,9 +9,11 @@ import sklearn.linear_model as sl
 import sklearn.metrics as met
 import sklearn.model_selection as ms
 import sklearn.preprocessing as sp
+import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from too_predict.deep.logistic import DummyLR
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -53,83 +55,21 @@ class Module(nn.Module):
         return proba.detach().numpy()
 
 
-def train_model(
-    model: Module,
-    loader: DataLoader,
-    criterion: Callable,
-    optimizer: Optimizer | None = None,
-    needs_model: bool = False,
-    needs_closure: bool = False,
-    n_epochs: int = 1000,
-) -> pd.DataFrame:
-    metrics: dict = {"loss": [], "epoch": [], "minibatch": []}
-
-    model.train()
-    record: bool = "record_metrics" in dir(model)
-    for i in range(n_epochs):
-        for j, (X, y) in enumerate(loader):
-
-            def closure():
-                optimizer.zero_grad()
-                y_pred = model(X)
-                loss: torch.Tensor
-                if not needs_model:
-                    loss = criterion(y_pred, y)
-                else:
-                    loss = criterion(model, y_pred, y)
-                loss.backward()
-                if record:
-                    model.record_metrics(metrics)
-                metrics["epoch"].append(i)
-                metrics["minibatch"].append(j)
-                metrics["loss"].append(loss.detach().numpy())
-                return loss
-
-            if not needs_closure:
-                _ = closure()
-                optimizer.step()
-            else:
-                optimizer.step(closure)
-
-    model.eval()
-    return pd.DataFrame(metrics)
-
-
-class DummyLR(Module):
-    def __init__(self, n_classes_per_task, l2=1) -> None:
-        super().__init__()
-        self.linear: nn.LazyLinear = nn.LazyLinear(out_features=n_classes_per_task)
-        self.l2: float = l2
-        self.softmax: nn.Softmax = nn.Softmax(dim=1)
-
-    def forward(self, X):
-        return self.softmax(self.linear(X))
-
-    @staticmethod
-    def criterion(model, X, y):
-        cel = nn.functional.cross_entropy(input=X, target=y)
-        l2 = cel + model.l2 * torch.sum(model.linear.weight**2)
-        # [2025-06-18 Wed]
-        # l2 is used by default in skLearn's LogisticRegression with C = 1
-        # But this lowers acuracy dramatically
-        return l2
-
-
 def torch_model(l2, loader, x_test, y_test, **kwargs):
     model = DummyLR(
         n_classes_per_task=len(np.unique(DATA[1])),
         l2=l2,
     )
     opt = optim.Adam(model.named_parameters(), **kwargs)
-    _ = train_model(
+    trainer = d_ut.Trainer(
         model=model,
-        loader=loader,
         optimizer=opt,
-        criterion=DummyLR.criterion,
-        needs_model=True,
         n_epochs=2000,
-        needs_closure=True,
+        at_batch_level=True,
+        record_test_score=False,
     )
+    metrics = trainer(loader)
+    print(metrics)
     pred = model.predict(x_test)
     acc = met.accuracy_score(y_test, pred)
     return acc
