@@ -499,19 +499,22 @@ class EarlyStopper:
         mode: Literal["simple"] = "simple",
         patience: int = 40,
         on_update: bool = True,
+        higher_better: bool = True,
         all: bool = False,
     ) -> None:
         self._mode: str = mode
         self._patience: int = patience
         self._all: bool = all
         self._on_update: bool = on_update
+        self._higher_better: bool = higher_better  # if true, higher scores
+        # mean improvement e.g. if using with accuracy
         self._tracker: int
-        self._best_vset: Tensor  # Want to maximize this score
+        self._best_vset: Tensor
         self.best_stop: int
 
     def _reset(self) -> None:
         self._tracker = 0
-        self._best_vset = -torch.inf
+        self._best_vset = -torch.inf if self._higher_better else torch.inf
         self.best_stop = 0
 
     def _should_stop(self, score: Tensor, step: int) -> bool:
@@ -524,7 +527,10 @@ class EarlyStopper:
         """
         if self._mode == "simple":
             passed: bool = False
-            bools = score < self._best_vset
+            if self._higher_better:
+                bools = score > self._best_vset
+            else:
+                bools = score < self._best_vset
             if len(bools) == 1:
                 passed = bools
             else:
@@ -536,9 +542,13 @@ class EarlyStopper:
             else:
                 self._tracker = 0
                 self.best_stop = step
-            return self._tracker > self._patience
-
-        raise NotImplementedError("Early stopping mode not supported yet")
+                self._best_vset = score
+            b = self._tracker > self._patience
+        else:
+            raise NotImplementedError("Early stopping mode not supported yet")
+        if b:
+            print(f"Early stopping complete with best step {self.best_stop}")
+        return b
 
 
 # * Utility functions
@@ -564,8 +574,6 @@ def iter_cols(x: Tensor | np.ndarray) -> Iterable:
     return to_iter
 
 
-# def optimize():
-#
 def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
     one_d = is_atomic(x)
     if one_d and isinstance(x, torch.Tensor):
