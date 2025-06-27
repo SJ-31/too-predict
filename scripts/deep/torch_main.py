@@ -24,14 +24,26 @@ torch.set_default_dtype(torch.float64)
 
 # * Models to test
 MODELS = {
-    "MultiLevel": (lambda **kwargs: d_log.MultiLevel(**kwargs), True, True),
-    "MtcLr": (lambda **kwargs: d_log.MtcLr(**kwargs), True, True),
-    "Disyak": (lambda **kwargs: d_nn.Disyak(n_hidden=100, **kwargs), False, False),
+    "MultiLevel": (
+        lambda **kwargs: d_log.MultiLevel(**kwargs),
+        {"skip": True, "filter": True, "holdout": False},
+    ),
+    "MtcLr": (lambda **kwargs: d_log.MtcLr(**kwargs), {"skip": True, "filter": True}),
+    "Disyak": (
+        lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
+        {"skip": False, "filter": True},
+    ),
 }
 TRANSFORM: Transformer = Transformer(
     "clr", impute_fn=Imputer("plus_one"), inplace=False
 )
-FILTER: Filter = Filter("edgeR_median_lfc_feature_list_3000", inplace=False)
+# TODO: the transformation NEEDS to be a hyperparameter that you optimize for
+REF, FEAT = ut.ref_feature_lists_internal()
+FILTER: Filter = Filter(
+    features=FEAT["edgeR_median_lfc_feature_list_3000"],
+    inplace=False,
+    feature_col="GENEID",
+)
 LABELS = ("Sample_Type", "tumor_type")
 
 TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": 10}
@@ -60,10 +72,10 @@ def parse_args():
 
 
 def cross_val(adata: ad.AnnData):
-    for name, (m, skip, filter) in MODELS.items():
-        if skip:
+    for name, (m, pars) in MODELS.items():
+        if pars.get("skip"):
             continue
-        if filter:
+        if pars.get("filter"):
             adata = FILTER.fit_transform(adata)
         n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
         train, valid = ut.train_test_split_ad(
@@ -93,14 +105,15 @@ def cross_val(adata: ad.AnnData):
         cv.to_csv(outdir.joinpath("cv_results.csv"), index=False)
         hr_dir = outdir.joinpath("additional_splits")
         hr_dir.mkdir(exist_ok=True)
-        _ = holdout(
-            trainer,
-            adata,
-            split_fns=tt.ADDITIONAL_SPLITS,
-            to_encode=LABELS,
-            outdir=hr_dir,
-            minimal=True,
-        )
+        if pars.get("holdout"):
+            _ = holdout(
+                trainer,
+                adata,
+                split_fns=tt.ADDITIONAL_SPLITS,
+                to_encode=LABELS,
+                outdir=hr_dir,
+                minimal=True,
+            )
     return
 
 
@@ -109,10 +122,12 @@ if __name__ == "__main__":
     if args["test"]:
         print("Using test subset")
         adata = ut.training_data_internal_test(minimal=False)
+        # adata = ut.training_data_internal_test(minimal=True)
         OUTDIR = OUTDIR.joinpath("test")
         OUTDIR.mkdir(exist_ok=True, parents=True)
         TRAIN_KWARGS["n_epochs"] = 100
     else:
         adata = ut.training_data_internal()
+    # adata = adata[:, :1000]  # TODO: can you replicate the results Yes you can
     adata = TRANSFORM.fit_transform(adata)
     cross_val(adata)
