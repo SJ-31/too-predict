@@ -257,7 +257,7 @@ class Trainer:
         record_train_score: bool = True,
         record_test_score: bool = True,
         output_names: Sequence | None = None,
-        at_batch_level: bool = True,
+        at_batch_level: bool | int = True,
     ) -> None:
         self._evaluate: Callable
         self._n_epochs: int = n_epochs
@@ -265,7 +265,7 @@ class Trainer:
             optimizer if optimizer is not None else model.get_optimizers()
         )
         self._es: EarlyStopper | None = None
-        self._at_batch_level: bool = at_batch_level
+        self._at_batch_level: bool | int = at_batch_level
         self.scheduler: schedule.LRScheduler | None = None
         self.model: Module = model
 
@@ -293,6 +293,7 @@ class Trainer:
         # Training metric attributes
         self._record_train_score: bool = record_train_score
         self._record_test_score: bool = record_test_score
+        self._batch_tracker: int = 0
         self._metrics: dict
         self._train_keys: list
         self._test_keys: list
@@ -311,6 +312,7 @@ class Trainer:
         if self._at_batch_level:
             self._metrics["minibatch"] = []
             self._metrics["loss"] = []
+            self._batch_tracker = 0
         else:
             self._metrics["avg_loss"] = []
         if self.model.n_tasks == 1:
@@ -344,6 +346,15 @@ class Trainer:
         self.model.train()
         return score
 
+    def _should_record_batch(self) -> bool:
+        if isinstance(self._at_batch_level, bool):
+            return self._at_batch_level
+        elif self._batch_tracker == self._at_batch_level:
+            self._batch_tracker = 0
+            return True
+        self._batch_tracker += 1
+        return False
+
     def _train_minibatch(
         self,
         train_x: Tensor,
@@ -361,21 +372,22 @@ class Trainer:
         loss.backward()
 
         v_score: Tensor | None = None
-        if self._record_train_score and self._at_batch_level:
+        should_record_batch = self._should_record_batch()
+        if self._record_train_score and should_record_batch:
             _ = self._record(
                 train_x,
                 train_y,
                 multi_key=self._train_keys,
                 single_key=self._train_score_key,
             )
-        if validate and self._record_test_score and self._at_batch_level:
+        if validate and self._record_test_score and should_record_batch:
             v_score = self._record(
                 vx,
                 vy,
                 multi_key=self._test_keys,
                 single_key=self._test_score_key,
             )
-        if self._at_batch_level:
+        if should_record_batch:
             self._metrics["epoch"].append(epoch)
             self._metrics["minibatch"].append(iter)
             self._metrics["loss"].append(loss.detach().numpy())
@@ -386,6 +398,7 @@ class Trainer:
 
     def register_early_stop(self, es: EarlyStopper) -> None:
         self._es = es
+        self._at_batch_level = es._on_update
 
     def __call__(
         self, loader: DataLoader, validation: Dataset | None = None
@@ -493,12 +506,12 @@ class EarlyStopper:
         self._all: bool = all
         self._on_update: bool = on_update
         self._tracker: int
-        self._best_vset: Tensor
+        self._best_vset: Tensor  # Want to maximize this score
         self.best_stop: int
 
     def _reset(self) -> None:
         self._tracker = 0
-        self._best_vset = torch.inf
+        self._best_vset = -torch.inf
         self.best_stop = 0
 
     def _should_stop(self, score: Tensor, step: int) -> bool:
