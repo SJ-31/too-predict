@@ -24,18 +24,22 @@ torch.set_default_dtype(torch.float64)
 
 # * Models to test
 MODELS = {
-    "MultiLevel": (lambda **kwargs: d_log.MultiLevel(**kwargs), False, True),
-    "MtcLr": (lambda **kwargs: d_log.MtcLr(**kwargs), False, True),
-    "Disyak": (lambda **kwargs: d_nn.Disyak(n_hidden=3000, **kwargs), False, True),
+    "MultiLevel": (lambda **kwargs: d_log.MultiLevel(**kwargs), True, True),
+    "MtcLr": (lambda **kwargs: d_log.MtcLr(**kwargs), True, True),
+    "Disyak": (lambda **kwargs: d_nn.Disyak(n_hidden=100, **kwargs), False, False),
 }
 TRANSFORM: Transformer = Transformer(
     "clr", impute_fn=Imputer("plus_one"), inplace=False
 )
 FILTER: Filter = Filter("edgeR_median_lfc_feature_list_3000", inplace=False)
 LABELS = ("Sample_Type", "tumor_type")
-TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": False}
+
+TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": 10}
 EARLY_STOP: dict = {"patience": 40, "on_update": False, "higher_better": True}
+CV_KWARGS: dict = {"batch_size": 32, "n_splits": 3}
+# WARN: This is important
 OPTIMIZATION_KWARGS: dict = {"lr": 0.001}
+SCHEDULE_KWARGS: dict = {"patience": 40}
 
 
 def get_optimizer(model: nn.Module):
@@ -43,7 +47,7 @@ def get_optimizer(model: nn.Module):
 
 
 def get_scheduler(optimizer):
-    return schedule.ReduceLROnPlateau(optimizer)
+    return schedule.ReduceLROnPlateau(optimizer, **SCHEDULE_KWARGS)
 
 
 def parse_args():
@@ -77,15 +81,14 @@ def cross_val(adata: ad.AnnData):
             scheduler=scheduler,
             record_test_score=True,
         )
-        trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
+        # trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
         cv: pd.DataFrame = cross_validate(
             trainer,
             d_ut.AnnDataset(train, to_encode=LABELS),
-            n_splits=3,
             intermediate_out=outdir,
             save_intermediate=True,
-            batch_size=64,
             validation=d_ut.AnnDataset(valid, to_encode=LABELS),
+            **CV_KWARGS,
         )
         cv.to_csv(outdir.joinpath("cv_results.csv"), index=False)
         hr_dir = outdir.joinpath("additional_splits")
@@ -105,7 +108,7 @@ if __name__ == "__main__":
     args = parse_args()
     if args["test"]:
         print("Using test subset")
-        adata = ut.training_data_internal_test()
+        adata = ut.training_data_internal_test(minimal=False)
         OUTDIR = OUTDIR.joinpath("test")
         OUTDIR.mkdir(exist_ok=True, parents=True)
         TRAIN_KWARGS["n_epochs"] = 100
