@@ -63,13 +63,17 @@ def get_data(path: str, must_exist: bool = True) -> Path:
     return file.absolute()
 
 
-def xarray_if_sparse(x: ad.AnnData, copy: bool = True) -> np.ndarray:
+def xarray_if_sparse(
+    x: ad.AnnData, copy: bool = True, dtype: np.dtype = np.float32
+) -> np.ndarray:
     was_sparse: bool = sparse.issparse(x.X)
     if was_sparse:
-        return x.X.toarray()
-    if copy:
-        return x.X.copy()
-    return x.X
+        arr = x.X.toarray()
+    elif copy:
+        arr = x.X.copy()
+    else:
+        arr = x.X
+    return arr.astype(dtype)
 
 
 def filter_by_obs(
@@ -858,10 +862,16 @@ def pca_to_leiden(
     do_call(lambda **x: sc.tl.leiden(adata, **x), leiden_pars)
 
 
-def set_trace():
-    import IPython.core.debugger as debug
-
-    debug.set_trace()
+def if_none(dct: dict | None, default: dict, update: bool = True) -> dict:
+    """Return `default` if `dct` is None
+    If `update`, use `dct` to update `default`, otherwise return `dct` as is
+    """
+    if dct is None:
+        return default
+    elif update:
+        default.update(dct)
+        return default
+    return dct
 
 
 def mad_outliers(
