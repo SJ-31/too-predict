@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from too_predict.deep.evaluation import multitask_cross_entropy_loss
 from too_predict.deep.logistic import logistic_hook
+from too_predict.utils import if_none
 from torch import Tensor
 
 """
@@ -33,8 +34,12 @@ class Disyak(d_ut.MultiModule):
         n_hidden: int | None = 2000,
         task_weights: Tensor | Sequence | None = None,
         dropout_p: float = 0.2,
+        l1_pars: dict | None = None,
+        l2_pars: dict | None = None,
     ) -> None:
-        super().__init__(in_features, n_classes_per_task, task_weights)
+        super().__init__(
+            in_features, n_classes_per_task, task_weights, l1_pars, l2_pars
+        )
         if n_hidden is None:
             n_hidden = in_features
         self.hlayers: nn.ModuleList = nn.ModuleList()
@@ -81,4 +86,5 @@ class Disyak(d_ut.MultiModule):
             )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
+        total_loss += self.l2() + self.l1()
         return total_loss

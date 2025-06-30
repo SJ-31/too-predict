@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from too_predict.utils import if_none
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
@@ -340,6 +341,8 @@ class MultiModule(Module):
         in_features: int,
         n_classes_per_task: list[int],
         task_weights: Tensor | Sequence | None = None,
+        l1_pars: dict | None = None,
+        l2_pars: dict | None = None,
     ) -> None:
         """__init__.
 
@@ -351,6 +354,12 @@ class MultiModule(Module):
             n_classes_per_task
         task_weights : Tensor | Sequence | None
             task_weights
+        l1_pars : dict
+            Parameters for l1 regularization, dict of two keys: {"lambda", "exclude"}
+            "lambda" is the regularization constant, "exclude" denotes named parameters
+            to ignore from the calculation
+        l2_pars : dict
+            Parameters for l2 regularization, dict of two keys: {"lambda", "exclude"}
 
         Returns
         -------
@@ -358,6 +367,8 @@ class MultiModule(Module):
 
         """
         super().__init__(n_tasks=len(n_classes_per_task))
+        self.l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self.l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
         self.task_weights: Tensor = None
         if task_weights is not None and not isinstance(task_weights, Tensor):
             self.task_weights = torch.tensor(task_weights)
@@ -438,6 +449,16 @@ class MultiModule(Module):
             y_true
         """
         return super().criterion(y_pred, y_true)
+
+    def l1(self) -> Tensor | Literal[0]:
+        if self.l1_pars["lambda"] > 0:
+            return l1(self, self.l1_pars["exclude"])
+        return 0
+
+    def l2(self) -> Tensor | Literal[0]:
+        if self.l2_pars["lambda"] > 0:
+            return l2(self, self.l2_pars["exclude"])
+        return 0
 
 
 # * Trainer
