@@ -42,6 +42,22 @@ class AnnDataset(torch.utils.data.Dataset):
         device: str = "cpu",
         to_encode: tuple[str] | str = ("Sample_Type", "tumor_type", "primary_site"),
     ) -> None:
+        """__init__.
+
+        Parameters
+        ----------
+        adata : ad.AnnData
+            adata
+        device : str
+            device
+        to_encode : tuple[str] | str
+            to_encode
+
+        Returns
+        -------
+        None
+
+        """
         self.X: torch.Tensor = torch.tensor(ut.xarray_if_sparse(adata), device=device)
         self.encoders: dict[str, sp.LabelEncoder] = {}
         self.labels: torch.Tensor = torch.zeros(
@@ -64,6 +80,22 @@ class AnnDataset(torch.utils.data.Dataset):
         label_cols: Sequence | None = None,
         indices: Sequence | None = None,
     ) -> np.ndarray:
+        """decode.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            y
+        label_cols : Sequence | None
+            label_cols
+        indices : Sequence | None
+            indices
+
+        Returns
+        -------
+        np.ndarray
+
+        """
         if indices is None:
             indices = list(range(len(self.encoders)))
         vals = []
@@ -85,21 +117,74 @@ class AnnDataset(torch.utils.data.Dataset):
 
     @property
     def shape(self) -> tuple:
+        """shape.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        tuple
+
+        """
         return self.X.shape
 
     def __len__(self) -> int:
+        """__len__.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        int
+
+        """
         return self.X.shape[0]
 
     @override
     def __getitem__(self, index):
+        """__getitem__.
+
+        Parameters
+        ----------
+        index :
+            index
+        """
         return self.X[index, :], self.labels[index, :]
 
 
 def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
+    """make_dataset.
+
+    Parameters
+    ----------
+    X : np.ndarray
+        X
+    y_true : np.ndarray
+        y_true
+
+    Returns
+    -------
+    Dataset
+
+    """
     return torch.utils.data.TensorDataset(torch.tensor(X), torch.tensor(y_true))
 
 
 def is_atomic(x: torch.Tensor | np.ndarray) -> bool:
+    """is_atomic.
+
+    Parameters
+    ----------
+    x : torch.Tensor | np.ndarray
+        x
+
+    Returns
+    -------
+    bool
+
+    """
     return len(x.shape) <= 1
 
 
@@ -126,21 +211,66 @@ def linear_reset_parameters(weight: Tensor, bias: Tensor | None = None) -> None:
 
 
 class Module(nn.Module):
+    """Module."""
+
     def __init__(self, n_tasks: int = 1) -> None:
+        """__init__.
+
+        Parameters
+        ----------
+        n_tasks : int
+            n_tasks
+
+        Returns
+        -------
+        None
+
+        """
         super().__init__()
         self.n_tasks: int = n_tasks
 
     @override
     def forward(self, X):
+        """forward.
+
+        Parameters
+        ----------
+        X :
+            X
+        """
         raise NotImplementedError()
 
     def _predict(self, X: np.ndarray) -> np.ndarray:
+        """_predict.
+
+        Parameters
+        ----------
+        X : np.ndarray
+            X
+
+        Returns
+        -------
+        np.ndarray
+
+        """
         proba = self.predict_proba(X)
         if isinstance(proba, tuple):
             return np.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
         return proba.argmax(axis=1)
 
     def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
+        """predict.
+
+        Parameters
+        ----------
+        X : Tensor | np.ndarray | DataLoader | Dataset
+            X
+
+        Returns
+        -------
+        np.ndarray
+
+        """
         if isinstance(X, DataLoader):
             prediction = []
             for x, _ in X:
@@ -151,9 +281,22 @@ class Module(nn.Module):
         return self._predict(X)
 
     def reset_parameters(self):
+        """reset_parameters."""
         raise NotImplementedError()
 
     def predict_proba(self, X) -> np.ndarray | tuple:
+        """predict_proba.
+
+        Parameters
+        ----------
+        X :
+            X
+
+        Returns
+        -------
+        np.ndarray | tuple
+
+        """
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self(X)
         if isinstance(proba, tuple):
@@ -161,9 +304,28 @@ class Module(nn.Module):
         return proba.detach().numpy()
 
     def get_optimizers(self) -> Optimizer:
+        """get_optimizers.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        Optimizer
+
+        """
         return optim.Adam(self.named_parameters())
 
     def criterion(self, y_pred, y_true):
+        """criterion.
+
+        Parameters
+        ----------
+        y_pred :
+            y_pred
+        y_true :
+            y_true
+        """
         raise NotImplementedError()
 
 
@@ -171,12 +333,30 @@ class Module(nn.Module):
 
 
 class MultiModule(Module):
+    """MultiModule."""
+
     def __init__(
         self,
         in_features: int,
         n_classes_per_task: list[int],
         task_weights: Tensor | Sequence | None = None,
     ) -> None:
+        """__init__.
+
+        Parameters
+        ----------
+        in_features : int
+            in_features
+        n_classes_per_task : list[int]
+            n_classes_per_task
+        task_weights : Tensor | Sequence | None
+            task_weights
+
+        Returns
+        -------
+        None
+
+        """
         super().__init__(n_tasks=len(n_classes_per_task))
         self.task_weights: Tensor = None
         if task_weights is not None and not isinstance(task_weights, Tensor):
@@ -186,26 +366,77 @@ class MultiModule(Module):
 
     @override
     def forward(self, X):
+        """forward.
+
+        Parameters
+        ----------
+        X :
+            X
+        """
         return super().forward(X)
 
     @override
     def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
+        """predict.
+
+        Parameters
+        ----------
+        X : Tensor | np.ndarray | DataLoader | Dataset
+            X
+
+        Returns
+        -------
+        np.ndarray
+
+        """
         return super().predict(X)
 
     @override
     def predict_proba(self, X) -> np.ndarray | tuple:
+        """predict_proba.
+
+        Parameters
+        ----------
+        X :
+            X
+
+        Returns
+        -------
+        np.ndarray | tuple
+
+        """
         return super().predict_proba(X)
 
     @override
     def reset_parameters(self):
+        """reset_parameters."""
         return super().reset_parameters()
 
     @override
     def get_optimizers(self) -> Optimizer:
+        """get_optimizers.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        Optimizer
+
+        """
         return super().get_optimizers()
 
     @override
     def criterion(self, y_pred, y_true):
+        """criterion.
+
+        Parameters
+        ----------
+        y_pred :
+            y_pred
+        y_true :
+            y_true
+        """
         return super().criterion(y_pred, y_true)
 
 
@@ -259,6 +490,47 @@ class Trainer:
         output_names: Sequence | None = None,
         at_batch_level: bool | int = True,
     ) -> None:
+        """__init__.
+
+        Parameters
+        ----------
+        model : Module
+            model
+        optimizer : Optimizer | None
+            optimizer
+        n_epochs : int
+            n_epochs
+        tol : float | None
+            tol
+        scheduler : schedule.LRScheduler | None
+            scheduler
+        score_metric : Literal[
+                    "accuracy",
+                    "balanced_accuracy",
+                    "f1",
+                    "precision",
+                    "mean_squared_error",
+                    "recall",
+                ]
+            score_metric
+        score_fn : Callable[[np.ndarray, np.ndarray], float] | None
+            score_fn
+        score_fn_name : str
+            score_fn_name
+        record_train_score : bool
+            record_train_score
+        record_test_score : bool
+            record_test_score
+        output_names : Sequence | None
+            output_names
+        at_batch_level : bool | int
+            at_batch_level
+
+        Returns
+        -------
+        None
+
+        """
         self._evaluate: Callable
         self._n_epochs: int = n_epochs
         self.optimizer: Optimizer = (
@@ -305,6 +577,7 @@ class Trainer:
             self._output_names = output_names
 
     def _init_metrics(self):
+        """_init_metrics."""
         self._metrics = {"epoch": []}
         self._train_keys = []
         self._test_keys = []
@@ -332,6 +605,24 @@ class Trainer:
                     self._metrics[key] = []
 
     def _record(self, X, y, single_key: str, multi_key: list[str]) -> Tensor:
+        """_record.
+
+        Parameters
+        ----------
+        X :
+            X
+        y :
+            y
+        single_key : str
+            single_key
+        multi_key : list[str]
+            multi_key
+
+        Returns
+        -------
+        Tensor
+
+        """
         self.model.eval()
         y_pred = self.model.predict(X)
         if self._train_keys:
@@ -347,6 +638,16 @@ class Trainer:
         return score
 
     def _should_record_batch(self) -> bool:
+        """_should_record_batch.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        bool
+
+        """
         if isinstance(self._at_batch_level, bool):
             return self._at_batch_level
         elif self._batch_tracker == self._at_batch_level:
@@ -366,6 +667,32 @@ class Trainer:
         iter: int,
         losses: list,
     ) -> Tensor | None:
+        """_train_minibatch.
+
+        Parameters
+        ----------
+        train_x : Tensor
+            train_x
+        train_y : Tensor
+            train_y
+        vx : Tensor
+            vx
+        vy : Tensor
+            vy
+        validate : bool
+            validate
+        epoch : int
+            epoch
+        iter : int
+            iter
+        losses : list
+            losses
+
+        Returns
+        -------
+        Tensor | None
+
+        """
         self.optimizer.zero_grad()
         out = self.model(train_x)
         loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=train_y)
@@ -397,15 +724,51 @@ class Trainer:
         return v_score
 
     def register_early_stop(self, es: EarlyStopper) -> None:
+        """register_early_stop.
+
+        Parameters
+        ----------
+        es : EarlyStopper
+            es
+
+        Returns
+        -------
+        None
+
+        """
         self._es = es
         self._at_batch_level = es._on_update
 
     def deregister_early_stop(self) -> None:
+        """deregister_early_stop.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        None
+
+        """
         self._es = None
 
     def __call__(
         self, loader: DataLoader, validation: Dataset | None = None
     ) -> pd.DataFrame:
+        """__call__.
+
+        Parameters
+        ----------
+        loader : DataLoader
+            loader
+        validation : Dataset | None
+            validation
+
+        Returns
+        -------
+        pd.DataFrame
+
+        """
         self._init_metrics()
         self.model.reset_parameters()
         if self._es and validation is None:
@@ -505,6 +868,26 @@ class EarlyStopper:
         higher_better: bool = True,
         all: bool = False,
     ) -> None:
+        """__init__.
+
+        Parameters
+        ----------
+        mode : Literal["simple"]
+            mode
+        patience : int
+            patience
+        on_update : bool
+            on_update
+        higher_better : bool
+            higher_better
+        all : bool
+            all
+
+        Returns
+        -------
+        None
+
+        """
         self._mode: str = mode
         self._patience: int = patience
         self._all: bool = all
@@ -516,6 +899,16 @@ class EarlyStopper:
         self.best_stop: int
 
     def _reset(self) -> None:
+        """_reset.
+
+        Parameters
+        ----------
+
+        Returns
+        -------
+        None
+
+        """
         self._tracker = 0
         self._best_vset = -torch.inf if self._higher_better else torch.inf
         self.best_stop = 0
@@ -558,7 +951,27 @@ class EarlyStopper:
 
 
 def reset_sequential(mod: nn.Module) -> None:
+    """reset_sequential.
+
+    Parameters
+    ----------
+    mod : nn.Module
+        mod
+
+    Returns
+    -------
+    None
+
+    """
+
     def reset(m):
+        """reset.
+
+        Parameters
+        ----------
+        m :
+            m
+        """
         if (
             isinstance(m, nn.Conv2d)
             or isinstance(m, nn.Linear)
@@ -570,6 +983,18 @@ def reset_sequential(mod: nn.Module) -> None:
 
 
 def iter_cols(x: Tensor | np.ndarray) -> Iterable:
+    """Iterate over columnes of x
+
+    Parameters
+    ----------
+    x : Tensor | np.ndarray
+        x
+
+    Returns
+    -------
+    Iterable
+
+    """
     if isinstance(x, Tensor):
         to_iter = torch.unbind(x, dim=1)
     else:
@@ -578,6 +1003,18 @@ def iter_cols(x: Tensor | np.ndarray) -> Iterable:
 
 
 def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
+    """Count the number of unique elements in x
+
+    Parameters
+    ----------
+    x : torch.Tensor | np.ndarray | Sequence
+        x
+
+    Returns
+    -------
+    int
+
+    """
     one_d = is_atomic(x)
     if one_d and isinstance(x, torch.Tensor):
         return x.unique().size()[0]
@@ -597,6 +1034,13 @@ def data_spec(
     """
 
     def _for_dataset(data):
+        """_for_dataset.
+
+        Parameters
+        ----------
+        data :
+            data
+        """
         x, y = data[:]
         if is_atomic(y) or y.shape[1] == 1:
             n_classes = n_uniques(y)
@@ -622,3 +1066,52 @@ def data_spec(
     elif isinstance(y, np.ndarray) and len(y.shape) > 1:
         return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
     return X.shape[1], len(set(y))
+
+
+# * Regularization
+
+
+def l1(model: nn.Module, exclude: Sequence[str] = ()) -> Tensor | Literal[0]:
+    """Compute l1 regularization
+
+    Parameters
+    ----------
+    model : nn.Module
+        model to apply l1 to
+    exclude : Sequence[str]
+        Sequence of parameter names to exclude from l1 calculation
+
+    Returns
+    -------
+    Tensor
+
+    """
+    with torch.no_grad():
+        return sum(
+            torch.sum(torch.abs(v))
+            for k, v in model.named_parameters()
+            if k not in exclude
+        )
+
+
+def l2(model: nn.Module, exclude: Sequence[str] = ()) -> Tensor | Literal[0]:
+    """Compute l2 regularization
+
+    Parameters
+    ----------
+    model : nn.Module
+        model to apply l2 to
+    exclude : Sequence[str]
+        Sequence of parameter names to exclude from l2 calculation
+
+    Returns
+    -------
+    Tensor
+
+    """
+    with torch.no_grad():
+        return sum(
+            torch.sum(torch.pow(v, 2))
+            for k, v in model.named_parameters()
+            if k not in exclude
+        )
