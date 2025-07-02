@@ -7,7 +7,6 @@ import anndata as ad
 import numpy as np
 import optuna
 import pandas as pd
-import rpy2
 import sklearn.metrics as me
 import sklearn.metrics as met
 import sklearn.model_selection as ms
@@ -16,7 +15,7 @@ from rpy2.rinterface_lib.embedded import RRuntimeError
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
 from too_predict.transformer import Transformer
-from too_predict.utils import RANDOM_STATE, find_confounded
+from too_predict.utils import RANDOM_STATE
 
 
 def curve_multiclass(
@@ -480,7 +479,9 @@ def holdout(
                 df["test_set"] = set_label
                 dfs[d].append(df)
     if not minimal:
-        concat = {d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0}
+        concat = {
+            d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0
+        }
         concat["cm"] = cms
         concat["misc"] = pd.DataFrame(misc_tmp)
         return concat

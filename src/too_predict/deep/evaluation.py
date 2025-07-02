@@ -7,29 +7,31 @@ from pathlib import Path
 import anndata as ad
 import numpy as np
 import pandas as pd
-import sklearn.metrics as met
 import sklearn.model_selection as ms
 import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.utils as ut
 import torch
 import torch.nn as nn
+import torchmetrics.functional.classification as tmet
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from xgboost import XGBClassifier
 
 
 def multitask_acc(
-    y_true: Tensor | np.ndarray | DataLoader | Dataset,
-    predictions: Tensor | np.ndarray,
+    predictions: Tensor,
+    y_true: Tensor | DataLoader | Dataset,
+    n_classes: Sequence[int],
     task_names: Sequence[str] | None = None,
 ) -> dict:
     """Compute accuracy independently on each prediction task
 
     Parameters
     ----------
-    y_true : true values, of shape n_samples x n_tasks
     predictions : multitask predictions, same shape as y_true
+    y_true : true values, of shape n_samples x n_tasks
+    n_classes : iterable where the ith index is the number of classes in the ith task
     task_names : names of prediction tasks
 
     Returns
@@ -46,33 +48,44 @@ def multitask_acc(
     if task_names is None:
         task_names = [str(i) for i in range(predictions.shape[1])]
     result = {}
-    for task, y, pred in zip(task_names, y_iter, pred_iter):
-        result[task] = met.accuracy_score(y, pred)
+    for i, (task, y, pred) in enumerate(zip(task_names, y_iter, pred_iter)):
+        result[task] = tmet.accuracy(
+            preds=pred, target=y, num_classes=n_classes[i], task="multiclass"
+        )
     return result
 
 
 def multitask_all_metrics(
-    y_true: Tensor | np.ndarray,
-    scores: Sequence[Tensor | np.ndarray],
+    scores: Sequence[Tensor],
+    y_true: Tensor,
+    n_classes: Sequence[int],
     task_names: Sequence[str] | None = None,
-    task_classes: Sequence[Sequence] | None = None,
 ) -> dict:
     if y_true.shape[1] != len(scores):
         raise ValueError(
             "The given truth matrix does not match the sequence of scores!"
         )
     to_iter = d_ut.iter_cols(y_true)
-    if task_classes is None and isinstance(y_true, Tensor):
-        task_classes = [list(y.unique()) for y in to_iter]
-    elif task_classes is None and isinstance(y_true, np.ndarray):
-        task_classes = [list(np.unique(y)) for y in to_iter]
     if task_names is None:
         task_names = [str(i) for i in range(len(scores))]
     result = {}
-    for task, truth, score, class_names in zip(
-        task_names, to_iter, scores, task_classes
-    ):
-        result[task] = te.get_all_metrics(truth, score, classes=sorted(class_names))
+    for task, truth, score, n in zip(task_names, to_iter, scores, n_classes):
+        result[task] = {}
+        result[task]["accuracy"] = tmet.accuracy(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )  # NOTE: the multiclass_accuracy version produced a different result
+        result[task]["kappa"] = tmet.cohen_kappa(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )
+        result[task]["mcc"] = tmet.matthews_corrcoef(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )
+        result[task]["auroc"] = tmet.auroc(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )
+        result[task]["cm"] = tmet.confusion_matrix(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )
     return result
 
 
@@ -172,6 +185,12 @@ def holdout(
         raise ValueError("Either split_fns or split_indices must be given!")
 
     split_is_fn: bool = split_fns is not None
+    trainer.deregister_early_stop()  # TODO: better way would be to get a validation
+    # set by splitting the test data,
+    # or maybe even use the test data itself as the validation
+    # set??? But would be biased
+    # maybe use noisy test data as validation
+    trainer._record_test_score = False
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
@@ -237,6 +256,7 @@ def cross_validate(
     n_splits: int = 5,
     save_intermediate: bool = False,
     intermediate_out: Path | None = None,
+    validation: Dataset | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
@@ -247,11 +267,12 @@ def cross_validate(
         metrics[task] = []
     for fold, (train_idx, test_idx) in enumerate(splits):
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
+        print(len(train.dataset))
         test: Dataset = Subset(adset, test_idx)
 
         y_true = test[:][1]
 
-        cur_fold = trainer(train)
+        cur_fold = trainer(train, validation=validation)
         if save_intermediate and intermediate_out:
             cur_fold.to_csv(
                 intermediate_out.joinpath(f"fold_{fold}_training.csv"), index=False

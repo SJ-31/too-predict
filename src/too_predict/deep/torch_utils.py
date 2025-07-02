@@ -9,7 +9,6 @@ from typing import Callable, Literal, override
 import anndata as ad
 import numpy as np
 import pandas as pd
-import sklearn.metrics as met
 import sklearn.preprocessing as sp
 import too_predict.utils as ut
 import torch
@@ -17,6 +16,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+import torchmetrics.functional.classification as tmet
 from too_predict.utils import if_none
 from torch import Tensor
 from torch.optim import Optimizer
@@ -241,7 +241,7 @@ class Module(nn.Module):
         """
         raise NotImplementedError()
 
-    def _predict(self, X: np.ndarray) -> np.ndarray:
+    def _predict(self, X: np.ndarray | Tensor) -> Tensor:
         """_predict.
 
         Parameters
@@ -256,10 +256,10 @@ class Module(nn.Module):
         """
         proba = self.predict_proba(X)
         if isinstance(proba, tuple):
-            return np.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
+            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
         return proba.argmax(axis=1)
 
-    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
+    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> Tensor:
         """predict.
 
         Parameters
@@ -276,7 +276,7 @@ class Module(nn.Module):
             prediction = []
             for x, _ in X:
                 prediction.append(self._predict(x))
-            return np.vstack(prediction)
+            return torch.vstack(prediction)
         if isinstance(X, Dataset):
             X = X[:]
         return self._predict(X)
@@ -285,24 +285,12 @@ class Module(nn.Module):
         """reset_parameters."""
         raise NotImplementedError()
 
-    def predict_proba(self, X) -> np.ndarray | tuple:
-        """predict_proba.
-
-        Parameters
-        ----------
-        X :
-            X
-
-        Returns
-        -------
-        np.ndarray | tuple
-
-        """
+    def predict_proba(self, X) -> Tensor | tuple:
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self(X)
         if isinstance(proba, tuple):
-            return tuple(p.detach().numpy() for p in proba)
-        return proba.detach().numpy()
+            return tuple(p.detach() for p in proba)
+        return proba.detach()
 
     def get_optimizers(self) -> Optimizer:
         """get_optimizers.
@@ -387,40 +375,15 @@ class MultiModule(Module):
         return super().forward(X)
 
     @override
-    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> np.ndarray:
-        """predict.
-
-        Parameters
-        ----------
-        X : Tensor | np.ndarray | DataLoader | Dataset
-            X
-
-        Returns
-        -------
-        np.ndarray
-
-        """
+    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> Tensor:
         return super().predict(X)
 
     @override
-    def predict_proba(self, X) -> np.ndarray | tuple:
-        """predict_proba.
-
-        Parameters
-        ----------
-        X :
-            X
-
-        Returns
-        -------
-        np.ndarray | tuple
-
-        """
+    def predict_proba(self, X) -> Tensor | tuple:
         return super().predict_proba(X)
 
     @override
     def reset_parameters(self):
-        """reset_parameters."""
         return super().reset_parameters()
 
     @override
@@ -498,10 +461,8 @@ class Trainer:
         scheduler: schedule.LRScheduler | None = None,
         score_metric: Literal[
             "accuracy",
-            "balanced_accuracy",
             "f1",
             "precision",
-            "mean_squared_error",
             "recall",
         ] = "accuracy",
         score_fn: Callable[[np.ndarray, np.ndarray], float] | None = None,
@@ -511,47 +472,6 @@ class Trainer:
         output_names: Sequence | None = None,
         at_batch_level: bool | int = True,
     ) -> None:
-        """__init__.
-
-        Parameters
-        ----------
-        model : Module
-            model
-        optimizer : Optimizer | None
-            optimizer
-        n_epochs : int
-            n_epochs
-        tol : float | None
-            tol
-        scheduler : schedule.LRScheduler | None
-            scheduler
-        score_metric : Literal[
-                    "accuracy",
-                    "balanced_accuracy",
-                    "f1",
-                    "precision",
-                    "mean_squared_error",
-                    "recall",
-                ]
-            score_metric
-        score_fn : Callable[[np.ndarray, np.ndarray], float] | None
-            score_fn
-        score_fn_name : str
-            score_fn_name
-        record_train_score : bool
-            record_train_score
-        record_test_score : bool
-            record_test_score
-        output_names : Sequence | None
-            output_names
-        at_batch_level : bool | int
-            at_batch_level
-
-        Returns
-        -------
-        None
-
-        """
         self._evaluate: Callable
         self._n_epochs: int = n_epochs
         self.optimizer: Optimizer = (
@@ -571,17 +491,13 @@ class Trainer:
             self._train_score_key = f"train_{score_metric}"
             self._test_score_key = f"test_{score_metric}"
             if score_metric == "accuracy":
-                self._evaluate = met.accuracy_score
-            elif score_metric == "balanced_accuracy":
-                self._evaluate = met.balanced_accuracy_score
+                self._evaluate = tmet.accuracy
             elif score_metric == "f1":
-                self._evaluate = met.f1_score
+                self._evaluate = tmet.f1_score
             elif score_metric == "precision":
-                self._evaluate = met.precision_score
-            elif score_metric == "mean_squared_error":
-                self._evaluate = met.mean_squared_error
+                self._evaluate = tmet.precision
             elif score_metric == "recall":
-                self._evaluate = met.recall_score
+                self._evaluate = tmet.recall
 
         # Training metric attributes
         self._record_train_score: bool = record_train_score
@@ -596,6 +512,7 @@ class Trainer:
             self._output_names = range(self.model.n_tasks)
         else:
             self._output_names = output_names
+        self._n_classes: Sequence
 
     def _init_metrics(self):
         """_init_metrics."""
@@ -626,34 +543,27 @@ class Trainer:
                     self._metrics[key] = []
 
     def _record(self, X, y, single_key: str, multi_key: list[str]) -> Tensor:
-        """_record.
-
-        Parameters
-        ----------
-        X :
-            X
-        y :
-            y
-        single_key : str
-            single_key
-        multi_key : list[str]
-            multi_key
-
-        Returns
-        -------
-        Tensor
-
-        """
+        """Record model's performance and optionally loss on X, y"""
         self.model.eval()
         y_pred = self.model.predict(X)
         if self._train_keys:
             score = torch.empty(len(self._train_keys))
             for i, k in enumerate(multi_key):
-                s = self._evaluate(y_pred[:, i], y[:, i])
+                s = self._evaluate(
+                    preds=y_pred[:, i],
+                    target=y[:, i],
+                    task="multiclass",
+                    num_classes=self._n_classes[i],
+                )
                 self._metrics[k].append(s)
                 score[i] = s
         else:
-            score = self._evaluate(y_pred, y)
+            score = self._evaluate(
+                preds=y_pred,
+                target=y,
+                task="multiclass",
+                num_classes=self._n_classes[0],
+            )
             self._metrics[single_key].append(score)
         self.model.train()
         return score
@@ -738,7 +648,7 @@ class Trainer:
         if should_record_batch:
             self._metrics["epoch"].append(epoch)
             self._metrics["minibatch"].append(iter)
-            self._metrics["loss"].append(loss.detach().numpy())
+            self._metrics["loss"].append(loss.detach())
         else:
             losses.append(loss)
         self.optimizer.step()
@@ -774,7 +684,10 @@ class Trainer:
         self._es = None
 
     def __call__(
-        self, loader: DataLoader, validation: Dataset | None = None
+        self,
+        loader: DataLoader,
+        n_classes_per_task: Sequence[int],
+        validation: Dataset | None = None,
     ) -> pd.DataFrame:
         """__call__.
 
@@ -791,6 +704,7 @@ class Trainer:
 
         """
         self._init_metrics()
+        self._n_classes = n_classes_per_task
         self.model.reset_parameters()
         if self._es and validation is None:
             raise ValueError("Can't perform early stopping without a validation set!")
@@ -855,7 +769,9 @@ class Trainer:
                 break
 
         self.model.eval()
-        return pd.DataFrame(self._metrics)
+        metrics = pd.DataFrame(self._metrics)
+        mapping = {k: float for k in metrics.select_dtypes(object).columns}
+        return metrics.astype(mapping)
 
 
 # * Early stopping
