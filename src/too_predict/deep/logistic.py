@@ -39,8 +39,8 @@ class DummyLR(d_ut.Module):
     @override
     def criterion(self, y_pred, y_true):
         cel = nn.functional.cross_entropy(input=y_pred, target=y_true)
-        l2 = cel + self.l2 * torch.sum(self.linear.weight**2)
-        # TODO: this naive implementation hinders performance...
+        with torch.no_grad():
+            l2 = cel + self.l2 * torch.sum(self.linear.weight**2)
         return l2
 
     @override
@@ -77,6 +77,8 @@ class MtcLr(d_ut.MultiModule):
             in_features=in_features,
             n_classes_per_task=n_classes_per_task,
             task_weights=task_weights,
+            l2_pars=None,
+            l1_pars=None,
         )
         self.lmbda: float = lmbda
         self.l2: float = l2
@@ -134,7 +136,7 @@ class MtcLr(d_ut.MultiModule):
                 y_pred, y_true, weights=self.task_weights
             )
         else:
-            total_loss += nn.functional.cross_entropy(y_pred[0], y_true) + self._l2(0)
+            total_loss += nn.functional.cross_entropy(y_pred[0], y_true)
 
         # Regularization by distances between parameters
         if len(self.lrs) > 1:
@@ -205,6 +207,8 @@ class MultiLevel(d_ut.MultiModule):
             in_features=in_features,
             n_classes_per_task=n_classes_per_task,
             task_weights=task_weights,
+            l1_pars=None,
+            l2_pars=None,
         )
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
@@ -250,13 +254,15 @@ class MultiLevel(d_ut.MultiModule):
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
 
+        total_loss /= n_samples
         # Regularization
-        reg_theta = self.lmbda_1 * torch.sum(torch.abs(self.theta))
-        reg_gamma = 0
-        for lr in self.lrs.values():
-            reg_gamma += torch.sum(torch.abs(lr.gamma))
-        reg_gamma *= self.lmbda_2
-        total_loss = total_loss / n_samples + reg_theta + reg_gamma
+        with torch.no_grad():
+            reg_theta = self.lmbda_1 * torch.sum(torch.abs(self.theta))
+            reg_gamma = 0
+            for lr in self.lrs.values():
+                reg_gamma += torch.sum(torch.abs(lr.gamma))
+            reg_gamma *= self.lmbda_2
+            total_loss += reg_theta + reg_gamma
 
         return total_loss
 
