@@ -122,7 +122,8 @@ class Trainer:
         self.scheduler: schedule.LRScheduler | None = None
         self.model: Module = model
         self._avg_model: AverageModel | None = None
-        self._avg_mode: str = None
+        self._avg_model_fn: Callable | None = None
+        self._avg_mode: str | None = None
 
         # Obtain score function
         if score_fn is not None:
@@ -294,13 +295,16 @@ class Trainer:
         else:
             losses.append(loss.detach())
         self.optimizer.step()
-        if self._avg_mode == "EMA":
+        if self._avg_mode == "EMA" and epoch == 0:  # To prevent it making a deepcopy
+            # of unitialized params
+            self._avg_model = self._avg_model_fn(self.model)
+        if self._avg_mode == "EMA" and epoch > 0:
             self._avg_model.update_parameters(self.model)
         return v_score
 
     def register_average(self, **kwargs):
-        self._avg_model = AverageModel(self.model, **kwargs)
-        self._avg_mode = self._avg_model.mode
+        self._avg_model_fn = lambda x: AverageModel(x, **kwargs)
+        self._avg_mode = kwargs["mode"]
 
     def register_early_stop(self, es: EarlyStopper) -> None:
         """Register early stopper"""
@@ -334,6 +338,8 @@ class Trainer:
         self._init_metrics()
         self._n_classes = n_classes
         self.model.reset_parameters()
+        if self._avg_mode is not None:
+            self._avg_model = self._avg_model_fn(self.model)
         if self._es and validation is None:
             raise ValueError("Can't perform early stopping without a validation set!")
         if self._es:
@@ -442,7 +448,9 @@ class AverageModel:
     def finalize(self, model: nn.Module) -> None:
         """Average collected parameters and transfer them to `model`"""
         if self.mode == "EMA":
-            model.load_state_dict(self._model.state_dict())
+            source = self._model.state_dict()
+            new_dict = {k: source[f"module.{k}"] for k in model.state_dict().keys()}
+            model.load_state_dict(new_dict)
         else:
             parameters = []
             scores = []
