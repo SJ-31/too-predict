@@ -27,15 +27,15 @@ torch.set_default_dtype(torch.float32)
 MODELS = {
     "MultiLevel": (
         lambda **kwargs: d_log.MultiLevel(**kwargs),
-        {"skip": False, "filter": True, "holdout": True},
+        {"skip": False, "filter": True, "holdout": False},
     ),
     "MtcLr": (
         lambda **kwargs: d_log.MtcLr(**kwargs),
-        {"skip": False, "filter": True, "holdout": True},
+        {"skip": False, "filter": True, "holdout": False},
     ),
     "Disyak": (
-        lambda **kwargs: d_nn.Disyak(n_hidden=500, dropout_p=0.2, **kwargs),
-        {"skip": False, "filter": True, "cv": False, "holdout": True},
+        lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
+        {"skip": False, "filter": True, "cv": True, "holdout": False},
     ),
 }
 TRANSFORM: Transformer = Transformer(
@@ -52,8 +52,8 @@ LABELS = ("Sample_Type", "tumor_type")
 
 TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": 10}
 EARLY_STOP: dict = {"patience": 40, "on_update": False, "higher_better": True}
-CV_KWARGS: dict = {"batch_size": 32, "n_splits": 3}
-# WARN: This is important
+CV_KWARGS: dict = {"batch_size": 32, "n_splits": 5}
+N_REPEATS = 3
 OPTIMIZATION_KWARGS: dict = {"lr": 0.001}
 SCHEDULE_KWARGS: dict = {"patience": 40}
 
@@ -85,6 +85,7 @@ def cross_val(adata: ad.AnnData):
         train, valid = ut.train_test_split_ad(
             adata, test_size=0.1, random_state=ut.RANDOM_STATE
         )
+        # TODO: don't use random state
         outdir = OUTDIR.joinpath(name)
         outdir.mkdir(exist_ok=True)
         model = m(in_features=n_features, n_classes_per_task=n_classes)
@@ -98,29 +99,35 @@ def cross_val(adata: ad.AnnData):
             record_test_score=True,
         )
         # trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
+        trainer.register_average("best_epochs", n_best=5)
         if pars.get("cv", True):
-            cv: pd.DataFrame = cross_validate(
-                trainer,
-                d_ut.AnnDataset(train, to_encode=LABELS),
-                n_classes=n_classes,
-                intermediate_out=outdir,
-                save_intermediate=True,
-                validation=d_ut.AnnDataset(valid, to_encode=LABELS),
-                **CV_KWARGS,
-            )
-            cv.to_csv(outdir.joinpath("cv_results.csv"), index=False)
-        hr_dir = outdir.joinpath("additional_splits")
-        hr_dir.mkdir(exist_ok=True)
+            dfs = []
+            for i in range(N_REPEATS):
+                cv: pd.DataFrame = cross_validate(
+                    trainer,
+                    d_ut.AnnDataset(train, to_encode=LABELS),
+                    n_classes=n_classes,
+                    intermediate_out=outdir,
+                    save_intermediate=True,
+                    validation=d_ut.AnnDataset(valid, to_encode=LABELS),
+                    **CV_KWARGS,
+                )
+                cv.loc[:, "repeat"] = i
+                dfs.append(cv)
+            pd.concat(dfs).to_csv(outdir.joinpath("cv_results.csv"), index=False)
         if pars.get("holdout"):
-            _ = holdout(
-                trainer,
-                adata,
-                n_classes=n_classes,
-                split_fns=tt.ADDITIONAL_SPLITS,
-                to_encode=LABELS,
-                outdir=hr_dir,
-                minimal=True,
-            )
+            for i in range(N_REPEATS):
+                hr_dir = outdir.joinpath(f"additional_splits_{i}")
+                hr_dir.mkdir(exist_ok=True)
+                _ = holdout(
+                    trainer,
+                    adata,
+                    n_classes=n_classes,
+                    split_fns=tt.ADDITIONAL_SPLITS,
+                    to_encode=LABELS,
+                    outdir=hr_dir,
+                    minimal=True,
+                )
     return
 
 
