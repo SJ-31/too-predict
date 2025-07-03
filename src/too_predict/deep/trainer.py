@@ -342,6 +342,8 @@ class Trainer:
 
         if validation is None and self._record_test_score:
             raise ValueError("Can't record test score without validation set!")
+        elif validation is None and self._avg_mode == "best_epochs":
+            raise ValueError("Need a validation set to record best epochs!")
 
         if validation is not None:
             validate: bool = True
@@ -427,7 +429,9 @@ class AverageModel:
             self._best_epochs = LargestCollection(length=n_best, key=lambda x: x[0])
         self.mode: Literal["EMA", "best_epochs"] = mode
 
-    def update_parameters(self, model: nn.Module, score: float | None = None) -> None:
+    def update_parameters(
+        self, model: nn.Module, score: Sequence | float | None = None
+    ) -> None:
         if self.mode == "EMA":
             self._model.update_parameters(model)
         elif self.mode == "best_epochs":
@@ -440,8 +444,15 @@ class AverageModel:
         if self.mode == "EMA":
             model.load_state_dict(self._model.state_dict())
         else:
-            averaged = reduce(
-                lambda x, y: {k: torch.mean(y[1][k], x[1][k]) for k in x[1].keys()},
-                self._best_epochs,
-            )
-            model.load_state_dict(averaged)
+            parameters = []
+            scores = []
+            for score, p in self._best_epochs:
+                parameters.append(p)
+                scores.append(score)
+            print(f"Taking average of epochs with scores: {scores}")
+            with torch.no_grad():
+                averaged = reduce(
+                    lambda x, y: {k: (y[k] + x[k]) / 2 for k in x.keys()},
+                    parameters,
+                )
+                model.load_state_dict(averaged)
