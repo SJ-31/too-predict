@@ -21,8 +21,8 @@ from xgboost import XGBClassifier
 
 
 def multitask_acc(
-    predictions: Tensor,
-    y_true: Tensor | DataLoader | Dataset,
+    predictions: Tensor | np.ndarray,
+    y_true: Tensor | DataLoader | Dataset | np.ndarray,
     n_classes: Sequence[int],
     task_names: Sequence[str] | None = None,
 ) -> dict:
@@ -44,6 +44,10 @@ def multitask_acc(
         y_true = y_true[:][1]
     elif isinstance(y_true, DataLoader):
         y_true = y_true.dataset[:][1]
+    elif isinstance(y_true, np.ndarray):
+        y_true = torch.tensor(y_true)
+    if isinstance(predictions, np.ndarray):
+        predictions = torch.tensor(predictions)
     y_iter = d_ut.iter_cols(y_true)
     pred_iter = d_ut.iter_cols(predictions)
     if task_names is None:

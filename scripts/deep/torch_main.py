@@ -15,6 +15,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from pyhere import here
 from too_predict.deep.evaluation import cross_validate, holdout
+from too_predict.deep.trainer import Trainer
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
@@ -89,7 +90,7 @@ def cross_val(adata: ad.AnnData):
         model = m(in_features=n_features, n_classes_per_task=n_classes)
         optimizer = get_optimizer(model)
         scheduler = get_scheduler(optimizer)
-        trainer = d_ut.Trainer(
+        trainer = Trainer(
             model,
             **TRAIN_KWARGS,
             optimizer=optimizer,
