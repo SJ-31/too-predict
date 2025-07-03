@@ -14,6 +14,7 @@ import too_predict.utils as ut
 import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
+from too_predict.deep.trainer import Trainer
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from xgboost import XGBClassifier
@@ -154,7 +155,7 @@ def train_test_split_torch(
 
 
 def holdout(
-    trainer: d_ut.Trainer,
+    trainer: Trainer,
     adata: ad.AnnData,
     to_encode: tuple[str],
     n_classes: Sequence[int],
@@ -250,7 +251,7 @@ def holdout(
 
 
 def cross_validate(
-    trainer: d_ut.Trainer,
+    trainer: Trainer,
     adset: d_ut.AnnDataset,
     n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,

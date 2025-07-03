@@ -15,6 +15,9 @@ import too_predict.transformer as tt
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from too_predict.deep.evaluation import cross_validate, holdout
+from too_predict.deep.trainer import Trainer
+
+# * HPO
 
 
 class DlTrialSetup(topt.TrialSetup):
@@ -117,7 +120,7 @@ class DlOptimizer(topt.BaseOptimizer):
         )
         optimizer = optimizer_fn(module.named_parameters())
         scheduler = scheduler_fn(optimizer)
-        trainer = d_ut.Trainer(
+        trainer = Trainer(
             model=module,
             optimizer=optimizer,
             scheduler=scheduler,
