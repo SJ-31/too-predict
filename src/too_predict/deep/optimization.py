@@ -12,11 +12,9 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.filter as fil
 import too_predict.optimization as topt
 import too_predict.transformer as tt
-import too_predict.utils as ut
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from too_predict.deep.evaluation import cross_validate, holdout
-from torch.optim import Optimizer
 
 
 class DlTrialSetup(topt.TrialSetup):
@@ -136,6 +134,7 @@ class DlOptimizer(topt.BaseOptimizer):
             result: dict = holdout(
                 trainer=trainer,
                 adata=adata,
+                n_classes=n_classes,
                 to_encode=self.label_col,
                 split_fns=split_fns,
                 split_masks=split_masks,
@@ -148,6 +147,7 @@ class DlOptimizer(topt.BaseOptimizer):
             cv_results = cross_validate(
                 trainer=trainer,
                 adset=d_ut.AnnDataset(adata, to_encode=self.label_col),
+                n_classes=n_classes,
                 n_splits=cv_splits,
             )
             vals.append(np.mean(cv_results.values[:, 1:]))

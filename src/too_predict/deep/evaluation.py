@@ -157,6 +157,7 @@ def holdout(
     trainer: d_ut.Trainer,
     adata: ad.AnnData,
     to_encode: tuple[str],
+    n_classes: Sequence[int],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
     save_split_path: Path | None = None,
@@ -214,14 +215,13 @@ def holdout(
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
         x_test_tensor, y_true = test_dset[:]
 
-        trainer(train_l)
+        trainer(train_l, n_classes=n_classes)
 
         if not minimal:
-            task_classes = [list(set(adata.obs[t])) for t in to_encode]
             proba = trainer.model.predict_proba(x_test_tensor)
             y_true = test_dset.decode(y_true)
             res: dict = multitask_all_metrics(
-                y_true, proba, task_names=to_encode, task_classes=task_classes
+                y_true, proba, task_names=to_encode, n_classes=trainer._n_classes
             )
             return res
         pred = trainer.model.predict(x_test_tensor)
@@ -252,6 +252,7 @@ def holdout(
 def cross_validate(
     trainer: d_ut.Trainer,
     adset: d_ut.AnnDataset,
+    n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,
     n_splits: int = 5,
     save_intermediate: bool = False,
@@ -272,14 +273,14 @@ def cross_validate(
 
         y_true = test[:][1]
 
-        cur_fold = trainer(train, validation=validation)
+        cur_fold = trainer(train, validation=validation, n_classes=n_classes)
         if save_intermediate and intermediate_out:
             cur_fold.to_csv(
                 intermediate_out.joinpath(f"fold_{fold}_training.csv"), index=False
             )
 
         y_pred = trainer.model.predict(test[:][0])
-        acc = multitask_acc(y_true, y_pred, task_names=tasks)
+        acc = multitask_acc(y_true, y_pred, task_names=tasks, n_classes=n_classes)
         for t in tasks:
             metrics[t].append(acc[t])
         metrics["fold"].append(fold)

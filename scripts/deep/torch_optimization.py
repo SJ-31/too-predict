@@ -13,7 +13,7 @@ OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
 OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
 OUTDIR = here("data", "output", "optimization")
 
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 
 
 @ut.SaveOrLoad(

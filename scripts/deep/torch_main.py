@@ -20,18 +20,21 @@ from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 
 OUTDIR: Path = here("data", "output", "deep", "cross_validation")
-torch.set_default_dtype(torch.float64)
+torch.set_default_dtype(torch.float32)
 
 # * Models to test
 MODELS = {
     "MultiLevel": (
         lambda **kwargs: d_log.MultiLevel(**kwargs),
-        {"skip": True, "filter": True, "holdout": False},
+        {"skip": False, "filter": True, "holdout": True},
     ),
-    "MtcLr": (lambda **kwargs: d_log.MtcLr(**kwargs), {"skip": True, "filter": True}),
+    "MtcLr": (
+        lambda **kwargs: d_log.MtcLr(**kwargs),
+        {"skip": False, "filter": True, "holdout": True},
+    ),
     "Disyak": (
-        lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
-        {"skip": False, "filter": True},
+        lambda **kwargs: d_nn.Disyak(n_hidden=500, dropout_p=0.2, **kwargs),
+        {"skip": False, "filter": True, "cv": False, "holdout": True},
     ),
 }
 TRANSFORM: Transformer = Transformer(
@@ -94,21 +97,24 @@ def cross_val(adata: ad.AnnData):
             record_test_score=True,
         )
         # trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
-        cv: pd.DataFrame = cross_validate(
-            trainer,
-            d_ut.AnnDataset(train, to_encode=LABELS),
-            intermediate_out=outdir,
-            save_intermediate=True,
-            validation=d_ut.AnnDataset(valid, to_encode=LABELS),
-            **CV_KWARGS,
-        )
-        cv.to_csv(outdir.joinpath("cv_results.csv"), index=False)
+        if pars.get("cv", True):
+            cv: pd.DataFrame = cross_validate(
+                trainer,
+                d_ut.AnnDataset(train, to_encode=LABELS),
+                n_classes=n_classes,
+                intermediate_out=outdir,
+                save_intermediate=True,
+                validation=d_ut.AnnDataset(valid, to_encode=LABELS),
+                **CV_KWARGS,
+            )
+            cv.to_csv(outdir.joinpath("cv_results.csv"), index=False)
         hr_dir = outdir.joinpath("additional_splits")
         hr_dir.mkdir(exist_ok=True)
         if pars.get("holdout"):
             _ = holdout(
                 trainer,
                 adata,
+                n_classes=n_classes,
                 split_fns=tt.ADDITIONAL_SPLITS,
                 to_encode=LABELS,
                 outdir=hr_dir,

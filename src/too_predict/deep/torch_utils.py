@@ -241,24 +241,6 @@ class Module(nn.Module):
         """
         raise NotImplementedError()
 
-    def _predict(self, X: np.ndarray | Tensor) -> Tensor:
-        """_predict.
-
-        Parameters
-        ----------
-        X : np.ndarray
-            X
-
-        Returns
-        -------
-        np.ndarray
-
-        """
-        proba = self.predict_proba(X)
-        if isinstance(proba, tuple):
-            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
-        return proba.argmax(axis=1)
-
     def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> Tensor:
         """predict.
 
@@ -273,19 +255,21 @@ class Module(nn.Module):
 
         """
         if isinstance(X, DataLoader):
-            prediction = []
-            for x, _ in X:
-                prediction.append(self._predict(x))
-            return torch.vstack(prediction)
-        if isinstance(X, Dataset):
+            X = X.dataset[:][0]
+        elif isinstance(X, Dataset):
             X = X[:]
-        return self._predict(X)
+        proba = self(X)
+        if isinstance(proba, tuple):
+            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
+        return proba.argmax(axis=1)
 
     def reset_parameters(self):
         """reset_parameters."""
         raise NotImplementedError()
 
     def predict_proba(self, X) -> Tensor | tuple:
+        if isinstance(X, DataLoader):
+            X = X.dataset[:][0]
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
         proba = self(X)
         if isinstance(proba, tuple):
@@ -686,7 +670,7 @@ class Trainer:
     def __call__(
         self,
         loader: DataLoader,
-        n_classes_per_task: Sequence[int],
+        n_classes: Sequence[int],
         validation: Dataset | None = None,
     ) -> pd.DataFrame:
         """__call__.
@@ -704,7 +688,7 @@ class Trainer:
 
         """
         self._init_metrics()
-        self._n_classes = n_classes_per_task
+        self._n_classes = n_classes
         self.model.reset_parameters()
         if self._es and validation is None:
             raise ValueError("Can't perform early stopping without a validation set!")
