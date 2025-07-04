@@ -277,9 +277,8 @@ def cross_validate(
         metrics[task] = []
     for fold, (train_idx, test_idx) in enumerate(splits):
         if verbose:
-            print(f"fold {fold} complete")
+            print(f"fold {fold} started")
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
-        print(len(train.dataset))
         test: Dataset = Subset(adset, test_idx)
 
         y_true = test[:][1]

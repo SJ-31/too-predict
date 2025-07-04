@@ -158,7 +158,10 @@ class DlOptimizer(topt.BaseOptimizer):
             scheduler=scheduler,
             n_epochs=n_epochs,
             tol=8,
-            record_test_score=False,
+            record_train_score=True,
+            record_test_score=True,
+            output_names=self.label_col,
+            at_batch_level=kwargs.get("at_batch_level", False),
         )
         if es := kwargs.get("early_stop"):
             trainer.register_early_stop(es)
@@ -168,7 +171,7 @@ class DlOptimizer(topt.BaseOptimizer):
             adata = filter.fit_transform(adata)
         if transformer != -1:
             adata = transformer.fit_transform(adata)
-        train, test = train_test_split_ad(adata)
+        train, test = train_test_split_ad(adata, test_size=kwargs.get("test_size", 0.1))
         vals = []
         if do_splits:
             result: dict = holdout(
@@ -187,6 +190,7 @@ class DlOptimizer(topt.BaseOptimizer):
             cv_path: Path | None = kwargs.get("intermediate_out", None)
             if cv_path is not None:
                 cv_path = cv_path.joinpath(str(trial.number))
+                cv_path.mkdir(exist_ok=True)
             cv_results = cross_validate(
                 trainer=trainer,
                 adset=d_ut.AnnDataset(train, to_encode=self.label_col),
@@ -195,7 +199,9 @@ class DlOptimizer(topt.BaseOptimizer):
                 save_intermediate=kwargs.get("save_intermediate", False),
                 intermediate_out=cv_path,
                 n_splits=cv_splits,
+                verbose=kwargs.get("verbose", False),
+                batch_size=kwargs.get("batch_size", 32),
             )
             vals.append(np.mean(cv_results.values[:, 1:]))
-        score = np.mean(vals)
-        return score
+        mean_accs = tuple(np.mean(cv_results.loc[:, label]) for label in self.label_col)
+        return mean_accs
