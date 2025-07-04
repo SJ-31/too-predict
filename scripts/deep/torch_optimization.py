@@ -8,10 +8,15 @@ from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS
 from too_predict.deep.logistic import MultiLevel
 from too_predict.deep.optimization import DlOptimizer
+from too_predict.deep.torch_utils import EarlyStopper
+from too_predict.filter import Filter
+from too_predict.imputer import Imputer
+from too_predict.transformer import Transformer
 
 OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
 OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
 OUTDIR = here("data", "output", "optimization")
+REF, FEAT = ut.ref_feature_lists_internal()
 
 torch.set_default_dtype(torch.float32)
 
@@ -28,17 +33,30 @@ def choose_optimization(dct, adata) -> None:
     journal_file = here(OPTUNA_JOURNALS, "torch_select_optimizer.log")
     artifact_dir = here(OPTUNA_STORAGE, "torch_optimization")
     sample_opts = {
+        # Module arguments
+        "module": "Disyak",
+        "dropout": [0.2, 0.5],
+        "l2_pars": "none",
+        "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
+        "n_hidden": [1000, 2000, None],
+        # Optimization
         "optimizer": "Adam",
         "betas": [(0.9, 0.999), (0.7, 0.888)],  # Adam
         "amsgrad": [True, False],  # Adam
-        "weight_decay": (1, 0, -2),  # Adam, SGD
-        "lr": (),  # All optimizers
-        "momentum": (),  # SGD
-        "transformer": -1,
+        "weight_decay": [0, 0.01, 0.001, 0.0001],  # Adam, SGD
+        "lr": 0.001,  # All optimizers
+        "momentum": [0, 0.9],  # SGD
+        "average_model_kwargs": [{"mode": "best_epochs", "n_best": 5}, None],
+        # Extras
+        "transformer": Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False),
         # Try without filtering first
         # [2025-06-18 Wed] Ask Aj though
-        "filter": -1,
-        #
+        "filter": Filter(
+            features=FEAT["edgeR_median_lfc_feature_list_3000"],
+            inplace=False,
+            feature_col="GENEID",
+        ),
+        # Scheduling
         "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
         # PolynomialLR
         "power": 0.5,
@@ -54,7 +72,19 @@ def choose_optimization(dct, adata) -> None:
         journal_file=journal_file,
         artifact_dir=artifact_dir,
     )
-    searcher.make_objective(adata=adata, opts=sample_opts, split_fns=ADDITIONAL_SPLITS)
+    cv_output = OUTDIR.joinpath("cv_output")
+    OUTDIR.mkdir(exist_ok=True)
+    searcher.make_objective(
+        adata=adata,
+        opts=sample_opts,
+        split_fns=ADDITIONAL_SPLITS,
+        do_splits=False,
+        do_cv=True,
+        cv_splits=3,
+        save_intermediate=True,
+        intermediate_out=cv_output,
+        early_stop=EarlyStopper(patience=40, on_update=False, higher_better=True),
+    )
     study = searcher.run_study(study_name="optimizer_selection")
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()

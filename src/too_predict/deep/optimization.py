@@ -157,6 +157,10 @@ class DlOptimizer(topt.BaseOptimizer):
             tol=8,
             record_test_score=False,
         )
+        if es := kwargs.get("early_stop"):
+            trainer.register_early_stop(es)
+        if avg_kwargs := setup._suggest_param_or_default("average_model_kwargs"):
+            trainer.register_average(**avg_kwargs)
         if filter != -1:
             adata = filter.fit_transform(adata)
         if transformer != -1:

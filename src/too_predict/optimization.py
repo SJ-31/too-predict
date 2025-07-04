@@ -67,6 +67,8 @@ class TrialSetup:
             If a list, interpreted as categorical options
         """
         val = self.user_opts.get(param_name)
+        if isinstance(val, str) and val.lower() == "none":
+            return None
         if val is None:
             raise ValueError(f"Missing default value for {param_name}!")
         if isinstance(val, list):
@@ -75,10 +77,15 @@ class TrialSetup:
             if len(val) != 3:
                 raise ValueError("Values for tuple params must be (start, stop, step)")
             start, stop, step = val
-            if isinstance(start, float):
-                return self.trial.suggest_float(param_name, start, stop, step=step)
+            range_kwargs = {}
+            if str(step) == "True":
+                range_kwargs["log"] = True
             else:
-                return self.trial.suggest_int(param_name, start, stop, step=step)
+                range_kwargs["step"] = step
+            if isinstance(start, float):
+                return self.trial.suggest_float(param_name, start, stop, **range_kwargs)
+            else:
+                return self.trial.suggest_int(param_name, start, stop, **range_kwargs)
         return val
 
     def __call__(self, opts: dict | None = None) -> tuple:
@@ -193,6 +200,8 @@ class Optimizer(BaseOptimizer):
         self,
         trial: optuna.Trial,
         adata: ad.AnnData,
+        do_splits: bool = True,
+        do_cv: bool = True,
         split_fns: dict | None = None,
         split_masks: dict | None = None,
         cv_splits=5,
