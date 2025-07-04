@@ -14,8 +14,11 @@ import too_predict.optimization as topt
 import too_predict.transformer as tt
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from sklearn.model_selection import train_test_split
 from too_predict.deep.evaluation import cross_validate, holdout
+from too_predict.deep.nns import Disyak
 from too_predict.deep.trainer import Trainer
+from too_predict.utils import train_test_split_ad
 
 # * HPO
 
@@ -65,10 +68,35 @@ class DlTrialSetup(topt.TrialSetup):
         else:
             raise ValueError(f"{name} not implemented!")
 
+    def _suggest_module(self) -> Callable:
+        module = self._suggest_param_or_default("module")
+        if isinstance(module, Callable):  # No need to adjust module parameters
+            return module
+        elif isinstance(module, str):
+            if module == "Disyak":
+                dropout = self._suggest_param_or_default("dropout")
+                l1_pars = self._suggest_param_or_default("l1_pars")
+                l2_pars = self._suggest_param_or_default("l2_pars")
+                task_weights = self._suggest_param_or_default("task_weights")
+                n_hidden = self._suggest_param_or_default("n_hidden")
+                return lambda in_features, n_classes_per_task: Disyak(
+                    in_features=in_features,
+                    n_classes_per_task=n_classes_per_task,
+                    dropout_p=dropout,
+                    l1_pars=l1_pars,
+                    l2_pars=l2_pars,
+                    task_weights=task_weights,
+                    n_hidden=n_hidden,
+                )
+            else:
+                raise ValueError("Module name not recognized!")
+        else:
+            raise ValueError("Parameter for module must be string or callable")
+
     @override
     def __call__(self, opts: dict | None = None) -> tuple:
         self.user_opts: dict = opts
-        module_fn = self._suggest_param_or_default("module")
+        module_fn = self._suggest_module()
         optimizer_fn: Callable = self._suggest_optimizer()
         scheduler_fn: Callable = self._suggest_scheduler()
         transformer: tt.Transformer = self._suggest_param_or_default("transformer")
@@ -112,9 +140,10 @@ class DlOptimizer(topt.BaseOptimizer):
         if not do_splits and not do_cv:
             raise ValueError("One of do_splits or do_cv must be true!")
         setup = DlTrialSetup(trial=trial, **kwargs)
+        n_features, n_classes = d_ut.data_spec(adata, y=self.label_col)
+        opts["n_classes"] = n_classes
         module_fn, optimizer_fn, scheduler_fn, transformer, filter = setup(opts=opts)
         n_epochs = setup._suggest_param_or_default("n_epochs")
-        n_features, n_classes = d_ut.data_spec(adata, y=self.label_col)
         module: d_ut.MultiModule = module_fn(
             in_features=n_features, n_classes_per_task=n_classes
         )
@@ -132,11 +161,12 @@ class DlOptimizer(topt.BaseOptimizer):
             adata = filter.fit_transform(adata)
         if transformer != -1:
             adata = transformer.fit_transform(adata)
+        train, test = train_test_split_ad(adata)
         vals = []
         if do_splits:
             result: dict = holdout(
                 trainer=trainer,
-                adata=adata,
+                adata=train,
                 n_classes=n_classes,
                 to_encode=self.label_col,
                 split_fns=split_fns,
@@ -147,11 +177,18 @@ class DlOptimizer(topt.BaseOptimizer):
             vals.append(np.mean(result.values()))
 
         if do_cv:
+            cv_path: Path | None = kwargs.get("intermediate_out", None)
+            if cv_path is not None:
+                cv_path = cv_path.joinpath(trial.number)
             cv_results = cross_validate(
                 trainer=trainer,
-                adset=d_ut.AnnDataset(adata, to_encode=self.label_col),
+                adset=d_ut.AnnDataset(train, to_encode=self.label_col),
+                validation=d_ut.AnnDataset(test, to_encode=self.label_col),
                 n_classes=n_classes,
+                save_intermediate=kwargs.get("save_intermediate", False),
+                intermediate_out=cv_path,
                 n_splits=cv_splits,
             )
             vals.append(np.mean(cv_results.values[:, 1:]))
-        return np.mean(vals)
+        score = np.mean(vals)
+        return score
