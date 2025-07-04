@@ -995,7 +995,9 @@ class SaveOrLoad:
             if isinstance(self.out, Path) and self.out.exists():
                 print("Reading existing file...")
                 return self.read_fn(self.out)
-            elif all(v.exists() for v in self.out.values()):
+            elif isinstance(self.out, dict) and all(
+                v.exists() for v in self.out.values()
+            ):
                 print("Reading existing files...")
                 if self.read_fn is not None:
                     return {k: self.read_fn(v) for k, v in self.out.items()}

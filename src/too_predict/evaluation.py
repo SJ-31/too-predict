@@ -308,7 +308,7 @@ def cross_validate(
         if model.had_inf and record_dir is not None:
             record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
 
-        res: dict = get_all_metrics(y_true, score, model.classes_)
+        res: dict = get_all_metrics(true=y_true, score=score, classes=model.classes_)
         misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"])
         if misses.shape[0] > 0:
             misses.loc[:, "fold"] = fold
@@ -432,7 +432,9 @@ def holdout(
             proba = model.predict_proba(x_test)
             y_true = x_test.obs[label_col]
             y_uniques = y_true.unique()
-            res: dict = get_all_metrics(y_true, proba, model.classes_)
+            res: dict = get_all_metrics(
+                y_true=y_true, score=proba, classes=model.classes_
+            )
             for k, v in res.items():
                 if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
                     if k == "cm":

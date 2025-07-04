@@ -264,8 +264,11 @@ def cross_validate(
     save_intermediate: bool = False,
     intermediate_out: Path | None = None,
     validation: Dataset | None = None,
+    verbose: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
+    if verbose:
+        print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
     splits = cv.split(adset)
     metrics: dict = {"fold": []}
@@ -273,6 +276,8 @@ def cross_validate(
     for task in tasks:
         metrics[task] = []
     for fold, (train_idx, test_idx) in enumerate(splits):
+        if verbose:
+            print(f"fold {fold} complete")
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
         print(len(train.dataset))
         test: Dataset = Subset(adset, test_idx)
@@ -290,6 +295,8 @@ def cross_validate(
         for t in tasks:
             metrics[t].append(acc[t])
         metrics["fold"].append(fold)
+    if verbose:
+        print("Cross validation completed")
     df = pd.DataFrame(metrics)
     return d_ut.tensor_cols_to_float(df)
 

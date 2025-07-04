@@ -288,6 +288,9 @@ def range_finder(adata):
             df.to_csv(cur_outdir.joinpath("rf_id_weighted_purity.csv"), index=False)
 
 
+# ** Correlation with tumor type
+# Technique adapted from
+
 # ** With optimization
 
 # *** Fns

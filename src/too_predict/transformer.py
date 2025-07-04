@@ -93,7 +93,7 @@ class Transformer:
             if the name is provided, the index is looked up automatically.
         :param: var_col column in adata.var containing the gene name.
         """
-        index: int
+        index: int | np.ndarray
         if isinstance(by, str) and self.counts_only:
             query = np.where(self.counts.columns == by)
             index = query[0][0]
@@ -104,7 +104,7 @@ class Transformer:
                 raise ValueError("Key `by` is not unique!")
         elif isinstance(by, str):
             index = self.adata.var.index.get_loc(by)
-            if len(by) > 1:
+            if not isinstance(index, int):
                 raise ValueError("Key `by` is not unique!")
         else:
             index = by

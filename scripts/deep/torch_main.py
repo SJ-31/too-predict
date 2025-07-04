@@ -27,13 +27,17 @@ torch.set_default_dtype(torch.float32)
 MODELS = {
     "MultiLevel": (
         lambda **kwargs: d_log.MultiLevel(**kwargs),
-        {"skip": False, "filter": True, "holdout": False},
+        {"skip": True, "filter": True, "holdout": False},
     ),
     "MtcLr": (
         lambda **kwargs: d_log.MtcLr(**kwargs),
-        {"skip": False, "filter": True, "holdout": False},
+        {"skip": True, "filter": True, "holdout": False},
     ),
     "Disyak": (
+        lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
+        {"skip": True, "filter": True, "cv": True, "holdout": False},
+    ),
+    "Disyak_All": (
         lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
         {"skip": False, "filter": True, "cv": True, "holdout": False},
     ),
@@ -98,8 +102,8 @@ def cross_val(adata: ad.AnnData):
             scheduler=scheduler,
             record_test_score=True,
         )
-        # trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
-        trainer.register_average("best_epochs", n_best=5)
+        trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
+        trainer.register_average(mode="best_epochs", n_best=5)
         if pars.get("cv", True):
             dfs = []
             for i in range(N_REPEATS):

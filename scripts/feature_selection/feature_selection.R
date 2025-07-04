@@ -193,6 +193,7 @@ edgeR_top <- read_existing(
 
 stypes <- c("primary", "organoid")
 for (type in stypes) {
+  print(glue("Running lfc analysis for {type}..."))
   mask <- replace_na(colData(data)$Sample_Type == type, FALSE)
   filtered <- data[, mask]
   edgeR_top_organoid <- read_existing(
@@ -203,7 +204,7 @@ for (type in stypes) {
         counts = assays(filtered)$X,
         data = filtered,
         group = GROUP,
-        technical_factors = TECHNICAL_FACTORS,
+        technical_factors = TECHNICAL_FACTORS
       )
     },
     read_tsv
