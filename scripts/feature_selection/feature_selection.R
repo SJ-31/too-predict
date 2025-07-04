@@ -15,9 +15,26 @@ suffix <- ""
 if (sys.nframe() == 0) {
   library("optparse")
   parser <- OptionParser()
-  parser <- add_option(parser, c("-t", "--test"), type = "logical", default = FALSE, action = "store_true")
-  parser <- add_option(parser, c("-c", "--cores"), type = "integer", default = 8)
-  parser <- add_option(parser, c("-g", "--recode_go"), type = "logical", default = FALSE, action = "store_true")
+  parser <- add_option(
+    parser,
+    c("-t", "--test"),
+    type = "logical",
+    default = FALSE,
+    action = "store_true"
+  )
+  parser <- add_option(
+    parser,
+    c("-c", "--cores"),
+    type = "integer",
+    default = 8
+  )
+  parser <- add_option(
+    parser,
+    c("-g", "--recode_go"),
+    type = "logical",
+    default = FALSE,
+    action = "store_true"
+  )
   args <- parse_args(parser)
   if (args$recode_go) {
     suffix <- "_GO"
@@ -34,7 +51,7 @@ if (args$test) {
   print("Using test subset")
   outdir <- here(outdir, "test")
   dir.create(outdir, recursive = TRUE)
-  adata <- utils$training_data_internal_test()
+  adata <- utils$training_data_internal_test(minimal = TRUE)
 } else {
   adata <- utils$training_data_internal()
 }
@@ -45,28 +62,36 @@ if (args$recode_go) {
 data <- AnnData2SCE(adata)
 rm(utils)
 
-# TODO: can include the sequencing tech and the tumor type as factors to account
-# for their effects
 # %%
 p_threshold <- 0.05
-group <- "tumor_type"
+GROUP <- "tumor_type"
 ## technical_factors <- c("Sample_Type", "Project_ID") TODO: need to address confounding
-technical_factors <- NULL
+TECHNICAL_FACTORS <- NULL
 
-counts <- assays(data)$X |> as.matrix()
-mode(counts) <- "integer"
-assays(data, withDimnames = FALSE)$X <- counts
+make_counts <- function(adata_sce) {
+  counts <- assays(adata_sce)$X |> as.matrix()
+  mode(counts) <- "integer"
+  assays(adata_sce, withDimnames = FALSE)$X <- counts
+  counts
+}
+
+counts <- make_counts(data)
 
 ## * DGE with ALDEx2
 
 get_aldex <- function(f) {
-  result <- aldex_glm_wrapper(data, group, technical_factors, use_parallel = TRUE)
+  result <- aldex_glm_wrapper(
+    data,
+    GROUP,
+    TECHNICAL_FACTORS,
+    use_parallel = TRUE
+  )
   # TODO: maybe use the scale aware version by specifying gamma
   effect <- as_tibble(result$effect) # Effect size are standardized mean differences
   test <- as_tibble(result$test)
 
   # Take the average effects of all comparisons
-  between_groups <- effect |> filter(str_starts(contrast, group))
+  between_groups <- effect |> filter(str_starts(contrast, GROUP))
   id_col <- test$gene_id
   tb_list <- between_groups |>
     group_by(contrast) |>
@@ -89,7 +114,7 @@ get_aldex <- function(f) {
   # Features with most change, for machine learning
   # Must be statistically significant across all comparisons
   significant <- test |>
-    select(gene_id, contains(group) & contains("pval.padj")) |>
+    select(gene_id, contains(GROUP) & contains("pval.padj")) |>
     filter(if_all(where(is.numeric), \(x) x <= p_threshold)) |>
     pluck("gene_id")
 
@@ -110,12 +135,15 @@ aldex_average_file <- here(outdir, "ALDEx2_averaged_effect.tsv")
 ## * With edgeR
 
 # Goal: finding the top DEGs in each class with one-vs-rest
-get_edgeR <- function(f) {
-  dge <- DGEList(counts = counts, samples = colData(data), genes = rowData(data))
+get_edgeR <- function(f, counts, data, group, technical_factors) {
+  dge <- DGEList(
+    counts = counts,
+    samples = colData(data),
+    genes = rowData(data)
+  )
   normLibSizes(dge)
   factor_str <- paste0(c(group, technical_factors), collapse = " + ")
   mm <- model.matrix(as.formula(paste("~0+", factor_str)), data = colData(data))
-  curious <- dge[, !(colnames(dge) %in% rownames(mm))]
   dge <- estimateDisp(dge, design = mm, robust = TRUE)
   fit <- glmQLFit(dge, mm, robust = TRUE)
 
@@ -124,7 +152,12 @@ get_edgeR <- function(f) {
   mean_val <- 1 / (length(group_vec) - 1)
 
   contrast_str <- map_chr(group_vec, \(x) {
-    mean_others <- paste(mean_val, "*", group_vec[group_vec != x], collapse = "+")
+    mean_others <- paste(
+      mean_val,
+      "*",
+      group_vec[group_vec != x],
+      collapse = "+"
+    )
     paste0(x, "-", "(", mean_others, ")")
   })
 
@@ -142,9 +175,40 @@ get_edgeR <- function(f) {
 }
 
 edgeR_top_file <- here(outdir, glue("edgeR_top_types{suffix}.tsv"))
-edgeR_top <- read_existing(edgeR_top_file, get_edgeR, read_tsv)
+edgeR_top <- read_existing(
+  edgeR_top_file,
+  \(f) {
+    get_edgeR(
+      f,
+      counts = counts,
+      data = data,
+      group = GROUP,
+      technical_factors = TECHNICAL_FACTORS
+    )
+  },
+  read_tsv
+)
 
-## * CoDACore TODO
+## ** Sample-type specific analyses
+
+stypes <- c("primary", "organoid")
+for (type in stypes) {
+  mask <- replace_na(colData(data)$Sample_Type == type, FALSE)
+  filtered <- data[, mask]
+  edgeR_top_organoid <- read_existing(
+    here(outdir, glue("edgeR_top_types_{type}")),
+    \(f) {
+      get_edgeR(
+        f = f,
+        counts = assays(filtered)$X,
+        data = filtered,
+        group = GROUP,
+        technical_factors = TECHNICAL_FACTORS,
+      )
+    },
+    read_tsv
+  )
+}
 
 ## * Calculate aurocs
 
@@ -153,13 +217,15 @@ gene_auroc <- read_existing(
   \(f) {
     tmeta <- import("too_predict.meta_markers")
     MM <- tmeta$MetaMarkers(
-      datasets = list(main = adata), label_col = "tumor_type",
+      datasets = list(main = adata),
+      label_col = "tumor_type",
       marker_col = "GENEID"
     )
     MM$add_markers(adata$var$GENEID)
     aurocs <- show_reticulate_error(MM$calc_auroc("main"))
     write_csv(aurocs, f)
-  }, read_csv
+  },
+  read_csv
 )
 
 gene_auroc_organoid <- read_existing(
@@ -168,13 +234,15 @@ gene_auroc_organoid <- read_existing(
     tmeta <- import("too_predict.meta_markers")
     organoids <- adata[str_detect(adata$obs$Project_ID, "CHULA"), ]
     MM <- tmeta$MetaMarkers(
-      datasets = list(main = organoids), label_col = "tumor_type",
+      datasets = list(main = organoids),
+      label_col = "tumor_type",
       marker_col = "GENEID"
     )
     MM$add_markers(adata$var$GENEID)
     aurocs <- show_reticulate_error(MM$calc_auroc("main"))
     write_csv(aurocs, f)
-  }, read_csv
+  },
+  read_csv
 )
 
 ## * Marker-based
@@ -183,7 +251,13 @@ cell_markers <- markers_meta_internal(grouped = FALSE)
 tissues <- unique(cell_markers$tissue)
 
 # Clearly need to consider organoid vs primary
-ovp_tb <- read_tsv(here("data", "output", "chula_organoid_comparison", "de_enrichment", "sample_type_top_tags.tsv"))
+ovp_tb <- read_tsv(here(
+  "data",
+  "output",
+  "chula_organoid_comparison",
+  "de_enrichment",
+  "sample_type_top_tags.tsv"
+))
 ovp_blacklist <- ovp_tb |>
   filter(PValue >= 0.01) |>
   pull(GENEID)
@@ -215,11 +289,26 @@ hpa_wanted_cols <- c(
 query <- "tissue_category_rna:Bone marrow;Tissue enriched"
 
 tissues_to_get <- c(
-  "tongue", "stomach", "skeletal muscle", "heart muscle", "intestine",
-  "liver", "kidney", "prostate", "breast", "adrenal gland",
-  "retina", "lymphoid tissue", "salivary gland",
-  "urinary bladder", "bone marrow", "pancreas", "brain", "skin",
-  "esophagus", "testis"
+  "tongue",
+  "stomach",
+  "skeletal muscle",
+  "heart muscle",
+  "intestine",
+  "liver",
+  "kidney",
+  "prostate",
+  "breast",
+  "adrenal gland",
+  "retina",
+  "lymphoid tissue",
+  "salivary gland",
+  "urinary bladder",
+  "bone marrow",
+  "pancreas",
+  "brain",
+  "skin",
+  "esophagus",
+  "testis"
 )
 
 tissue2primary_site <- c(
@@ -234,32 +323,57 @@ tissue2primary_site <- c(
   "adrenal gland" = "adrenal gland"
 )
 
-hpa_lookup <- slowly(\(qstring) {
-  hpa_query <- get_hpa_query(qstring, format = "tsv", columns = hpa_wanted_cols, compress = "no")
-  tryCatch(expr = {
-    request(hpa_query) |>
-      req_perform() |>
-      resp_body_string() |>
-      fread() |>
-      as_tibble()
-  }, error = \(cnd) NULL)
-}, rate_delay(pause = 1))
-
-
-hpa_tissue_file <- here("data", "reference", "hpa_tissue_enriched_2025-5-20.csv")
-hpa_tissues <- read_existing(hpa_tissue_file, \(f) {
-  hpa_tissues <- lapply(tissues_to_get, \(t) {
-    query_str <- glue("tissue_category_rna:{t};Group enriched,Tissue enhanced")
-    tb <- hpa_lookup(query_str)
-    if (!is.null(tb)) {
-      tb |> mutate(tissue = t)
-    }
-  }) |>
-    bind_rows() |>
-    mutate(
-      primary_site = tissue2primary_site[tissue],
-      primary_site = case_match(primary_site, NA ~ tissue, .default = primary_site)
+hpa_lookup <- slowly(
+  \(qstring) {
+    hpa_query <- get_hpa_query(
+      qstring,
+      format = "tsv",
+      columns = hpa_wanted_cols,
+      compress = "no"
     )
-  write_csv(hpa_tissues, f)
-  hpa_tissues
-}, read_csv)
+    tryCatch(
+      expr = {
+        request(hpa_query) |>
+          req_perform() |>
+          resp_body_string() |>
+          fread() |>
+          as_tibble()
+      },
+      error = \(cnd) NULL
+    )
+  },
+  rate_delay(pause = 1)
+)
+
+
+hpa_tissue_file <- here(
+  "data",
+  "reference",
+  "hpa_tissue_enriched_2025-5-20.csv"
+)
+hpa_tissues <- read_existing(
+  hpa_tissue_file,
+  \(f) {
+    hpa_tissues <- lapply(tissues_to_get, \(t) {
+      query_str <- glue(
+        "tissue_category_rna:{t};Group enriched,Tissue enhanced"
+      )
+      tb <- hpa_lookup(query_str)
+      if (!is.null(tb)) {
+        tb |> mutate(tissue = t)
+      }
+    }) |>
+      bind_rows() |>
+      mutate(
+        primary_site = tissue2primary_site[tissue],
+        primary_site = case_match(
+          primary_site,
+          NA ~ tissue,
+          .default = primary_site
+        )
+      )
+    write_csv(hpa_tissues, f)
+    hpa_tissues
+  },
+  read_csv
+)
