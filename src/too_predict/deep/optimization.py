@@ -25,7 +25,10 @@ from too_predict.utils import train_test_split_ad
 
 class DlTrialSetup(topt.TrialSetup):
     def __init__(
-        self, trial: optuna.Trial | None = None, trial_params: dict | None = None
+        self,
+        trial: optuna.Trial | None = None,
+        trial_params: dict | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(trial, trial_params)
 
@@ -183,7 +186,7 @@ class DlOptimizer(topt.BaseOptimizer):
         if do_cv:
             cv_path: Path | None = kwargs.get("intermediate_out", None)
             if cv_path is not None:
-                cv_path = cv_path.joinpath(trial.number)
+                cv_path = cv_path.joinpath(str(trial.number))
             cv_results = cross_validate(
                 trainer=trainer,
                 adset=d_ut.AnnDataset(train, to_encode=self.label_col),

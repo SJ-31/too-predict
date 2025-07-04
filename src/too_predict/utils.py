@@ -993,8 +993,10 @@ class SaveOrLoad:
         def wrapped(*args, **kwargs):
             log = self.logdir.joinpath(f"{self.date_str}_{fn.__name__}.log")
             if isinstance(self.out, Path) and self.out.exists():
+                print("Reading existing file...")
                 return self.read_fn(self.out)
             elif all(v.exists() for v in self.out.values()):
+                print("Reading existing files...")
                 if self.read_fn is not None:
                     return {k: self.read_fn(v) for k, v in self.out.items()}
                 return {k: self.read_fns[k](v) for k, v in self.out.items()}

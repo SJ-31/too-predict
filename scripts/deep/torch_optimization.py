@@ -21,25 +21,43 @@ REF, FEAT = ut.ref_feature_lists_internal()
 torch.set_default_dtype(torch.float32)
 
 
+def parse_args():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--test", default=False, help="", action="store_true")
+    args = vars(parser.parse_args())  # convert to dict
+    return args
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    TEST = "_test" if args["test"] else ""
+else:
+    TEST = ""
+
+
 @ut.SaveOrLoad(
     out={
-        "trial_df": here(OUTDIR, "torch_choose_optimization.csv"),
-        "study_obj": here(OUTDIR, "torch_choose_optimization.pkl"),
+        "trial_df": here(OUTDIR, f"torch_choose_optimization{TEST}.csv"),
+        "study_obj": here(OUTDIR, f"torch_choose_optimization{TEST}.pkl"),
     },
     read_fn={"trial_df": pd.read_csv, "study_obj": ut.load_pickle},
     logdir=here("log"),
 )
 def choose_optimization(dct, adata) -> None:
-    journal_file = here(OPTUNA_JOURNALS, "torch_select_optimizer.log")
-    artifact_dir = here(OPTUNA_STORAGE, "torch_optimization")
+    journal_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.log")
+    artifact_dir = here(OPTUNA_STORAGE, f"torch_optimization{TEST}")
     sample_opts = {
         # Module arguments
         "module": "Disyak",
         "dropout": [0.2, 0.5],
         "l2_pars": "none",
+        "task_weights": torch.tensor([1, 1.2]),
         "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
         "n_hidden": [1000, 2000, None],
         # Optimization
+        "n_epochs": 1000,
         "optimizer": "Adam",
         "betas": [(0.9, 0.999), (0.7, 0.888)],  # Adam
         "amsgrad": [True, False],  # Adam
@@ -83,12 +101,12 @@ def choose_optimization(dct, adata) -> None:
         cv_splits=3,
         save_intermediate=True,
         intermediate_out=cv_output,
-        early_stop=EarlyStopper(patience=40, on_update=False, higher_better=True),
+        early_stop=EarlyStopper(patience=100, on_update=False, higher_better=True),
     )
     study = searcher.run_study(study_name="optimizer_selection")
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()
-    df.write_csv(dct["trial_df"], index=False)
+    df.to_csv(dct["trial_df"], index=False)
     return
 
 
@@ -133,20 +151,10 @@ def choose_epochs(dct, adata) -> None:
     return
 
 
-def parse_args():
-    import argparse
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--test", default=False, help="", action="store_true")
-    args = vars(parser.parse_args())  # convert to dict
-    return args
-
-
 if __name__ == "__main__":
     args = parse_args()
     if args["test"]:
         adata = ut.training_data_internal_test(minimal=True)
     else:
         adata = ut.training_data_internal()
-    # choose_optimization(adata) # TODO: run these
-    choose_epochs(adata)  # TODO: run these
+    choose_optimization(adata)  # TODO: run these
