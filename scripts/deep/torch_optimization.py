@@ -1,5 +1,7 @@
 #!/usr/bin/env ipython
 
+from pathlib import Path
+
 import joblib
 import pandas as pd
 import too_predict.utils as ut
@@ -13,8 +15,12 @@ from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 
-OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
-OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
+if str(Path.home()) == "/home/shannc":
+    OPTUNA_JOURNALS = here("data", "tests", "optuna_journaldir")
+    OPTUNA_STORAGE = here("data", "tests", "optuna_artifacts")
+else:
+    OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
+    OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
 OUTDIR = here("data", "output", "optimization")
 REF, FEAT = ut.ref_feature_lists_internal()
 
@@ -48,6 +54,16 @@ else:
 def choose_optimization(dct, adata) -> None:
     journal_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.log")
     artifact_dir = here(OPTUNA_STORAGE, f"torch_optimization{TEST}")
+    if TEST == "_test":
+        filter = -1
+        n_epochs = 5
+    else:
+        Filter(
+            features=FEAT["edgeR_median_lfc_feature_list_3000"],
+            inplace=False,
+            feature_col="GENEID",
+        )
+        n_epochs = 1000
     sample_opts = {
         # Module arguments
         "module": "Disyak",
@@ -57,7 +73,7 @@ def choose_optimization(dct, adata) -> None:
         "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
         "n_hidden": [1000, 2000, None],
         # Optimization
-        "n_epochs": 1000,
+        "n_epochs": n_epochs,
         "optimizer": "Adam",
         "betas": [(0.9, 0.999), (0.7, 0.888)],  # Adam
         "amsgrad": [True, False],  # Adam
@@ -69,11 +85,7 @@ def choose_optimization(dct, adata) -> None:
         "transformer": Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False),
         # Try without filtering first
         # [2025-06-18 Wed] Ask Aj though
-        "filter": Filter(
-            features=FEAT["edgeR_median_lfc_feature_list_3000"],
-            inplace=False,
-            feature_col="GENEID",
-        ),
+        "filter": filter,
         # Scheduling
         "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
         # PolynomialLR
@@ -91,6 +103,7 @@ def choose_optimization(dct, adata) -> None:
         artifact_dir=artifact_dir,
     )
     cv_output = OUTDIR.joinpath("cv_output")
+    cv_output.mkdir(exist_ok=True)
     OUTDIR.mkdir(exist_ok=True)
     searcher.make_objective(
         adata=adata,
@@ -101,9 +114,13 @@ def choose_optimization(dct, adata) -> None:
         cv_splits=3,
         save_intermediate=True,
         intermediate_out=cv_output,
+        verbose=TEST != "",
         early_stop=EarlyStopper(patience=100, on_update=False, higher_better=True),
+        batch_size=32,
     )
-    study = searcher.run_study(study_name="optimizer_selection")
+    study = searcher.run_study(
+        study_name="optimizer_selection", directions=["maximize", "maximize"]
+    )
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()
     df.to_csv(dct["trial_df"], index=False)
@@ -142,9 +159,16 @@ def choose_epochs(dct, adata) -> None:
         artifact_dir=artifact_dir,
     )
     searcher.make_objective(
-        adata=adata, opts=sample_opts, split_fns=ADDITIONAL_SPLITS, do_splits=False
+        adata=adata,
+        opts=sample_opts,
+        split_fns=ADDITIONAL_SPLITS,
+        do_splits=False,
+        at_batch_level=False,
+        test_size=0.1,
     )
-    study = searcher.run_study(study_name="best_n_epochs")
+    study = searcher.run_study(
+        study_name="best_n_epochs", directions=["maximize", "maximize"]
+    )
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()
     df.to_csv(dct["trial_df"], index=False)
@@ -154,6 +178,7 @@ def choose_epochs(dct, adata) -> None:
 if __name__ == "__main__":
     args = parse_args()
     if args["test"]:
+        print("Using test set")
         adata = ut.training_data_internal_test(minimal=True)
     else:
         adata = ut.training_data_internal()

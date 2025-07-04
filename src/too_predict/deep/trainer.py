@@ -456,7 +456,6 @@ class AverageModel:
             for score, p in self._best_epochs:
                 parameters.append(p)
                 scores.append(score)
-            print(f"Taking average of epochs with scores: {scores}")
             with torch.no_grad():
                 averaged = reduce(
                     lambda x, y: {k: (y[k] + x[k]) / 2 for k in x.keys()},

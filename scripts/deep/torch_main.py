@@ -139,13 +139,11 @@ if __name__ == "__main__":
     args = parse_args()
     if args["test"]:
         print("Using test subset")
-        adata = ut.training_data_internal_test(minimal=False)
-        # adata = ut.training_data_internal_test(minimal=True)
+        adata = ut.training_data_internal_test(minimal=True)
         OUTDIR = OUTDIR.joinpath("test")
         OUTDIR.mkdir(exist_ok=True, parents=True)
         TRAIN_KWARGS["n_epochs"] = 100
     else:
         adata = ut.training_data_internal()
-    # adata = adata[:, :1000]  # TODO: can you replicate the results Yes you can
     adata = TRANSFORM.fit_transform(adata)
     cross_val(adata)
