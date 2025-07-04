@@ -140,6 +140,27 @@ class DlOptimizer(topt.BaseOptimizer):
         artifact_store: oa.FileSystemArtifactStore | None = None,
         **kwargs,
     ):
+        """
+        Additional Parameters via **kwargs:
+        -----------------------------------
+        at_batch_level : bool, optional
+            If True, records metrics at the batch level during training. Default is False.
+        early_stop : EarlyStopping or compatible object, optional
+            An early stopping criterion to be registered with the trainer. If provided, training may stop early based on the monitored metric.
+        average_model_kwargs : dict, optional
+            Keyword arguments to configure model weight averaging during training. Passed to `trainer.register_average(**average_model_kwargs)`.
+        test_size : float, optional
+            Proportion of the dataset to allocate to the test split in holdout validation. Default is 0.1.
+        intermediate_out : Path, optional
+            Directory path where intermediate outputs (e.g., cross-validation results) will be saved. If provided, a subdirectory named after the trial number will be created.
+        save_intermediate : bool, optional
+            If True, saves intermediate results during cross-validation to the specified `intermediate_out` directory. Default is False.
+        verbose : bool, optional
+            If True, enables verbose output during cross-validation. Default is False.
+        batch_size : int, optional
+            Mini-batch size to use during cross-validation. Default is 32.
+        """
+
         if not do_splits and not do_cv:
             raise ValueError("One of do_splits or do_cv must be true!")
         setup = DlTrialSetup(trial=trial, **kwargs)
@@ -202,6 +223,8 @@ class DlOptimizer(topt.BaseOptimizer):
                 verbose=kwargs.get("verbose", False),
                 batch_size=kwargs.get("batch_size", 32),
             )
+            if cv_path is not None:
+                cv_results.to_csv(cv_path, index=False)
             vals.append(np.mean(cv_results.values[:, 1:]))
         mean_accs = tuple(np.mean(cv_results.loc[:, label]) for label in self.label_col)
         return mean_accs

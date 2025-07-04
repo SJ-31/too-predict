@@ -58,7 +58,7 @@ def choose_optimization(dct, adata) -> None:
         filter = -1
         n_epochs = 5
     else:
-        Filter(
+        filter = Filter(
             features=FEAT["edgeR_median_lfc_feature_list_3000"],
             inplace=False,
             feature_col="GENEID",

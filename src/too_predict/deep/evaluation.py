@@ -267,6 +267,10 @@ def cross_validate(
     verbose: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
+    if validation is not None and trainer._record_test_score is False:
+        raise ValueError(
+            "trainer is not set to record test scores, yet a validation set was given"
+        )
     if verbose:
         print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
