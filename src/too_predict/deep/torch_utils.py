@@ -519,6 +519,11 @@ class EarlyStopper:
 # * Utility functions
 
 
+def tensor_cols_to_float(df: pd.DataFrame) -> pd.DataFrame:
+    mapping = {k: float for k in df.select_dtypes(torch.Tensor).columns}
+    return df.astype(mapping)
+
+
 def reset_sequential(mod: nn.Module) -> None:
     """reset_sequential.
 

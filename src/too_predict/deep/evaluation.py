@@ -250,6 +250,7 @@ def holdout(
         for t in tasks:
             to_df[t] = [v[t] for v in result.values()]
         df = pd.DataFrame(to_df)
+        df = d_ut.tensor_cols_to_float(df)
         df.to_csv(outdir.joinpath("accuracy.csv"), index=False)
     return result
 
@@ -289,7 +290,8 @@ def cross_validate(
         for t in tasks:
             metrics[t].append(acc[t])
         metrics["fold"].append(fold)
-    return pd.DataFrame(metrics)
+    df = pd.DataFrame(metrics)
+    return d_ut.tensor_cols_to_float(df)
 
 
 class Baseline:

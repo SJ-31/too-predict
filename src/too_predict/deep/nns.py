@@ -50,9 +50,6 @@ class Disyak(d_ut.MultiModule):
         for n_classes in n_classes_per_task:
             self.hlayers.append(nn.LazyLinear(n_hidden))
             out = nn.LazyLinear(n_classes)
-            # TODO: this part could be a frozen layer with weights that
-            # don't update, to restrict all learning to the hidden layers
-            # but then you have to be careful with initialization...
             out.register_forward_hook(logistic_hook)
             self.olayers.append(out)
 

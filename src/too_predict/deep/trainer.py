@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as schedule
 import torchmetrics.functional.classification as tmet
 from sortedcontainers import SortedList
-from too_predict.deep.torch_utils import EarlyStopper, Module
+from too_predict.deep.torch_utils import EarlyStopper, Module, tensor_cols_to_float
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
@@ -412,8 +412,7 @@ class Trainer:
             self._avg_model.finalize(self.model)
         self.model.eval()
         metrics = pd.DataFrame(self._metrics)
-        mapping = {k: float for k in metrics.select_dtypes(object).columns}
-        return metrics.astype(mapping)
+        return tensor_cols_to_float(metrics)
 
 
 # * Model averaging
