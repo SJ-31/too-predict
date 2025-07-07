@@ -1002,13 +1002,13 @@ class SaveOrLoad:
                 if self.read_fn is not None:
                     return {k: self.read_fn(v) for k, v in self.out.items()}
                 return {k: self.read_fns[k](v) for k, v in self.out.items()}
-            try:
-                value = fn(self.out, *args, **kwargs)
-                log.write_text("Completed successfully")
-                return value
-            except Exception as e:
-                print(e)
-                log.write_text("Failed with exception:\n------------")
-                log.write_text(str(e))
+                # try:
+            value = fn(self.out, *args, **kwargs)
+            log.write_text("Completed successfully")
+            return value
+            # except Exception as e:
+            #     print(e)
+            #     log.write_text("Failed with exception:\n------------")
+            #     log.write_text(str(e))
 
         return wrapped

@@ -224,7 +224,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 batch_size=kwargs.get("batch_size", 32),
             )
             if cv_path is not None:
-                cv_results.to_csv(cv_path, index=False)
+                cv_results.to_csv(cv_path.joinpath("fold_summary.csv"), index=False)
             vals.append(np.mean(cv_results.values[:, 1:]))
         mean_accs = tuple(np.mean(cv_results.loc[:, label]) for label in self.label_col)
         return mean_accs
