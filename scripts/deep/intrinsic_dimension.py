@@ -16,6 +16,11 @@ TRANSFORM: Transformer = Transformer(
     "clr", impute_fn=Imputer("plus_one"), inplace=False
 )
 REF, FEAT = ut.ref_feature_lists_internal()
+ESTIMATORS: dict = {
+    "TwoNN": lambda: skdim.id.TwoNN(),  # ignored
+    "MLE": lambda: skdim.id.MLE(),
+    "MoM": lambda: skdim.id.MOM(),
+}
 
 
 def parse_args():
@@ -33,19 +38,20 @@ def parse_args():
     out=here(OUTDIR, "id_estimation.csv"), read_fn=pd.read_csv, logdir=here("log")
 )
 def get_id(f, x: ad.AnnData, filters: list[str]):
-    results = {"MoM": [], "MLE": [], "feature_set": []}
+    results = {"feature_set": []}
+    for est in ESTIMATORS.keys():
+        results[est] = []
     for ref in filters:
         if ref != "all":
             F = Filter(features=FEAT[ref], inplace=False, feature_col="GENEID")
             current = F.fit_transform(x)
         else:
             current = x.copy()
-        mle = skdim.id.MLE()
-        mle.fit(current)
-        results["MLE"].append(mle.dimension_)
-        mom = skdim.id.MOM()
-        mom.fit(current)
-        results["MoM"].append(mom.dimension_)
+        for name, e_fn in ESTIMATORS.items():
+            E = e_fn()
+            E.fit(current)
+            print(f"{name} complete")
+            results[name].append(E.dimension_)
         results["feature_set"].append(ref)
     df = pd.DataFrame(results)
     df.to_csv(f, index=False)
@@ -66,10 +72,10 @@ if __name__ == "__main__":
     get_id(
         x=adata,
         filters=[
-            "all",
             "edgeR_median_lfc_feature_list_3000",
             "edgeR_15_per_type_ovp_tissue_enriched",
             "edgeR_70_per_type_ovp_.txt",
             "variance_feature_list_3000",
+            # "all",
         ],
     )
