@@ -170,6 +170,7 @@ def holdout(
     verbose: bool = False,
     minimal: bool = False,
     outdir: Path | None = None,
+    validation: float | None = None,
     **kwargs,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split) with
@@ -178,10 +179,13 @@ def holdout(
     Parameters
     ---------
     Same parameters as original holdout
-    split_fn: A dictionary of function that splits adata into a tuple of train, test
-    split_indices: A dictionary of mapping test set names to (train, test) boolean indices
+    split_fn : A dictionary of function that splits adata into a tuple of train, test
+    split_indices : A dictionary of mapping test set names to (train, test) boolean indices
+    validation : float | None
+        If not none, the percentage of the test split to use for validation data in
+        early stopping and reporting training metrics
 
-    Return
+    Returns
     ------
     A dictionary containing model evaluation results for each task i.e.
         split->task->results_dict
@@ -189,14 +193,7 @@ def holdout(
     """
     if split_fns is None and split_masks is None:
         raise ValueError("Either split_fns or split_indices must be given!")
-
     split_is_fn: bool = split_fns is not None
-    trainer.deregister_early_stop()  # TODO: better way would be to get a validation
-    # set by splitting the test data,
-    # or maybe even use the test data itself as the validation
-    # set??? But would be biased
-    # maybe use noisy test data as validation
-    trainer._record_test_score = False
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
@@ -205,10 +202,20 @@ def holdout(
         else:
             x_train = cur_adata[splitter[0], :]
             x_test = cur_adata[splitter[1], :]
+        v_adata: ad.AnnData | None
+        if validation is not None:
+            x_test, v_adata = ut.train_test_split_ad(x_test, test_size=validation)
+        else:
+            v_adata = None
         if verbose:
             print(
                 f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
             )
+        v_dset = (
+            d_ut.AnnDataset(v_adata, to_encode=to_encode)
+            if isinstance(v_adata, ad.AnnData)
+            else None
+        )
         if save_split_path is not None:
             x_train.obs.to_csv(
                 save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
@@ -216,22 +223,35 @@ def holdout(
             x_test.obs.to_csv(
                 save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
             )
+            if validation is not None:
+                v_adata.obs.to_csv(
+                    save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
+                    index=False,
+                )
         train_l = DataLoader(d_ut.AnnDataset(x_train, to_encode=to_encode), **kwargs)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
         x_test_tensor, y_true = test_dset[:]
 
-        trainer(train_l, n_classes=n_classes)
+        trainer(train_l, n_classes=n_classes, validation=v_dset)
 
         if not minimal:
             proba = trainer.model.predict_proba(x_test_tensor)
             y_true = test_dset.decode(y_true)
             res: dict = multitask_all_metrics(
-                y_true, proba, task_names=to_encode, n_classes=trainer._n_classes
+                y_true=y_true,
+                scores=proba,
+                task_names=to_encode,
+                n_classes=trainer._n_classes,
             )
             return res
         pred = trainer.model.predict(x_test_tensor)
 
-        return multitask_acc(y_true=y_true, predictions=pred, task_names=to_encode)
+        return multitask_acc(
+            y_true=y_true,
+            predictions=pred,
+            n_classes=trainer._n_classes,
+            task_names=to_encode,
+        )
 
     splitters: dict = split_fns if split_fns is not None else split_masks
     result: dict = {}
@@ -294,7 +314,9 @@ def cross_validate(
             )
 
         y_pred = trainer.model.predict(test[:][0])
-        acc = multitask_acc(y_true, y_pred, task_names=tasks, n_classes=n_classes)
+        acc = multitask_acc(
+            y_true=y_true, predictions=y_pred, task_names=tasks, n_classes=n_classes
+        )
         for t in tasks:
             metrics[t].append(acc[t])
         metrics["fold"].append(fold)
