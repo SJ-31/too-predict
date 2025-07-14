@@ -1,0 +1,80 @@
+Exome:
+  CRC:
+    - path: "CEN2_N10_B.tar CEN2_N10_C.tar CEN2_N11_2_C.tar CEN2_N11_B.tar CEN2_N1_2_C.tar CEN2_N13_2C.tar CEN2_N13_B.tar CEN2_N14_2_C.tar CEN2_N14_B.tar CEN2_N14_C.tar CEN2_N16_B.tar CEN2_N16_C.tar CEN2_N17_B.tar CEN2_N18_C.tar CEN2_N1_B.tar CEN2_N22_2C.tar CEN2_N23_2_C.tar CEN2_N23_B.tar CEN2_N24_B.tar CEN2_N24_C.tar CEN2_N26_B.tar CEN2_N27_2_C.tar CEN2_N28_B.tar CEN2_N28_C.tar CEN2_N30_B.tar CEN2_N30_C.tar CEN2_N31_B.tar CEN2_N31_C.tar CEN2_N32_B.tar CEN2_N32_C.tar CEN2_N33_B.tar CEN2_N33_C.tar CEN2_N35_B.tar CEN2_N35_C.tar CEN2_N36_B.tar CEN2_N36_C.tar CEN2_N37_B.tar CEN2_N37_C.tar CEN2_N39_B.tar CEN2_N39_C.tar CEN2_N40_B.tar CEN2_N40_C.tar CEN2_N42_B.tar CEN2_N4_2_C.tar CEN2_N42_C.tar CEN2_N43_B.tar CEN2_N43_C.tar CEN2_N4_B.tar CEN2_N4_C.tar CEN2_N5_B.tar CEN2_N5_C.tar CEN2_N7_2_C.tar CEN2_N7_B.tar CEN2_N8_B.tar CEN2_N8_C.tar CEN2_N9_B.tar CEN2_N9_C.tar CEN_N26_2_C.tar D-CEN2-N20-C_1.trim.fastq.gz D-CEN2-N20-C_2.trim.fastq.gz D-CEN2-N22-C_1.trim.fastq.gz D-CEN2-N22-C_2.trim.fastq.gz D-CEN2-N26-C_1.trim.fastq.gz D-CEN2-N26-C_2.trim.fastq.gz D-CEN2-N42-2-C_1.trim.fastq.gz D-CEN2-N42-2-C_2.trim.fastq.gz D-CEN2-N53-B_1.trim.fastq.gz D-CEN2-N53-B_2.trim.fastq.gz"
+      raw: true
+      folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/Exome"
+      prefix: "CEN2_"
+      to_remove: ["CEN2_", "D-CEN2-", "_2.trim", "_1.trim"]
+    - path: "aligned_CRC_N41_C_sorted.bam aligned_CRC_N41_sorted.bam aligned_CRC_N48-2_sorted.bam aligned_CRC_N51-2_sorted.bam aligned_CRC_N52-2_sorted.bam aligned_CRC_N54_B_sorted.bam aligned_CRC_N54_sorted.bam aligned_CRC_N55_B_sorted.bam aligned_CRC_N57_B_sorted.bam aligned_CRC_N57_sorted.bam aligned_N10_B_sorted.bam aligned_N10_C_sorted.bam aligned_N11_2_C_sorted.bam aligned_N11_B_sorted.bam aligned_N11_C_sorted.bam aligned_N1_2_C_sorted.bam aligned_N13_B_sorted.bam aligned_N13_C_sorted.bam aligned_N14_2_C_sorted.bam aligned_N14_B_sorted.bam aligned_N14_C_sorted.bam aligned_N16_B_sorted.bam aligned_N16_C_sorted.bam aligned_N17_B_sorted.bam aligned_N18_B_sorted.bam aligned_N18_C_sorted.bam aligned_N19_B_sorted.bam aligned_N1_B_sorted.bam aligned_N20_B_sorted.bam aligned_N22_B_sorted.bam aligned_N22_C_sorted.bam aligned_N23_B_sorted.bam aligned_N23_C_sorted.bam aligned_N24_B_sorted.bam aligned_N24_C_sorted.bam aligned_N26_2_C_sorted.bam aligned_N26_B_sorted.bam aligned_N27_2_C_sorted.bam aligned_N28_B_sorted.bam aligned_N28_C_sorted.bam aligned_N30_B_sorted.bam aligned_N30_C_sorted.bam aligned_N31_B_sorted.bam aligned_N31_C_sorted.bam aligned_N32_B_sorted.bam aligned_N32_C_sorted.bam aligned_N33_B_sorted.bam aligned_N33_C_sorted.bam aligned_N35_B_sorted.bam aligned_N35_C_sorted.bam aligned_N36_B_sorted.bam aligned_N36_C_sorted.bam aligned_N37_B_sorted.bam aligned_N37_C_sorted.bam aligned_N39_B_sorted.bam aligned_N39_C_sorted.bam aligned_N40_B_sorted.bam aligned_N40_C_sorted.bam aligned_N41_2_C_sorted.bam aligned_N42_B_sorted.bam aligned_N4_2_C_sorted.bam aligned_N42_C_sorted.bam aligned_N43_B_sorted.bam aligned_N43_C_sorted.bam aligned_N48_B_sorted.bam aligned_N48_C_sorted.bam aligned_N4_B_sorted.bam aligned_N4_C_sorted.bam aligned_N5_B_sorted.bam aligned_N5_C_sorted.bam aligned_N7_B_sorted.bam aligned_N7_C_sorted.bam aligned_N8_B_sorted.bam aligned_N8_C_sorted.bam aligned_N9_B_sorted.bam aligned_N9_C_2_sorted.bam aligned_N9_C_sorted.bam"
+      raw: false
+      prefix: ""
+      to_remove: ["aligned_", "_sorted", "CRC_"]
+      folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/processed/Exome/aligned_BAM"
+RNASeq:
+  CCA:
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CCA/RNAseq/HN00157405_RNAseq"
+      raw: false
+      prefix: "HN00157405_RNAseq"
+      path: "CCA-N22-C CCA-N23-C CCA-N24-C CCA-N4-C CCA-N4-N CCA-N4-N-LIN28B CCA-N5-C CEN2-N18-2-C CEN2-N53-2-C CEN2-N56-C-VVIP KBN-C KBN-N KBN-N-LIN28B KSWP-C"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CCA/RNAseq/HN00160817_RNAseq_CCA_OC/result_RNAseq/Expression_profile/StringTie/StringTie_result"
+      raw: false
+      prefix: "HN00160817_RNAseq_CCA_OC"
+      path: "CCA_R_15_C CCA_R_18_C CCA_R_19_C CCA_R_20_C CCA_R_22_C CCA_R_2_C OC_R_9_cervix OC_R_9_Follip OC_R_9_ovary"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/shannc/CCA/RNASeq"
+      raw: true
+      prefix: "CCA-"
+      to_remove: ["_1.fastq", "_2.fastq"]
+      path: "CCA-N22-C_1.fastq.gz CCA-N22-C_2.fastq.gz CCA-N23-C_1.fastq.gz CCA-N23-C_2.fastq.gz CCA-N24-C_1.fastq.gz CCA-N24-C_2.fastq.gz CCA-N4-C_1.fastq.gz CCA-N4-C_2.fastq.gz CCA-N4-N_1.fastq.gz CCA-N4-N_2.fastq.gz CCA-N4-N-LIN28B_1.fastq.gz CCA-N4-N-LIN28B_2.fastq.gz CCA-N5-C_1.fastq.gz CCA-N5-C_2.fastq.gz CCA_R11C_1.fastq.gz CCA_R11C_2.fastq.gz CCA_R12C_1.fastq.gz CCA_R12C_2.fastq.gz CCA_R13C_1.fastq.gz CCA_R13C_2.fastq.gz CCA_R_15_C_1.fastq.gz CCA_R_15_C_2.fastq.gz CCA_R16C_1.fastq.gz CCA_R16C_2.fastq.gz CCA_R_18_C_1.fastq.gz CCA_R_18_C_2.fastq.gz CCA_R_19_C_1.fastq.gz CCA_R_19_C_2.fastq.gz CCA_R_20_C_1.fastq.gz CCA_R_20_C_2.fastq.gz CCA_R_2_C_1.fastq.gz CCA_R_2_C_2.fastq.gz CCA_R4C_1.fastq.gz CCA_R4C_2.fastq.gz CCA_R9C_1.fastq.gz CCA_R9C_2.fastq.gz KBN-C_1.fastq.gz KBN-C_2.fastq.gz KBN-N_1.fastq.gz KBN-N_2.fastq.gz KBN-N-LIN28B_1.fastq.gz KBN-N-LIN28B_2.fastq.gz KSWP-C_1.fastq.gz KSWP-C_2.fastq.gz KYUAN-C_1.fastq.gz KYUAN-C_2.fastq.gz"
+
+  CRC:
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/processed/RNAseq/kallisto"
+      path: "N10_quant N11-2_quant N11_quant N1-2_quant N13-2_C_quant N13_quant N14-2_quant N14_quant N16_quant N17_quant N18-2_C_quant N18_quant N19_quant N1_quant N20_quant N22-2_C_quant N22-2_N_quant N22_quant N23-2_C_quant N23-2_N_quant N24-2_C_quant N24-2_N_quant N24_quant N26-2_quant N26_C_quant N26_N_quant N27-2_quant N28_C_quant N28_N_quant N30-2_C_quant N30_quant N31_quant N32_quant N33-2_C_quant N33_C_quant N35-2_C_quant N35_quant N36-2_C_quant N36_quant N37-2_C_quant N37_C_quant N39-2_C_quant N39_C_quant N40-2_C_quant N40_C_quant N41-2_C_quant N41_C_quant N42-2_C_quant N42-3_C_quant N42_C_quant N4-2_quant N42_quant N43-2_C_quant N43_C_quant N44_C_quant N46-2_C_quant N46_C_quant N47_C_quant N48-2_C_quant N48_C_quant N4-N-W-GF_C_quant N4-N-W-OGF_C_quant N4_quant N51-2_C_quant N51_C_quant N52-2_C_quant N52_C_quant N53-2_C_quant N54_C_quant N55_C_quant N56_C_quant N57_C_quant N5_quant N8_quant N9_quant Somporn_C_quant"
+      to_remove: ["_quant"]
+      raw: false
+      prefix: ""
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC_GF_condition_QT18030001 -GF_ RNA-Seq Part 6 (10 samples)-Dr.Praewphan-CU/Raw Data and Data Analysis Report/Result/00_Rawdata"
+      path: "N14-C-CO_combined_R1.fastq.gz N14-C-CO_combined_R2.fastq.gz N14-C-WO_combined_R1.fastq.gz N14-C-WO_combined_R2.fastq.gz N20-C-CO_combined_R1.fastq.gz N20-C-CO_combined_R2.fastq.gz N20-C-WO_combined_R1.fastq.gz N20-C-WO_combined_R2.fastq.gz N24-C-CO_combined_R1.fastq.gz N24-C-CO_combined_R2.fastq.gz N24-C-WO_combined_R1.fastq.gz N24-C-WO_combined_R2.fastq.gz N4-2-C-CO_combined_R1.fastq.gz N4-2-C-CO_combined_R2.fastq.gz N4-2-C-WO_combined_R1.fastq.gz N4-2-C-WO_combined_R2.fastq.gz N9-C-CO_combined_R1.fastq.gz N9-C-CO_combined_R2.fastq.gz N9-C-WO_combined_R1.fastq.gz N9-C-WO_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq"]
+      raw: true
+      prefix: "CRC_GF_condition_QT18030001 -GF_ RNA-Seq Part 6"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC-QT18030001-RNA-Seq Part 11 (19 samples)-Dr.Praewphan-CU/Raw Data and Data Analysis Report/Result/00_Rawdata"
+      path: "CEN2-13-2-C_combined_R1.fastq.gz CEN2-13-2-C_combined_R2.fastq.gz CEN2-30-2-C_combined_R1.fastq.gz CEN2-30-2-C_combined_R2.fastq.gz CEN2-33-2-C_combined_R1.fastq.gz CEN2-33-2-C_combined_R2.fastq.gz CEN2-35-2-C_combined_R1.fastq.gz CEN2-35-2-C_combined_R2.fastq.gz CEN2-36-2-C_combined_R1.fastq.gz CEN2-36-2-C_combined_R2.fastq.gz CEN2-37-2-C_combined_R1.fastq.gz CEN2-37-2-C_combined_R2.fastq.gz CEN2-39-2-C_combined_R1.fastq.gz CEN2-39-2-C_combined_R2.fastq.gz CEN2-40-2-C_combined_R1.fastq.gz CEN2-40-2-C_combined_R2.fastq.gz CEN2-41-2-C_combined_R1.fastq.gz CEN2-41-2-C_combined_R2.fastq.gz CEN2-42-2-C_combined_R1.fastq.gz CEN2-42-2-C_combined_R2.fastq.gz CEN2-44-C_combined_R1.fastq.gz CEN2-44-C_combined_R2.fastq.gz CEN2-46-2-C_combined_R1.fastq.gz CEN2-46-2-C_combined_R2.fastq.gz CEN2-46-C_combined_R1.fastq.gz CEN2-46-C_combined_R2.fastq.gz CEN2-47-C_combined_R1.fastq.gz CEN2-47-C_combined_R2.fastq.gz CEN2-48-C_combined_R1.fastq.gz CEN2-48-C_combined_R2.fastq.gz CEN2-51-C_combined_R1.fastq.gz CEN2-51-C_combined_R2.fastq.gz CEN2-52-C_combined_R1.fastq.gz CEN2-52-C_combined_R2.fastq.gz CEN2-N4-N-W-GF_combined_R1.fastq.gz CEN2-N4-N-W-GF_combined_R2.fastq.gz CEN2-N4-N-W-OGF_combined_R1.fastq.gz CEN2-N4-N-W-OGF_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq", "CEN2-"]
+      raw: true
+      prefix: "CRC-QT18030001-RNA-Seq Part 11, CEN2-"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC-QT18030001-RNA-Seq Part 3 (3 samples)-Dr.Praewphan-CU/Data Analysis Report/Result/00_Rawdata"
+      path: "N14_combined_R1.fastq.gz N14_combined_R2.fastq.gz N24_combined_R1.fastq.gz N24_combined_R2.fastq.gz N4-2_combined_R1.fastq.gz N4-2_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq"]
+      raw: true
+      prefix: "CRC-QT18030001-RNA-Seq Part 3"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC-QT18030001-RNA-Seq Part 5 (10 samples)-Dr.Praewphan-CU/Raw Data and Data Analysis Report/Result/00_Rawdata"
+      path: "N22-2-C_combined_R1.fastq.gz N22-2-C_combined_R2.fastq.gz N22-2-N_combined_R1.fastq.gz N22-2-N_combined_R2.fastq.gz N23-2-C_combined_R1.fastq.gz N23-2-C_combined_R2.fastq.gz N23-2-N_combined_R1.fastq.gz N23-2-N_combined_R2.fastq.gz N24-2-C_combined_R1.fastq.gz N24-2-C_combined_R2.fastq.gz N24-2-N_combined_R1.fastq.gz N24-2-N_combined_R2.fastq.gz N26-C_combined_R1.fastq.gz N26-C_combined_R2.fastq.gz N26-N_combined_R1.fastq.gz N26-N_combined_R2.fastq.gz N28-C_combined_R1.fastq.gz N28-C_combined_R2.fastq.gz N28-N_combined_R1.fastq.gz N28-N_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq"]
+      raw: true
+      prefix: "CRC-QT18030001-RNA-Seq Part 5"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC-QT18030001 - RNA-Seq Part 7 (10 samples)-Dr.Praewphan-CU/Raw Data and Data Analysis Report/Result/00_Rawdata"
+      path: "CEN2-N11-2-C_combined_R1.fastq.gz CEN2-N11-2-C_combined_R2.fastq.gz CEN2-N1-2-C_combined_R1.fastq.gz CEN2-N1-2-C_combined_R2.fastq.gz CEN2-N14-2-C_combined_R1.fastq.gz CEN2-N14-2-C_combined_R2.fastq.gz CEN2-N26-2-C_combined_R1.fastq.gz CEN2-N26-2-C_combined_R2.fastq.gz CEN2-N27-2-C_combined_R1.fastq.gz CEN2-N27-2-C_combined_R2.fastq.gz CEN2-N30-C_combined_R1.fastq.gz CEN2-N30-C_combined_R2.fastq.gz CEN2-N31-C_combined_R1.fastq.gz CEN2-N31-C_combined_R2.fastq.gz CEN2-N32-C_combined_R1.fastq.gz CEN2-N32-C_combined_R2.fastq.gz CEN2-N35-C_combined_R1.fastq.gz CEN2-N35-C_combined_R2.fastq.gz CEN2-N36-C_combined_R1.fastq.gz CEN2-N36-C_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq", "CEN2-"]
+      raw: true
+      prefix: "CRC-QT18030001 - RNA-Seq Part 7, CEN2-"
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/CRC/RNAseq/CRC-QT18030001-RNA-Seq Part 9 (6 samples)-Dr.Praewphan-CU/Raw Data and Data Analysis Report/Result/00_Rawdata"
+      path: "CEN2-N33-C_combined_R1.fastq.gz CEN2-N33-C_combined_R2.fastq.gz CEN2-N37-C_combined_R1.fastq.gz CEN2-N37-C_combined_R2.fastq.gz CEN2-N39-C_combined_R1.fastq.gz CEN2-N39-C_combined_R2.fastq.gz CEN2-N40-C_combined_R1.fastq.gz CEN2-N40-C_combined_R2.fastq.gz CEN2-N42-C_combined_R1.fastq.gz CEN2-N42-C_combined_R2.fastq.gz CEN2-N43-C_combined_R1.fastq.gz CEN2-N43-C_combined_R2.fastq.gz"
+      to_remove: ["_combined_R1.fastq", "_combined_R2.fastq", "CEN2-"]
+      raw: true
+      prefix: "CRC-QT18030001-RNA-Seq Part 9, CEN2-"
+  HCC:
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/HCC/RNAseq/HN00167015_RNAseq_HCC/result_RNAseq/Expression_profile/StringTie/StringTie_result"
+      path: "R_HCC_14_C R_HCC_34_C R_HCC_3_Cyts R_K_Yuan_C"
+      prefix: "HN00167015_RNAseq_HCC, R_"
+      raw: false
+      to_remove: ["R_HCC_", "R_"]
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/shannc/HCC/RNASeq"
+      path: "HCC_R13CH_1.fastq.gz HCC_R13CH_2.fastq.gz HCC_R17CH_1.fastq.gz HCC_R17CH_2.fastq.gz HCC_R19CH_1.fastq.gz HCC_R19CH_2.fastq.gz HCC_R1CH_1.fastq.gz HCC_R1CH_2.fastq.gz HCC_R_22_C_1.fastq.gz HCC_R_22_C_2.fastq.gz HCC_R3C_1.fastq.gz HCC_R3C_2.fastq.gz HCC_R5C3D_1.fastq.gz HCC_R5C3D_2.fastq.gz HCC_R8C_1.fastq.gz HCC_R8C_2.fastq.gz HCC_R9C_1.fastq.gz HCC_R9C_2.fastq.gz R_HCC_14_C_1.fastq.gz R_HCC_14_C_2.fastq.gz R_HCC_34_C_1.fastq.gz R_HCC_34_C_2.fastq.gz R_HCC_3_Cyts_1.fastq.gz R_HCC_3_Cyts_2.fastq.gz"
+      to_remove: ["_1.fastq", "_2.fastq"]
+      raw: true
+  PDAC:
+    - folder: "/ssh:shannc@161.200.107.77:/data/project/stemcell/PDAC/processed/RNAseq"
+      path: "P45_2_C_salmon_quant P51_2_C_salmon_quant P56_2_C_salmon_quant P59_2_C-2_salmon_quant P61_2_C_salmon_quant P62_2_C_salmon_quant P63_2_C_salmon_quant P64_2_C_salmon_quant P68_2_C_salmon_quant P70_2_C_salmon_quant P73_1_C_salmon_quant P76_1_C_salmon_quant P78_1_C_salmon_quant P79_1_C_salmon_quant P80_1_C-2_salmon_quant P80_1_C_salmon_quant"
+      prefix: ""
+      raw: false
+      to_remove: ["_salmon_quant"]

@@ -3,6 +3,8 @@ __pycache__/
 *.py[oc]
 build/
 *.pickle
+log/
+.py.common
 dist/
 rust/target
 src/too_predict/_rust_helpers*

@@ -1,0 +1,12 @@
+* hpa_tissue_cell_resource_2025-4-18.csv
+*Absolute path:* =/home/shannc/Bio_SDD/too-predict/data/reference/hpa_tissue_cell_resource_2025-4-18.csv=
+*Date added*: <2025-05-16 Fri>
+*Source:* [[https://www.proteinatlas.org/humanproteome/single+cell][HPA: The Single Cell Resource]]
+CSV file containing genes enriched in cell types from select tissues, generated with "scripts/resources/get_markers.R"
+* 2025-5-16_hgnc_family_hierarchy.csv
+*Absolute path:* =/home/shannc/Bio_SDD/too-predict/data/reference/2025-5-16_hgnc_family_hierarchy.csv=
+*Date added*: <2025-05-16 Fri>
+*Source:* [[https://www.genenames.org/download/gene-groups/][HGNC Gene group DB table files]]
++ The following were downloaded from this page
+  * hierarchy.csv
+  * family.csv
