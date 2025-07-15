@@ -36,9 +36,10 @@ class Disyak(d_ut.MultiModule):
         dropout_p: float = 0.2,
         l1_pars: dict | None = None,
         l2_pars: dict | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
-            in_features, n_classes_per_task, task_weights, l1_pars, l2_pars
+            in_features, n_classes_per_task, task_weights, l1_pars, l2_pars, **kwargs
         )
         if n_hidden is None:
             n_hidden = in_features

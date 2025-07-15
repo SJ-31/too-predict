@@ -7,6 +7,7 @@ from collections.abc import Iterable, Sequence
 from typing import Callable, Literal, override
 
 import anndata as ad
+import lightning as L
 import numpy as np
 import pandas as pd
 import sklearn.preprocessing as sp
@@ -19,8 +20,135 @@ from too_predict.utils import if_none
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
+from torchmetrics.classification import Accuracy
+
+# * Utility functions
 
 
+def tensor_cols_to_float(df: pd.DataFrame) -> pd.DataFrame:
+    mapping = {k: float for k in df.select_dtypes(torch.Tensor).columns}
+    return df.astype(mapping)
+
+
+def reset_sequential(mod: nn.Module) -> None:
+    """reset_sequential.
+
+    Parameters
+    ----------
+    mod : nn.Module
+        mod
+
+    Returns
+    -------
+    None
+
+    """
+
+    def reset(m):
+        """reset.
+
+        Parameters
+        ----------
+        m :
+            m
+        """
+        if (
+            isinstance(m, nn.Conv2d)
+            or isinstance(m, nn.Linear)
+            or isinstance(m, Module)
+        ):
+            m.reset_parameters()
+
+    mod.apply(reset)
+
+
+def iter_cols(x: Tensor | np.ndarray) -> Iterable:
+    """Iterate over columnes of x
+
+    Parameters
+    ----------
+    x : Tensor | np.ndarray
+        x
+
+    Returns
+    -------
+    Iterable
+
+    """
+    if isinstance(x, Tensor):
+        to_iter = torch.unbind(x, dim=1)
+    else:
+        to_iter = [x[:, i] for i in range(x.shape[1])]
+    return to_iter
+
+
+def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
+    """Count the number of unique elements in x
+
+    Parameters
+    ----------
+    x : torch.Tensor | np.ndarray | Sequence
+        x
+
+    Returns
+    -------
+    int
+
+    """
+    one_d = is_atomic(x)
+    if one_d and isinstance(x, torch.Tensor):
+        return x.unique().size()[0]
+    elif isinstance(x, torch.Tensor):
+        return x.flatten().unique().size()[0]
+    elif (one_d and isinstance(x, np.ndarray)) or isinstance(x, pd.Series):
+        return np.unique(x).shape[0]
+    return len(set(x))
+
+
+def data_spec(
+    X: Dataset | DataLoader | torch.Tensor | np.ndarray | ad.AnnData,
+    y: torch.Tensor | np.ndarray | None | pd.DataFrame = None,
+) -> tuple:
+    """Return a tuple of (n_features, n_classes) for the given dataset
+    If multitask, the second element is a tuple of length n_tasks
+    """
+
+    def _for_dataset(data):
+        """_for_dataset.
+
+        Parameters
+        ----------
+        data :
+            data
+        """
+        x, y = data[:]
+        if is_atomic(y) or y.shape[1] == 1:
+            n_classes = n_uniques(y)
+        else:
+            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
+        return x.shape[1], n_classes
+
+    if (
+        isinstance(y, tuple)
+        and isinstance(next(iter(y)), str)
+        and isinstance(X, ad.AnnData)
+    ):
+        y = X.obs.loc[:, y]
+    if isinstance(X, ad.AnnData):
+        X = ut.xarray_if_sparse(X)
+
+    if isinstance(X, Dataset):
+        return _for_dataset(X)
+    elif isinstance(X, DataLoader):
+        return _for_dataset(X.dataset)
+    elif isinstance(y, pd.DataFrame):
+        return X.shape[1], tuple([len(y[s].unique()) for s in y])
+    elif isinstance(y, np.ndarray) and len(y.shape) > 1:
+        return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
+    return X.shape[1], len(set(y))
+
+
+# * Datasets
 class AnnDataset(torch.utils.data.Dataset):
     """Custom dataset class for AnnData objects
 
@@ -209,107 +337,15 @@ def linear_reset_parameters(weight: Tensor, bias: Tensor | None = None) -> None:
         init.uniform_(bias, -bound, bound)
 
 
-class Module(nn.Module):
-    """Module."""
-
-    def __init__(self, n_tasks: int = 1) -> None:
-        """__init__.
-
-        Parameters
-        ----------
-        n_tasks : int
-            n_tasks
-
-        Returns
-        -------
-        None
-
-        """
-        super().__init__()
-        self.n_tasks: int = n_tasks
-
-    @override
-    def forward(self, X):
-        """forward.
-
-        Parameters
-        ----------
-        X :
-            X
-        """
-        raise NotImplementedError()
-
-    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> Tensor:
-        """predict.
-
-        Parameters
-        ----------
-        X : Tensor | np.ndarray | DataLoader | Dataset
-            X
-
-        Returns
-        -------
-        np.ndarray
-
-        """
-        if isinstance(X, DataLoader):
-            X = X.dataset[:][0]
-        elif isinstance(X, Dataset):
-            X = X[:]
-        proba = self(X)
-        if isinstance(proba, tuple):
-            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
-        return proba.argmax(axis=1)
-
-    def reset_parameters(self):
-        """reset_parameters."""
-        raise NotImplementedError()
-
-    def predict_proba(self, X) -> Tensor | tuple:
-        if isinstance(X, DataLoader):
-            X = X.dataset[:][0]
-        X = torch.tensor(X) if isinstance(X, np.ndarray) else X
-        proba = self(X)
-        if isinstance(proba, tuple):
-            return tuple(p.detach() for p in proba)
-        return proba.detach()
-
-    def get_optimizers(self) -> Optimizer:
-        """get_optimizers.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        Optimizer
-
-        """
-        return optim.Adam(self.named_parameters())
-
-    def criterion(self, y_pred, y_true):
-        """criterion.
-
-        Parameters
-        ----------
-        y_pred :
-            y_pred
-        y_true :
-            y_true
-        """
-        raise NotImplementedError()
-
-
-# ** Subclass for multi-label classifier
-
-
-class MultiModule(Module):
+class MultiModule(L.LightningModule):
     """MultiModule."""
 
     def __init__(
         self,
         in_features: int,
         n_classes_per_task: list[int],
+        record_metrics: bool = True,
+        task_names: Sequence[str] | None = None,
         task_weights: Tensor | Sequence | None = None,
         l1_pars: dict | None = None,
         l2_pars: dict | None = None,
@@ -336,7 +372,10 @@ class MultiModule(Module):
         None
 
         """
-        super().__init__(n_tasks=len(n_classes_per_task))
+        super().__init__()
+        self.in_features: int = in_features
+        self.n_tasks: int = len(n_classes_per_task)
+        self._record: bool = record_metrics
         self.l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
         self.l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
         self.task_weights: Tensor = None
@@ -344,45 +383,87 @@ class MultiModule(Module):
             self.task_weights = torch.tensor(task_weights)
         elif task_weights is not None:
             self.task_weights = task_weights
+        self._accs: list[Accuracy] | None = None
+        if self._record:
+            self._accs = [
+                Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task
+            ]
+        if task_names is None:
+            self._task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
+        else:
+            self._task_names = task_names
 
-    @override
     def forward(self, X):
-        """forward.
+        raise NotImplementedError()
 
-        Parameters
-        ----------
-        X :
-            X
-        """
-        return super().forward(X)
+    def _calc_accuracy(
+        self, output: Tensor | tuple[Tensor], y_true: Tensor, prefix: str
+    ) -> None:
+        if isinstance(output, tuple):
+            preds: Tensor = torch.hstack(
+                [p.argmax(axis=1).reshape(-1, 1) for p in output]
+            )
+        else:
+            preds = output.argmax(axis=1)
+        if self._record and isinstance(preds, tuple):
+            for i, (name, y_true, pred) in enumerate(
+                zip(self._task_names, iter_cols(y_true), iter_cols(preds))
+            ):
+                acc = self._accs[i](pred, y_true)
+                self.log(f"{prefix}_acc_{name}", acc)
+        elif self._record:
+            acc = self._accs[0](preds, y_true)
+            self.log(f"{prefix}_acc_step", acc)
 
-    @override
-    def predict(self, X: Tensor | np.ndarray | DataLoader | Dataset) -> Tensor:
-        return super().predict(X)
-
-    @override
     def predict_proba(self, X) -> Tensor | tuple:
-        return super().predict_proba(X)
+        if isinstance(X, DataLoader):
+            X = X.dataset[:][0]
+        X = torch.tensor(X) if isinstance(X, np.ndarray) else X
+        proba = self(X)
+        if isinstance(proba, tuple):
+            return tuple(p.detach() for p in proba)
+        return proba.detach()
 
-    @override
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        output = self(x)
+        loss = self.criterion(y_pred=output, y_true=y)
+        if self._record:
+            self._calc_accuracy(output=output, y_true=y, prefix="train")
+        return loss
+
+    def predict_step(self, batch, batch_idx, dataloader_idx=0) -> Tensor:
+        X, _ = batch
+        if isinstance(X, DataLoader):
+            X = X.dataset[:][0]
+        elif isinstance(X, Dataset):
+            X = X[:]
+        proba = self(X)
+        if isinstance(proba, tuple):
+            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
+        return proba.argmax(axis=1)
+
+    def _log_step(self, log_to, acc_prefix: str, batch, batch_idx):
+        x, y = batch
+        output = self(x)
+        loss = self.criterion(y_pred=output, y_true=y)
+        self.log(log_to, loss)
+        if self._record:
+            self._calc_accuracy(output=output, y_true=y, prefix=acc_prefix)
+        return output
+
+    def test_step(self, batch, batch_idx):
+        self._log_step("test_loss", "test", batch, batch_idx)
+
+    def validation_step(self, batch, batch_idx):
+        self._log_step("val_loss", "validation", batch, batch_idx)
+
     def reset_parameters(self):
-        return super().reset_parameters()
+        raise NotImplementedError()
 
-    @override
-    def get_optimizers(self) -> Optimizer:
-        """get_optimizers.
+    def configure_optimizers(self) -> Optimizer:
+        return optim.Adam(self.named_parameters())
 
-        Parameters
-        ----------
-
-        Returns
-        -------
-        Optimizer
-
-        """
-        return super().get_optimizers()
-
-    @override
     def criterion(self, y_pred, y_true):
         """criterion.
 
@@ -393,7 +474,7 @@ class MultiModule(Module):
         y_true :
             y_true
         """
-        return super().criterion(y_pred, y_true)
+        raise NotImplementedError()
 
     def l1(self) -> Tensor | Literal[0]:
         if self.l1_pars["lambda"] > 0:
@@ -514,132 +595,6 @@ class EarlyStopper:
         if b:
             print(f"Early stopping complete with best step {self.best_stop}")
         return b
-
-
-# * Utility functions
-
-
-def tensor_cols_to_float(df: pd.DataFrame) -> pd.DataFrame:
-    mapping = {k: float for k in df.select_dtypes(torch.Tensor).columns}
-    return df.astype(mapping)
-
-
-def reset_sequential(mod: nn.Module) -> None:
-    """reset_sequential.
-
-    Parameters
-    ----------
-    mod : nn.Module
-        mod
-
-    Returns
-    -------
-    None
-
-    """
-
-    def reset(m):
-        """reset.
-
-        Parameters
-        ----------
-        m :
-            m
-        """
-        if (
-            isinstance(m, nn.Conv2d)
-            or isinstance(m, nn.Linear)
-            or isinstance(m, Module)
-        ):
-            m.reset_parameters()
-
-    mod.apply(reset)
-
-
-def iter_cols(x: Tensor | np.ndarray) -> Iterable:
-    """Iterate over columnes of x
-
-    Parameters
-    ----------
-    x : Tensor | np.ndarray
-        x
-
-    Returns
-    -------
-    Iterable
-
-    """
-    if isinstance(x, Tensor):
-        to_iter = torch.unbind(x, dim=1)
-    else:
-        to_iter = [x[:, i] for i in range(x.shape[1])]
-    return to_iter
-
-
-def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
-    """Count the number of unique elements in x
-
-    Parameters
-    ----------
-    x : torch.Tensor | np.ndarray | Sequence
-        x
-
-    Returns
-    -------
-    int
-
-    """
-    one_d = is_atomic(x)
-    if one_d and isinstance(x, torch.Tensor):
-        return x.unique().size()[0]
-    elif isinstance(x, torch.Tensor):
-        return x.flatten().unique().size()[0]
-    elif (one_d and isinstance(x, np.ndarray)) or isinstance(x, pd.Series):
-        return np.unique(x).shape[0]
-    return len(set(x))
-
-
-def data_spec(
-    X: Dataset | DataLoader | torch.Tensor | np.ndarray | ad.AnnData,
-    y: torch.Tensor | np.ndarray | None | pd.DataFrame = None,
-) -> tuple:
-    """Return a tuple of (n_features, n_classes) for the given dataset
-    If multitask, the second element is a tuple of length n_tasks
-    """
-
-    def _for_dataset(data):
-        """_for_dataset.
-
-        Parameters
-        ----------
-        data :
-            data
-        """
-        x, y = data[:]
-        if is_atomic(y) or y.shape[1] == 1:
-            n_classes = n_uniques(y)
-        else:
-            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
-        return x.shape[1], n_classes
-
-    if (
-        isinstance(y, tuple)
-        and isinstance(next(iter(y)), str)
-        and isinstance(X, ad.AnnData)
-    ):
-        y = X.obs.loc[:, y]
-    if isinstance(X, ad.AnnData):
-        X = ut.xarray_if_sparse(X)
-
-    if isinstance(X, Dataset):
-        return _for_dataset(X)
-    elif isinstance(X, DataLoader):
-        return _for_dataset(X.dataset)
-    elif isinstance(y, pd.DataFrame):
-        return X.shape[1], tuple([len(y[s].unique()) for s in y])
-    elif isinstance(y, np.ndarray) and len(y.shape) > 1:
-        return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
-    return X.shape[1], len(set(y))
 
 
 # * Regularization

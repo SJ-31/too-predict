@@ -25,7 +25,7 @@ def logistic_hook(_m, _input, output) -> Tensor:
     return nn.functional.softmax(output, dim=1)
 
 
-class DummyLR(d_ut.Module):
+class DummyLR(d_ut.MultiModule):
     def __init__(self, n_classes_per_task, l2=1) -> None:
         super().__init__()
         self.linear: nn.LazyLinear = nn.LazyLinear(out_features=n_classes_per_task)

@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as schedule
 import torchmetrics.functional.classification as tmet
 from sortedcontainers import SortedList
-from too_predict.deep.torch_utils import EarlyStopper, Module, tensor_cols_to_float
+from too_predict.deep.torch_utils import EarlyStopper, tensor_cols_to_float
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
@@ -94,7 +94,7 @@ class Trainer:
 
     def __init__(
         self,
-        model: Module,
+        model: nn.Module,
         optimizer: Optimizer | None = None,
         n_epochs: int = 1000,
         tol: float | None = None,
@@ -120,7 +120,7 @@ class Trainer:
         self._es: EarlyStopper | None = None
         self._at_batch_level: bool | int = at_batch_level
         self.scheduler: schedule.LRScheduler | None = None
-        self.model: Module = model
+        self.model: nn.Module = model
         self._avg_model: AverageModel | None = None
         self._avg_model_fn: Callable | None = None
         self._avg_mode: str | None = None
@@ -187,29 +187,28 @@ class Trainer:
 
     def _record(self, X, y, single_key: str, multi_key: list[str]) -> Tensor:
         """Record model's performance and optionally loss on X, y"""
-        self.model.eval()
-        y_pred = self.model.predict(X)
-        if self._train_keys:
-            score = torch.empty(len(self._train_keys))
-            for i, k in enumerate(multi_key):
-                s = self._evaluate(
-                    preds=y_pred[:, i],
-                    target=y[:, i],
+        with torch.no_grad():
+            y_pred = self.model.predict(X)
+            if self._train_keys:
+                score = torch.empty(len(self._train_keys))
+                for i, k in enumerate(multi_key):
+                    s = self._evaluate(
+                        preds=y_pred[:, i],
+                        target=y[:, i],
+                        task="multiclass",
+                        num_classes=self._n_classes[i],
+                    )
+                    self._metrics[k].append(s)
+                    score[i] = s
+            else:
+                score = self._evaluate(
+                    preds=y_pred,
+                    target=y,
                     task="multiclass",
-                    num_classes=self._n_classes[i],
+                    num_classes=self._n_classes[0],
                 )
-                self._metrics[k].append(s)
-                score[i] = s
-        else:
-            score = self._evaluate(
-                preds=y_pred,
-                target=y,
-                task="multiclass",
-                num_classes=self._n_classes[0],
-            )
-            self._metrics[single_key].append(score)
-        self.model.train()
-        return score
+                self._metrics[single_key].append(score)
+            return score
 
     def _should_record_batch(self) -> bool:
         """_should_record_batch.
@@ -267,7 +266,7 @@ class Trainer:
         Tensor | None
 
         """
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         out = self.model(train_x)
         loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=train_y)
         loss.backward()
