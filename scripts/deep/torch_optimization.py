@@ -26,6 +26,9 @@ REF, FEAT = ut.ref_feature_lists_internal()
 
 torch.set_default_dtype(torch.float32)
 
+if torch.cuda.is_available():
+    torch.set_default_device("cuda:0")
+
 
 def parse_args():
     import argparse
@@ -116,7 +119,7 @@ def choose_optimization(dct, adata) -> None:
         intermediate_out=cv_output,
         verbose=TEST != "",
         early_stop=EarlyStopper(patience=100, on_update=False, higher_better=True),
-        batch_size=32,
+        batch_size=1024,
     )
     study = searcher.run_study(
         study_name="optimizer_selection", directions=["maximize", "maximize"]

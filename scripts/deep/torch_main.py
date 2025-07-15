@@ -56,7 +56,7 @@ LABELS = ("Sample_Type", "tumor_type")
 
 TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": 10}
 EARLY_STOP: dict = {"patience": 40, "on_update": False, "higher_better": True}
-CV_KWARGS: dict = {"batch_size": 32, "n_splits": 5}
+CV_KWARGS: dict = {"batch_size": 1024, "n_splits": 5}
 N_REPEATS = 3
 OPTIMIZATION_KWARGS: dict = {"lr": 0.001}
 SCHEDULE_KWARGS: dict = {"patience": 40}
