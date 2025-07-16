@@ -420,12 +420,39 @@ class MultiModule(L.LightningModule):
         self._scheduler_fn: Callable | None = None
         self._scheduler_config: dict | None = None
 
+        # Cache results after iterations or validation for custom callbacks
+        self._cache: dict[str, tuple[bool, list]] = {
+            "train_loss": (False, []),
+            "val_acc": (False, []),
+            "val_loss": (False, []),
+            "test_loss": (False, []),
+            "train_acc": (False, []),
+        }
+
     def forward(self, X):
         raise NotImplementedError()
 
+    def set_cache(
+        self, value: Literal["train_loss", "val_acc", "val_loss", "train_acc"]
+    ):
+        if value not in self._cache:
+            raise ValueError(f"Value to cache must be one of {self._cache.keys()}")
+        self._cache[value] = (True, [])
+
+    def _try_cache_to(self, target: str, value: Tensor):
+        """Record ``value`` to the cache if it has been set for recording"""
+        if self._cache[target][0]:
+            self._cache[target][1].append(value.detach())
+
+    def cache_clear(self, target) -> None:
+        self._cache[target][1].clear()
+
     def _calc_accuracy(
-        self, output: Tensor | tuple[Tensor], y_true: Tensor, prefix: str
-    ) -> None:
+        self,
+        output: Tensor | tuple[Tensor],
+        y_true: Tensor,
+        prefix: str,
+    ) -> Tensor:
         if isinstance(output, tuple):
             preds: Tensor = torch.hstack(
                 [p.argmax(axis=1).reshape(-1, 1) for p in output]
@@ -441,6 +468,7 @@ class MultiModule(L.LightningModule):
         else:
             acc = self._accs[0](preds, y_true)
             self.log(f"{prefix}_acc_step", acc)
+        return acc
 
     def predict_proba(self, X) -> Tensor | tuple:
         if isinstance(X, DataLoader):
@@ -457,7 +485,9 @@ class MultiModule(L.LightningModule):
         loss = self.criterion(y_pred=output, y_true=y)
         self.log("train_loss", loss)
         if self._record:
-            self._calc_accuracy(output=output, y_true=y, prefix="train")
+            train_acc = self._calc_accuracy(output=output, y_true=y, prefix="train")
+            self._try_cache_to("train_acc", train_acc)
+        self._try_cache_to("train_loss", loss)
         return loss
 
     def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:
@@ -479,15 +509,17 @@ class MultiModule(L.LightningModule):
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y)
         self.log(log_to, loss)
+        self._try_cache_to(log_to, loss)
         if self._record:
             self._calc_accuracy(output=output, y_true=y, prefix=acc_prefix)
         return output
 
     def test_step(self, batch, batch_idx):
-        self._log_step("test_loss", "test", batch, batch_idx)
+        _test_acc = self._log_step("test_loss", "test", batch, batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        self._log_step("val_loss", "validation", batch, batch_idx)
+        val_acc = self._log_step("val_loss", "val", batch, batch_idx)
+        self._try_cache_to("val_acc", val_acc)
 
     def reset_parameters(self):
         raise NotImplementedError()
