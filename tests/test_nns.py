@@ -20,11 +20,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from lightning.pytorch.callbacks import DeviceStatsMonitor
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from pyhere import here
 from too_predict.deep.evaluation import multitask_acc, train_test_split_torch
 from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
-from too_predict.deep.trainer import Trainer
+from too_predict.deep.trainer import AverageModelL, Trainer
 from too_predict.imputer import Imputer
 from torch.utils.data import DataLoader
 
@@ -93,18 +94,23 @@ def test_lightning():
     model = d_nn.Disyak(n_features, n_classes_per_task=n_classes, record_metrics=True)
     trainer = L.Trainer(
         max_epochs=EPOCHS,
-        log_every_n_steps=2,
+        log_every_n_steps=1,
         enable_progress_bar=False,
         enable_checkpointing=False,
         callbacks=[
             EarlyStopping(
                 monitor="train_loss", patience=10, mode="min"
             ),  # If "min", lower is better
+            DeviceStatsMonitor(),
+            AverageModelL(model=model, mode="EMA", best_target="train_acc", n_best=5),
         ],
     )
+    model.set_cache("train_acc")
     trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=None)
     trainer.test(model=model, dataloaders=test_l)
     return model, trainer
 
 
-_, time = d_ut.timed(lambda: test_lightning())
+(model, trainer), time = d_ut.timed(lambda: test_lightning())
+print(model._cache)
+# trainer.fit(model=_[0])

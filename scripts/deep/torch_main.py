@@ -15,6 +15,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from pyhere import here
+from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.evaluation import cross_validate, holdout
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
@@ -96,10 +97,12 @@ def cross_val(adata: ad.AnnData):
         model.register_optimizers(opt_fn=opt_fn)
         model.register_schedulers(scheduler_fn=get_scheduler)
         kwargs = TRAIN_KWARGS.copy()
-        kwargs["callbacks"] = [EarlyStopping(**EARLY_STOP)]
+        kwargs["callbacks"] = [
+            EarlyStopping(**EARLY_STOP),
+            AverageBest(n_best=5, target="val_acc"),
+        ]
         kwargs["default_root_dir"] = outdir
         trainer = L.Trainer(**kwargs)
-        # trainer.register_average(mode="best_epochs", n_best=5)
         if pars.get("cv", True):
             dfs = []
             for i in range(N_REPEATS):

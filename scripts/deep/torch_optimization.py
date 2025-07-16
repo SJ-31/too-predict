@@ -11,7 +11,6 @@ from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS
 from too_predict.deep.logistic import MultiLevel
 from too_predict.deep.optimization import DlOptimizer
-from too_predict.deep.torch_utils import EarlyStopper
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer

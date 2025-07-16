@@ -3,66 +3,18 @@
 from collections.abc import Callable, Sequence
 from copy import deepcopy
 from functools import reduce
-from typing import Literal, override
+from typing import Literal
 
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim.lr_scheduler as schedule
 import torchmetrics.functional.classification as tmet
-from sortedcontainers import SortedList
 from too_predict.deep.torch_utils import EarlyStopper, MultiModule, tensor_cols_to_float
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
 from torch.utils.data import DataLoader, Dataset
-
-# * Utilities
-
-
-class LargestCollection:
-    """A fixed length collection of objects that only keeps the largest values given to it
-    Is sorted
-    """
-
-    def __init__(self, length: int, key: Callable | None = None) -> None:
-        self._data: SortedList = SortedList(key=key)
-        self._key: Callable = key if key is not None else lambda x: x
-        self._length: int = length
-
-    @override
-    def __repr__(self) -> str:
-        return repr(self._data)
-
-    def __getitem__(self, x: int):
-        return self._data[x]
-
-    def __iter__(self):
-        return iter(self._data)
-
-    def would_push(self, item) -> bool:
-        "Return True if item can be successfully added into the collection, but do not add it"
-        if len(self._data) < self._length:
-            return True
-        return self._key(item) > self._key(self.min())
-
-    def min(self):
-        return self._data[0]
-
-    def max(self):
-        return self._data[-1]
-
-    def push(self, item) -> bool:
-        "Returns True if `item` was successfully pushed into the collection"
-        if len(self._data) < self._length:
-            self._data.add(item)
-            return True
-        if item < self._data[0]:
-            return False
-        _ = self._data.pop(0)
-        self._data.add(item)
-        return True
-
 
 # * Trainer
 
