@@ -7,6 +7,7 @@ log/
 .py.common
 dist/
 rust/target
+*lightning_logs
 src/too_predict/_rust_helpers*
 reports
 !reports/templates
