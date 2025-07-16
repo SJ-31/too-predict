@@ -184,7 +184,7 @@ class DlOptimizer(topt.BaseOptimizer):
             log_root.mkdir(exist_ok=True)
         trainer = L.Trainer(
             max_epochs=n_epochs,
-            enable_checkpointing=True,
+            enable_checkpointing=False,  # Do not change this
             callbacks=callbacks,
             default_root_dir=log_root,
         )

@@ -107,8 +107,14 @@ class AverageBest(L.Callback):
             parameters.append(p)
             scores.append(score)
         with torch.no_grad():
-            averaged = reduce(
-                lambda x, y: {k: (y[k] + x[k]) / 2 for k in x.keys()},
-                parameters,
-            )
-            pl_module.load_state_dict(averaged)
+            try:
+                averaged = reduce(
+                    lambda x, y: {k: (y[k] + x[k]) / 2 for k in x.keys()},
+                    parameters,
+                )
+                pl_module.load_state_dict(averaged)
+            except RuntimeError:
+                print(
+                    "WARNING: AverageBest failed to take average, reverting to original weights..."
+                )
+                pass

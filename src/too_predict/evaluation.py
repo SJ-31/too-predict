@@ -24,8 +24,8 @@ def curve_multiclass(
     second: str,
     true_labels,
     pred_proba: pd.DataFrame | np.ndarray,
-    s_fns: dict[str, Callable] = None,
-    s_fn_all_classes: Callable = None,
+    s_fns: dict[str, Callable] | None = None,
+    s_fn_all_classes: Callable | None = None,
     s_fn_all_classes_name: str = "",
     first_x: bool = True,
     classes=None,
@@ -158,7 +158,7 @@ def precision_recall_multiclass(
 
 
 def classification_report2df(
-    report: dict, fold: int = None
+    report: dict, fold: int | None = None
 ) -> tuple[pd.DataFrame, float]:
     """Convert scikit-learn classification report (dict format) into a long dataframe
     :return: tuple[datframe of the major metrics, accuracy]
@@ -428,12 +428,12 @@ def holdout(
             x_train = transformer.fit_transform(x_train)
             x_test = transformer.fit_transform(x_test)
         model.fit(x_train, y=label_col)
+        y_true = x_test.obs[label_col]
         if not minimal:
             proba = model.predict_proba(x_test)
-            y_true = x_test.obs[label_col]
             y_uniques = y_true.unique()
             res: dict = get_all_metrics(
-                y_true=y_true, score=proba, classes=model.classes_
+                true=y_true, score=proba, classes=model.classes_
             )
             for k, v in res.items():
                 if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
