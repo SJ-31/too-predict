@@ -9,6 +9,7 @@ import torch
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS
+from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.logistic import MultiLevel
 from too_predict.deep.optimization import DlOptimizer
 from too_predict.filter import Filter
@@ -83,7 +84,6 @@ def choose_optimization(dct, adata) -> None:
         "weight_decay": [0, 0.01, 0.001, 0.0001],  # Adam, SGD
         "lr": 0.001,  # All optimizers
         "momentum": [0, 0.9],  # SGD
-        "average_model_kwargs": [{"mode": "best_epochs", "n_best": 5}, None],
         # Extras
         "transformer": Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False),
         # Try without filtering first
@@ -118,7 +118,10 @@ def choose_optimization(dct, adata) -> None:
         save_intermediate=True,
         intermediate_out=cv_output,
         verbose=TEST != "",
-        early_stop=EarlyStopping(monitor="val_loss", patience=40, mode="min"),
+        callbacks=[
+            EarlyStopping(monitor="val_loss", patience=40, mode="min"),
+            AverageBest(n_best=10, target="val_acc"),
+        ],
         batch_size=1024,
     )
     study = searcher.run_study(

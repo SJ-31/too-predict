@@ -175,10 +175,7 @@ class DlOptimizer(topt.BaseOptimizer):
         module.register_optimizers(opt_fn=optimizer_fn)
         module.register_schedulers(scheduler_fn=scheduler_fn)
         callbacks = []
-        if es := kwargs.get("early_stop"):
-            callbacks.append(es)
-        # TODO: register the averaging function too
-
+        callbacks.extend(kwargs.get("callbacks", []))
         log_root: Path | None = kwargs.get("intermediate_out", None)
         if log_root is not None:
             log_root = log_root.joinpath(str(trial.number))
