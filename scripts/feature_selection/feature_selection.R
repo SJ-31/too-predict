@@ -59,6 +59,8 @@ if (args$recode_go) {
   adata <- utils$recode_to_go(adata)
 }
 
+adata$obs$tumor_type <- str_replace_all(adata$obs$tumor_type, "-", "_")
+adata$obs$Sample_Type <- str_replace_all(adata$obs$Sample_Type, "-", "_")
 data <- AnnData2SCE(adata)
 rm(utils)
 
