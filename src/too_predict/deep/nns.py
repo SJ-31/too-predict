@@ -39,7 +39,12 @@ class Disyak(d_ut.MultiModule):
         **kwargs,
     ) -> None:
         super().__init__(
-            in_features, n_classes_per_task, task_weights, l1_pars, l2_pars, **kwargs
+            in_features=in_features,
+            n_classes_per_task=n_classes_per_task,
+            task_weights=task_weights,
+            l1_pars=l1_pars,
+            l2_pars=l2_pars,
+            **kwargs,
         )
         if n_hidden is None:
             n_hidden = in_features
