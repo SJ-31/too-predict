@@ -5,6 +5,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import anndata as ad
+import lightning as L
 import numpy as np
 import pandas as pd
 import sklearn.model_selection as ms
@@ -14,7 +15,6 @@ import too_predict.utils as ut
 import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
-from too_predict.deep.trainer import Trainer
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from xgboost import XGBClassifier
@@ -159,7 +159,8 @@ def train_test_split_torch(
 
 
 def holdout(
-    trainer: Trainer,
+    trainer: L.Trainer,
+    model: L.LightningModule,
     adata: ad.AnnData,
     to_encode: tuple[str],
     n_classes: Sequence[int],
@@ -211,8 +212,8 @@ def holdout(
             print(
                 f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
             )
-        v_dset = (
-            d_ut.AnnDataset(v_adata, to_encode=to_encode)
+        v_loader = (
+            DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode))
             if isinstance(v_adata, ad.AnnData)
             else None
         )
@@ -232,10 +233,10 @@ def holdout(
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
         x_test_tensor, y_true = test_dset[:]
 
-        trainer(train_l, n_classes=n_classes, validation=v_dset)
+        trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
 
         if not minimal:
-            proba = trainer.model.predict_proba(x_test_tensor)
+            proba = model.predict_proba(x_test_tensor)
             y_true = test_dset.decode(y_true)
             res: dict = multitask_all_metrics(
                 y_true=y_true,
@@ -244,7 +245,7 @@ def holdout(
                 n_classes=trainer._n_classes,
             )
             return res
-        pred = trainer.model.predict(x_test_tensor)
+        pred = trainer.predict_step(x_test_tensor)
 
         return multitask_acc(
             y_true=y_true,
@@ -276,13 +277,12 @@ def holdout(
 
 
 def cross_validate(
-    trainer: Trainer,
+    trainer: L.Trainer,
+    model: L.LightningModule,
     adset: d_ut.AnnDataset,
     n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,
     n_splits: int = 5,
-    save_intermediate: bool = False,
-    intermediate_out: Path | None = None,
     validation: Dataset | None = None,
     verbose: bool = False,
     **kwargs,
@@ -304,16 +304,13 @@ def cross_validate(
             print(f"fold {fold} started")
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
         test: Dataset = Subset(adset, test_idx)
+        val_loader = DataLoader(validation)
 
         y_true = test[:][1]
 
-        cur_fold = trainer(train, validation=validation, n_classes=n_classes)
-        if save_intermediate and intermediate_out:
-            cur_fold.to_csv(
-                intermediate_out.joinpath(f"fold_{fold}_training.csv"), index=False
-            )
+        trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
 
-        y_pred = trainer.model.predict(test[:][0])
+        y_pred = model.predict_step(test[:])
         acc = multitask_acc(
             y_true=y_true, predictions=y_pred, task_names=tasks, n_classes=n_classes
         )
