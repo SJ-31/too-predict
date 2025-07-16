@@ -72,6 +72,7 @@ class MtcLr(d_ut.MultiModule):
         lmbda: float = 5.0,
         l2: float = 1,
         initial_fit: dict | None = None,
+        **kwargs,
     ) -> None:
         super().__init__(
             in_features=in_features,
@@ -79,6 +80,7 @@ class MtcLr(d_ut.MultiModule):
             task_weights=task_weights,
             l2_pars=None,
             l1_pars=None,
+            **kwargs,
         )
         self.lmbda: float = lmbda
         self.l2: float = l2
@@ -202,6 +204,7 @@ class MultiLevel(d_ut.MultiModule):
         lmbda_1: float = 1.0,
         lmbda_2: float = 1.0,
         bias: bool = True,
+        **kwargs,
     ) -> None:
         super().__init__(
             in_features=in_features,
@@ -209,6 +212,7 @@ class MultiLevel(d_ut.MultiModule):
             task_weights=task_weights,
             l1_pars=None,
             l2_pars=None,
+            **kwargs,
         )
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
@@ -265,13 +269,3 @@ class MultiLevel(d_ut.MultiModule):
             total_loss += reg_theta + reg_gamma
 
         return total_loss
-
-
-# class MultiLevelSkorch(skorch.NeuralNetClassifier):
-#     @classmethod
-#     def new(cls, **kwargs):
-#         return cls(module=MultiLevel, **kwargs)
-
-#     @override
-#     def get_loss(self, y_pred, y_true):
-#         return MultiLevel.criterion(self, y_pred=y_pred, y_true=y_true)
