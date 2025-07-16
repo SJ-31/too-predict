@@ -404,6 +404,10 @@ class MultiModule(L.LightningModule):
         else:
             self._task_names = task_names
 
+        self._optimizer_fn: Callable | None = None
+        self._scheduler_fn: Callable | None = None
+        self._scheduler_config: dict | None = None
+
     def forward(self, X):
         raise NotImplementedError()
 
@@ -439,6 +443,7 @@ class MultiModule(L.LightningModule):
         x, y = batch
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y)
+        self.log("train_loss", loss)
         if self._record:
             self._calc_accuracy(output=output, y_true=y, prefix="train")
         return loss
@@ -475,8 +480,51 @@ class MultiModule(L.LightningModule):
     def reset_parameters(self):
         raise NotImplementedError()
 
+    def register_optimizers(self, opt_fn: Callable):
+        """Specify the optimizer to use for this model
+
+        Parameters
+        ----------
+        opt_fn : Callable
+            returns a Pytorch-compatible optimizer when called with named_parameters()
+        """
+        self._optimizer_fn = opt_fn
+
+    def register_schedulers(
+        self,
+        scheduler_fn: Callable | None = None,
+        lr_scheduler_config: None | dict = None,
+    ):
+        """Register a scheduler and/or scheduler config
+
+        Parameters
+        ----------
+        scheduler_fn : Callable
+            Function returning a Pytorch-compatible scheduler, taking the optimizer as
+            the argument
+        lr_scheduler_config : dict
+            lr_scheduler_config as defined by Pytorch lightning
+        """
+        self._scheduler_fn = scheduler_fn
+        self._scheduler_config = lr_scheduler_config
+
     def configure_optimizers(self) -> Optimizer:
-        return optim.Adam(self.named_parameters())
+        if self._optimizer_fn is not None:
+            optimizer = self._optimizer_fn(self.named_parameters())
+        else:
+            optimizer = optim.Adam(self.named_parameters(), lr=0.001)
+        lr_scheduler_config = (
+            self._scheduler_config.copy()
+            if self._scheduler_config is not None
+            else {"monitor": "train_loss"}
+        )
+        if self._scheduler_fn is None:
+            lr_scheduler_config["scheduler"] = schedule.ReduceLROnPlateau(
+                optimizer=optimizer, patience=40
+            )
+        else:
+            lr_scheduler_config["scheduler"] = self._scheduler_fn(optimizer)
+        return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
 
     def criterion(self, y_pred, y_true):
         """criterion.
