@@ -83,11 +83,13 @@ class AverageBest(L.Callback):
         self._target: Literal["train_loss", "val_acc", "val_loss", "train_acc"] = target
 
     def _get_best_score_and_push(self, module: MultiModule, target: str) -> None:
-        score = module._cache[target][1][-1]
-        if self._best_epochs.would_push((score, None)):  # Make sure
-            # copying is necessary before doing so
-            self._best_epochs.push((score, deepcopy(module.state_dict())))
-        module.cache_clear(target)
+        cached = module._cache[target][1]
+        if cached:
+            score = module._cache[target][1][-1]
+            if self._best_epochs.would_push((score, None)):  # Make sure
+                # copying is necessary before doing so
+                self._best_epochs.push((score, deepcopy(module.state_dict())))
+            module.cache_clear(target)
 
     def on_train_epoch_end(self, trainer, pl_module):
         self._get_best_score_and_push(pl_module, self._target)

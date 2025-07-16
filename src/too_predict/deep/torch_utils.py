@@ -424,10 +424,11 @@ class MultiModule(L.LightningModule):
         # Cache results after iterations or validation for custom callbacks
         self._cache: dict[str, tuple[bool, list]] = {
             "train_loss": (False, []),
+            "train_acc": (False, []),
             "val_acc": (False, []),
             "val_loss": (False, []),
             "test_loss": (False, []),
-            "train_acc": (False, []),
+            "test_acc": (False, []),
         }
 
     def forward(self, X):
@@ -440,7 +441,7 @@ class MultiModule(L.LightningModule):
             raise ValueError(f"Value to cache must be one of {self._cache.keys()}")
         self._cache[value] = (True, [])
 
-    def _try_cache_to(self, target: str, value: Tensor):
+    def _try_cache_to(self, target: str, value: Tensor) -> None:
         """Record ``value`` to the cache if it has been set for recording"""
         if self._cache[target][0]:
             self._cache[target][1].append(value.detach())
@@ -453,7 +454,7 @@ class MultiModule(L.LightningModule):
         output: Tensor | tuple[Tensor],
         y_true: Tensor,
         prefix: str,
-    ) -> Tensor:
+    ) -> None:
         if isinstance(output, tuple):
             preds: Tensor = torch.hstack(
                 [p.argmax(axis=1).reshape(-1, 1) for p in output]
@@ -461,15 +462,18 @@ class MultiModule(L.LightningModule):
         else:
             preds = output.argmax(axis=1)
         if isinstance(output, tuple):
+            accs = []
             for i, (name, y_true, pred) in enumerate(
                 zip(self._task_names, iter_cols(y_true), iter_cols(preds))
             ):
                 acc = self._accs[i](pred, y_true)
+                accs.append(acc)
                 self.log(f"{prefix}_acc_{name}", acc)
+            self._try_cache_to(f"{prefix}_acc", torch.tensor(accs).mean())
         else:
             acc = self._accs[0](preds, y_true)
             self.log(f"{prefix}_acc_step", acc)
-        return acc
+            self._try_cache_to(f"{prefix}_acc", acc)
 
     def predict_proba(self, X) -> Tensor | tuple:
         if isinstance(X, DataLoader):
@@ -486,8 +490,7 @@ class MultiModule(L.LightningModule):
         loss = self.criterion(y_pred=output, y_true=y)
         self.log("train_loss", loss)
         if self._record:
-            train_acc = self._calc_accuracy(output=output, y_true=y, prefix="train")
-            self._try_cache_to("train_acc", train_acc)
+            self._calc_accuracy(output=output, y_true=y, prefix="train")
         self._try_cache_to("train_loss", loss)
         return loss
 
@@ -516,11 +519,10 @@ class MultiModule(L.LightningModule):
         return output
 
     def test_step(self, batch, batch_idx):
-        _test_acc = self._log_step("test_loss", "test", batch, batch_idx)
+        _ = self._log_step("test_loss", "test", batch, batch_idx)
 
     def validation_step(self, batch, batch_idx):
-        val_acc = self._log_step("val_loss", "val", batch, batch_idx)
-        self._try_cache_to("val_acc", val_acc)
+        _ = self._log_step("val_loss", "val", batch, batch_idx)
 
     def reset_parameters(self):
         raise NotImplementedError()

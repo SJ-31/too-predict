@@ -174,6 +174,8 @@ class DlOptimizer(topt.BaseOptimizer):
         )
         module.register_optimizers(opt_fn=optimizer_fn)
         module.register_schedulers(scheduler_fn=scheduler_fn)
+        for cache in kwargs.get("set_cache", []):
+            module.set_cache(cache)
         callbacks = []
         callbacks.extend(kwargs.get("callbacks", []))
         log_root: Path | None = kwargs.get("intermediate_out", None)
