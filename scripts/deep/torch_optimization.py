@@ -6,6 +6,7 @@ import joblib
 import pandas as pd
 import too_predict.utils as ut
 import torch
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from pyhere import here
 from too_predict._train_utils import ADDITIONAL_SPLITS
 from too_predict.deep.logistic import MultiLevel
@@ -118,7 +119,7 @@ def choose_optimization(dct, adata) -> None:
         save_intermediate=True,
         intermediate_out=cv_output,
         verbose=TEST != "",
-        early_stop=EarlyStopper(patience=100, on_update=False, higher_better=True),
+        early_stop=EarlyStopping(monitor="val_loss", patience=40, mode="min"),
         batch_size=1024,
     )
     study = searcher.run_study(

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import anndata as ad
+import lightning as L
 import pandas as pd
 import too_predict._train_utils as tt
 import too_predict.deep.logistic as d_log
@@ -10,12 +11,11 @@ import too_predict.deep.nns as d_nn
 import too_predict.deep.torch_utils as d_ut
 import too_predict.utils as ut
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from pyhere import here
 from too_predict.deep.evaluation import cross_validate, holdout
-from too_predict.deep.trainer import Trainer
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
@@ -54,7 +54,7 @@ FILTER: Filter = Filter(
 )
 LABELS = ("Sample_Type", "tumor_type")
 
-TRAIN_KWARGS: dict = {"n_epochs": 1000, "at_batch_level": 10}
+TRAIN_KWARGS: dict = {"max_epochs": 1000}
 EARLY_STOP: dict = {"patience": 40, "on_update": False, "higher_better": True}
 CV_KWARGS: dict = {"batch_size": 1024, "n_splits": 5}
 N_REPEATS = 3
@@ -62,8 +62,8 @@ OPTIMIZATION_KWARGS: dict = {"lr": 0.001}
 SCHEDULE_KWARGS: dict = {"patience": 40}
 
 
-def get_optimizer(model: nn.Module):
-    return optim.Adam(model.named_parameters(), **OPTIMIZATION_KWARGS)
+def opt_fn(pars):
+    return optim.Adam(pars, **OPTIMIZATION_KWARGS)
 
 
 def get_scheduler(optimizer):
@@ -93,23 +93,20 @@ def cross_val(adata: ad.AnnData):
         outdir = OUTDIR.joinpath(name)
         outdir.mkdir(exist_ok=True)
         model = m(in_features=n_features, n_classes_per_task=n_classes)
-        optimizer = get_optimizer(model)
-        scheduler = get_scheduler(optimizer)
-        trainer = Trainer(
-            model,
-            **TRAIN_KWARGS,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            record_test_score=True,
-        )
-        trainer.register_early_stop(d_ut.EarlyStopper(**EARLY_STOP))
-        trainer.register_average(mode="best_epochs", n_best=5)
+        model.register_optimizers(opt_fn=opt_fn)
+        model.register_schedulers(scheduler_fn=get_scheduler)
+        kwargs = TRAIN_KWARGS.copy()
+        kwargs["callbacks"] = [EarlyStopping(**EARLY_STOP)]
+        kwargs["default_root_dir"] = outdir
+        trainer = L.Trainer(**kwargs)
+        # trainer.register_average(mode="best_epochs", n_best=5)
         if pars.get("cv", True):
             dfs = []
             for i in range(N_REPEATS):
                 cv: pd.DataFrame = cross_validate(
-                    trainer,
-                    d_ut.AnnDataset(train, to_encode=LABELS),
+                    model=model,
+                    trainer=trainer,
+                    adset=d_ut.AnnDataset(train, to_encode=LABELS),
                     n_classes=n_classes,
                     intermediate_out=outdir,
                     save_intermediate=True,
@@ -124,8 +121,9 @@ def cross_val(adata: ad.AnnData):
                 hr_dir = outdir.joinpath(f"additional_splits_{i}")
                 hr_dir.mkdir(exist_ok=True)
                 _ = holdout(
-                    trainer,
-                    adata,
+                    model=model,
+                    trainer=trainer,
+                    adata=adata,
                     n_classes=n_classes,
                     split_fns=tt.ADDITIONAL_SPLITS,
                     to_encode=LABELS,
@@ -142,7 +140,7 @@ if __name__ == "__main__":
         adata = ut.training_data_internal_test(minimal=True)
         OUTDIR = OUTDIR.joinpath("test")
         OUTDIR.mkdir(exist_ok=True, parents=True)
-        TRAIN_KWARGS["n_epochs"] = 100
+        TRAIN_KWARGS["max_epochs"] = 100
     else:
         adata = ut.training_data_internal()
     adata = TRANSFORM.fit_transform(adata)

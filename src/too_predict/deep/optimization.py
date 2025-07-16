@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import override
 
 import anndata as ad
+import lightning as L
 import numpy as np
 import optuna
 import optuna.artifacts as oa
@@ -171,23 +172,23 @@ class DlOptimizer(topt.BaseOptimizer):
         module: d_ut.MultiModule = module_fn(
             in_features=n_features, n_classes_per_task=n_classes
         )
-        optimizer = optimizer_fn(module.named_parameters())
-        scheduler = scheduler_fn(optimizer)
-        trainer = Trainer(
-            model=module,
-            optimizer=optimizer,
-            scheduler=scheduler,
-            n_epochs=n_epochs,
-            tol=8,
-            record_train_score=True,
-            record_test_score=True,
-            output_names=self.label_col,
-            at_batch_level=kwargs.get("at_batch_level", False),
-        )
+        module.register_optimizers(opt_fn=optimizer_fn)
+        module.register_schedulers(scheduler_fn=scheduler_fn)
+        callbacks = []
         if es := kwargs.get("early_stop"):
-            trainer.register_early_stop(es)
-        if avg_kwargs := setup._suggest_param_or_default("average_model_kwargs"):
-            trainer.register_average(**avg_kwargs)
+            callbacks.append(es)
+        # TODO: register the averaging function too
+
+        log_root: Path | None = kwargs.get("intermediate_out", None)
+        if log_root is not None:
+            log_root = log_root.joinpath(str(trial.number))
+            log_root.mkdir(exist_ok=True)
+        trainer = L.Trainer(
+            max_epochs=n_epochs,
+            enable_checkpointing=True,
+            callbacks=callbacks,
+            default_root_dir=log_root,
+        )
         if filter != -1:
             adata = filter.fit_transform(adata)
         if transformer != -1:
@@ -206,25 +207,19 @@ class DlOptimizer(topt.BaseOptimizer):
                 verbose=False,
             )
             vals.append(np.mean(result.values()))
-
         if do_cv:
-            cv_path: Path | None = kwargs.get("intermediate_out", None)
-            if cv_path is not None:
-                cv_path = cv_path.joinpath(str(trial.number))
-                cv_path.mkdir(exist_ok=True)
             cv_results = cross_validate(
+                model=module,
                 trainer=trainer,
                 adset=d_ut.AnnDataset(train, to_encode=self.label_col),
                 validation=d_ut.AnnDataset(test, to_encode=self.label_col),
                 n_classes=n_classes,
-                save_intermediate=kwargs.get("save_intermediate", False),
-                intermediate_out=cv_path,
                 n_splits=cv_splits,
                 verbose=kwargs.get("verbose", False),
-                batch_size=kwargs.get("batch_size", 32),
+                batch_size=kwargs.get("batch_size", 512),
             )
-            if cv_path is not None:
-                cv_results.to_csv(cv_path.joinpath("fold_summary.csv"), index=False)
+            if log_root is not None:
+                cv_results.to_csv(log_root.joinpath("fold_summary.csv"), index=False)
             vals.append(np.mean(cv_results.values[:, 1:]))
         mean_accs = tuple(np.mean(cv_results.loc[:, label]) for label in self.label_col)
         return mean_accs
