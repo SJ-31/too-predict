@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from collections.abc import Iterable, Sequence
 from typing import Callable, Literal, override
 
@@ -26,14 +27,25 @@ from torchmetrics.classification import Accuracy
 # * Utility functions
 
 
-def timed(fn):
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
+def timed(fn, verbose: bool = True):
+    if torch.cuda.is_available():
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        result = fn()
+        end.record()
+        torch.cuda.synchronize()
+        t_taken = start.elapsed_time(end) / 1000
+        if verbose:
+            print(f"Time taken: {t_taken}")
+        return result, t_taken
+    start = time.time()
     result = fn()
-    end.record()
-    torch.cuda.synchronize()
-    return result, start.elapsed_time(end) / 1000
+    end = time.time()
+    t_taken = f"{end - start:.4f}"
+    if verbose:
+        print(f"Time taken: {t_taken}")
+    return result, t_taken
 
 
 def tensor_cols_to_float(df: pd.DataFrame) -> pd.DataFrame:

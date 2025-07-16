@@ -56,7 +56,7 @@ def multitask_acc(
     for i, (task, y, pred) in enumerate(zip(task_names, y_iter, pred_iter)):
         result[task] = tmet.accuracy(
             preds=pred, target=y, num_classes=n_classes[i], task="multiclass"
-        )
+        ).item()
     return result
 
 
