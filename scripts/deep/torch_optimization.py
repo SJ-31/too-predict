@@ -118,6 +118,7 @@ def choose_optimization(dct, adata) -> None:
         save_intermediate=True,
         intermediate_out=cv_output,
         verbose=TEST != "",
+        set_cache=["val_acc"],
         callbacks=[
             EarlyStopping(monitor="val_loss", patience=40, mode="min"),
             AverageBest(n_best=10, target="val_acc"),

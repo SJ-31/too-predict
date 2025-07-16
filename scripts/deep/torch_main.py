@@ -97,6 +97,7 @@ def cross_val(adata: ad.AnnData):
         model.register_optimizers(opt_fn=opt_fn)
         model.register_schedulers(scheduler_fn=get_scheduler)
         kwargs = TRAIN_KWARGS.copy()
+        model.set_cache("val_acc")
         kwargs["callbacks"] = [
             EarlyStopping(**EARLY_STOP),
             AverageBest(n_best=5, target="val_acc"),
@@ -111,8 +112,6 @@ def cross_val(adata: ad.AnnData):
                     trainer=trainer,
                     adset=d_ut.AnnDataset(train, to_encode=LABELS),
                     n_classes=n_classes,
-                    intermediate_out=outdir,
-                    save_intermediate=True,
                     validation=d_ut.AnnDataset(valid, to_encode=LABELS),
                     **CV_KWARGS,
                 )
