@@ -11,7 +11,7 @@ import torch.nn as nn
 import torch.optim.lr_scheduler as schedule
 import torchmetrics.functional.classification as tmet
 from sortedcontainers import SortedList
-from too_predict.deep.torch_utils import EarlyStopper, tensor_cols_to_float
+from too_predict.deep.torch_utils import EarlyStopper, MultiModule, tensor_cols_to_float
 from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
@@ -94,7 +94,7 @@ class Trainer:
 
     def __init__(
         self,
-        model: nn.Module,
+        model: MultiModule,
         optimizer: Optimizer | None = None,
         n_epochs: int = 1000,
         tol: float | None = None,
@@ -185,10 +185,11 @@ class Trainer:
                     self._test_keys.append(key)
                     self._metrics[key] = []
 
-    def _record(self, X, y, single_key: str, multi_key: list[str]) -> Tensor:
+    def _record(self, batch, single_key: str, multi_key: list[str]) -> Tensor:
         """Record model's performance and optionally loss on X, y"""
+        _, y = batch
         with torch.no_grad():
-            y_pred = self.model.predict(X)
+            y_pred = self.model.predict_step(batch, None)
             if self._train_keys:
                 score = torch.empty(len(self._train_keys))
                 for i, k in enumerate(multi_key):
@@ -231,10 +232,8 @@ class Trainer:
 
     def _train_minibatch(
         self,
-        train_x: Tensor,
-        train_y: Tensor,
-        vx: Tensor,
-        vy: Tensor,
+        batch,
+        v_batch,
         validate: bool,
         epoch: int,
         iter: int,
@@ -244,14 +243,10 @@ class Trainer:
 
         Parameters
         ----------
-        train_x : Tensor
-            train_x
-        train_y : Tensor
-            train_y
-        vx : Tensor
-            vx
-        vy : Tensor
-            vy
+        batch : tuple
+            Tuple of X, y obtained from iterating over data loader
+        v_batch : tuple
+            Validation batch
         validate : bool
             validate
         epoch : int
@@ -267,20 +262,19 @@ class Trainer:
 
         """
         self.optimizer.zero_grad(set_to_none=True)
-        out = self.model(train_x)
-        loss: torch.Tensor = self.model.criterion(y_pred=out, y_true=train_y)
+        loss = self.model.training_step(batch, iter)
         loss.backward()
 
         v_score: Tensor | None = None
         should_record_batch = self._should_record_batch()
         if self._record_train_score and should_record_batch:
             _ = self._record(
-                train_x,
-                train_y,
+                batch,
                 multi_key=self._train_keys,
                 single_key=self._train_score_key,
             )
         if validate and self._record_test_score and should_record_batch:
+            vx, vy = v_batch
             v_score = self._record(
                 vx,
                 vy,
@@ -350,23 +344,21 @@ class Trainer:
         elif validation is None and self._avg_mode == "best_epochs":
             raise ValueError("Need a validation set to record best epochs!")
 
+        valid_batch: tuple | None = None
         if validation is not None:
             validate: bool = True
-            valid_x, valid_y = validation[:]
+            valid_batch = validation[:]
         else:
-            valid_x, valid_y = None, None
             validate = False
 
         stop: bool = False
         n_updates: int = 0
         for i in range(self._n_epochs):
             losses = []
-            for j, (X, y) in enumerate(loader):
+            for j, train_batch in enumerate(loader):
                 v_score = self._train_minibatch(
-                    train_x=X,
-                    train_y=y,
-                    vx=valid_x,
-                    vy=valid_y,
+                    batch=train_batch,
+                    v_batch=valid_batch,
                     validate=validate,
                     losses=losses,
                     iter=j,
@@ -384,17 +376,14 @@ class Trainer:
                     self._metrics["epoch"].append(i)
                     self._metrics["avg_loss"].append(torch.mean(torch.tensor(losses)))
                 if self._record_train_score:
-                    x_train, y_train = loader.dataset[:]
                     self._record(
-                        x_train,
-                        y_train,
+                        batch=loader.dataset[:],
                         multi_key=self._train_keys,
                         single_key=self._train_score_key,
                     )
                 if validate and self._record_test_score:
                     v_score = self._record(
-                        valid_x,
-                        valid_y,
+                        batch=valid_batch,
                         multi_key=self._test_keys,
                         single_key=self._test_score_key,
                     )
@@ -429,8 +418,10 @@ class AverageModel:
         self._model: AveragedModel | None = None
         if mode == "EMA":
             self._model = AveragedModel(model, multi_avg_fn=get_ema_multi_avg_fn(decay))
-        elif mode == "best_epochs":
+        elif mode == "best_epochs" and isinstance(n_best, int):
             self._best_epochs = LargestCollection(length=n_best, key=lambda x: x[0])
+        elif mode == "best_epochs":
+            raise ValueError("If best_epochs, n_best must be given!")
         self.mode: Literal["EMA", "best_epochs"] = mode
 
     def update_parameters(

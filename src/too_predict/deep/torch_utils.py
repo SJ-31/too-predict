@@ -405,13 +405,13 @@ class MultiModule(L.LightningModule):
             )
         else:
             preds = output.argmax(axis=1)
-        if self._record and isinstance(preds, tuple):
+        if isinstance(output, tuple):
             for i, (name, y_true, pred) in enumerate(
                 zip(self._task_names, iter_cols(y_true), iter_cols(preds))
             ):
                 acc = self._accs[i](pred, y_true)
                 self.log(f"{prefix}_acc_{name}", acc)
-        elif self._record:
+        else:
             acc = self._accs[0](preds, y_true)
             self.log(f"{prefix}_acc_step", acc)
 
@@ -432,8 +432,11 @@ class MultiModule(L.LightningModule):
             self._calc_accuracy(output=output, y_true=y, prefix="train")
         return loss
 
-    def predict_step(self, batch, batch_idx, dataloader_idx=0) -> Tensor:
-        X, _ = batch
+    def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:
+        try:
+            X, _ = batch
+        except ValueError:
+            X = batch
         if isinstance(X, DataLoader):
             X = X.dataset[:][0]
         elif isinstance(X, Dataset):
