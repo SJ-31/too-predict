@@ -242,7 +242,7 @@ def holdout(
                 y_true=y_true,
                 scores=proba,
                 task_names=to_encode,
-                n_classes=trainer._n_classes,
+                n_classes=model._n_classes,
             )
             return res
         pred = trainer.predict_step(x_test_tensor)
@@ -250,7 +250,7 @@ def holdout(
         return multitask_acc(
             y_true=y_true,
             predictions=pred,
-            n_classes=trainer._n_classes,
+            n_classes=model._n_classes,
             task_names=to_encode,
         )
 
@@ -287,10 +287,6 @@ def cross_validate(
     verbose: bool = False,
     **kwargs,
 ) -> pd.DataFrame:
-    if validation is not None and trainer._record_test_score is False:
-        raise ValueError(
-            "trainer is not set to record test scores, yet a validation set was given"
-        )
     if verbose:
         print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
