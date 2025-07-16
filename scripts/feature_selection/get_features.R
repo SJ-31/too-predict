@@ -1,16 +1,17 @@
+reticulate::use_condaenv("too-predict")
+library(reticulate)
 library(ComplexHeatmap)
 library(here)
 library(glue)
 library(ggVennDiagram)
 library(tidyverse)
-library(reticulate)
-use_condaenv("too-predict")
 library(ggridges)
 
 source(here("src", "R", "utils.R"))
 source(here("src", "R", "plotting.R"))
 
 rs <- import("too_predict._rust_helpers")
+pybuiltins <- import_builtins()
 
 fs_dir <- here("data", "output", "feature_selection")
 fs_lists <- here(fs_dir, "feature_lists")
@@ -43,19 +44,31 @@ vtb <- vtb |>
   filter(pct_dropout_by_counts <= max_dropout_pct) |>
   filter(!is.na(GENEID)) |>
   mutate(value = variance)
-edger <- edger |> filter(pct_dropout_by_counts <= max_dropout_pct)
-edger$median_lfc <- apply(
-  select(edger, contains("logFC_tumor_type")),
-  1,
-  median
-)
-edger <- edger |>
-  relocate(median_lfc, .after = SEQNAME) |>
-  filter(!is.na(GENEID)) |>
-  mutate(value = abs(median_lfc))
+
+get_edger_median <- function(edger_tb) {
+  tb <- edger_tb |> filter(pct_dropout_by_counts <= max_dropout_pct)
+  tb$median_lfc <- apply(
+    select(tb, contains("logFC_tumor_type")),
+    1,
+    median
+  )
+  tb <- tb |>
+    relocate(median_lfc, .after = SEQNAME) |>
+    filter(!is.na(GENEID)) |>
+    mutate(value = abs(median_lfc))
+  tb
+}
 
 feature_tbs <- list(
-  edgeR_median_lfc = edger,
+  edgeR_median_lfc = get_edger_median(edger),
+  edgeR_median_lfc_primary = get_edger_median(read_tsv(here(
+    fs_dir,
+    "edgeR_top_types_primary"
+  ))),
+  edgeR_median_lfc_organoid = get_edger_median(read_tsv(here(
+    fs_dir,
+    "edgeR_top_types_organoid"
+  ))),
   variance = vtb,
   mutual_info = minfo
 )
@@ -79,7 +92,7 @@ feature_dist_plot <- ggplot(features_together, aes(x = value, color = metric)) +
   xlab("Scaled value")
 ggsave(here(fs_dir, "feature_dist.png"), feature_dist_plot, width = 10)
 
-n_features <- 500
+n_features <- 3000
 
 ## * Get features
 
@@ -99,42 +112,92 @@ top_n_features <- lapply(names(feature_tbs), \(x) {
   `names<-`(names(feature_tbs))
 feature_venn <- ggVennDiagram(top_n_features)
 
-# %%
+# Get half of the top features in organoid prediction and for primary
+half_each <- local({
+  p <- top_n_features$edgeR_median_lfc_primary |> head(n = 1500)
+  o <- top_n_features$edgeR_median_lfc_organoid |>
+    discard(\(x) x %in% top_n_features$edgeR_median_lfc_primary) |>
+    head(n = 1500)
+  c(p, o)
+})
+
+writeLines(
+  half_each,
+  here(fs_lists, glue("half_organoid_primary_feature_list_{n_features}.txt"))
+)
+
+
+## ** Visualize informative edgeR
+
+wanted <- list(
+  "edgeR_median_lfc" = "all",
+  "edgeR_median_lfc_primary" = "primary",
+  "edgeR_median_lfc_organoid" = "organoid"
+)
+
+edgeR_comparison <- lapply(
+  feature_tbs[names(wanted)],
+  \(x) {
+    arrange(x, desc(value)) |>
+      slice_head(n = 3000) |>
+      pluck("GENEID")
+  }
+) |>
+  `names<-`(wanted)
+edger_overlap <- ggVennDiagram(edgeR_comparison)
+ggsave(filename = here(fs_dir, "edger_overlap.png"), plot = edger_overlap)
 
 ## ** edgeR by type
 # Instead of aggregating by median lfc, will get disjoint feature sets for each tumor
 # type
-ttypes <- colnames(edger) |>
-  keep(\(x) str_detect(x, "logFC_tumor_type")) |>
-  str_remove("logFC_tumor_type")
+
 n_per <- 50
-seen <- c()
-pybuiltins <- import_builtins()
-type_overlap_list <- list()
-edger_type_flist <- lapply(ttypes, \(type) {
-  fc_col <- glue("logFC_tumor_type{type}")
-  sorted <- arrange(edger, desc(abs(!!as.symbol(fc_col)))) |>
-    mutate(from = type)
-  type_overlap_list[[type]] <<- pybuiltins$set(sorted$GENEID[1:n_per])
-  filtered <- sorted |>
-    filter(!GENEID %in% seen) |>
-    slice_head(n = n_per)
-  seen <<- c(seen, sorted$GENEID[1:n_per])
-  filtered
-}) |>
-  bind_rows()
-overlaps <- rs$pairwise_overlaps(type_overlap_list, FALSE) |>
-  lapply(\(x) {
-    tibble(first = x[[1]][[1]], second = x[[1]][[2]], overlap = x[[2]])
+get_edgeR_by_type <- function(edger_tb, n_per = 50) {
+  ttypes <- colnames(edger_tb) |>
+    keep(\(x) str_detect(x, "logFC_tumor_type")) |>
+    str_remove("logFC_tumor_type")
+  seen <- c()
+  type_overlap_list <- list()
+  edger_type_flist <- lapply(ttypes, \(type) {
+    fc_col <- glue("logFC_tumor_type{type}")
+    sorted <- arrange(edger_tb, desc(abs(!!as.symbol(fc_col)))) |>
+      mutate(from = type)
+    type_overlap_list[[type]] <<- pybuiltins$set(sorted$GENEID[1:n_per])
+    filtered <- sorted |>
+      filter(!GENEID %in% seen) |>
+      slice_head(n = n_per)
+    seen <<- c(seen, sorted$GENEID[1:n_per])
+    filtered
   }) |>
-  bind_rows() |>
-  arrange(desc(overlap))
+    bind_rows()
+  overlaps <- rs$pairwise_overlaps(type_overlap_list, FALSE) |>
+    lapply(\(x) {
+      tibble(first = x[[1]][[1]], second = x[[1]][[2]], overlap = x[[2]])
+    }) |>
+    bind_rows() |>
+    arrange(desc(overlap))
+  list(genes = edger_type_flist$GENEID, overlaps = overlaps)
+}
+
+all_by_type <- get_edgeR_by_type(edger_tb = edger, n_per = n_per)
 writeLines(
-  edger_type_flist$GENEID,
+  all_by_type$genes,
   here(fs_lists, glue("edgeR_{n_per}_per_type.txt"))
 )
 # [2025-05-19 Mon] 725 features in common with top 3000 median list
 #     417 in common with the top one thousand
+organoid_by_type <- get_edgeR_by_type(
+  edger_tb = feature_tbs$edgeR_median_lfc_organoid,
+  n_per = n_per
+)
+primary_by_type <- get_edgeR_by_type(
+  edger_tb = feature_tbs$edgeR_median_lfc_primary,
+  n_per = n_per
+)
+writeLines(
+  c(organoid_by_type$genes, primary_by_type$genes),
+  here(fs_lists, glue("edgeR_half_{n_per}_per_type.txt"))
+)
 
 ## ** edgeR by type, considering organoid differences
 # Like the above, but do not accept features that are heavily DE in an
