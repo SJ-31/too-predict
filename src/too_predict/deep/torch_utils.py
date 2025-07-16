@@ -396,23 +396,24 @@ class MultiModule(L.LightningModule):
 
         """
         super().__init__()
-        self.in_features: int = in_features
-        self.n_tasks: int = len(n_classes_per_task)
+        self._in_features: int = in_features
+        self._n_tasks: int = len(n_classes_per_task)
         self._record: bool = record_metrics
-        self.l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
-        self.l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
-        self.task_weights: Tensor = None
+        self._l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self._l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self._n_classes: Sequence[int] = n_classes_per_task
+        self._task_weights: Tensor = None
         if task_weights is not None and not isinstance(task_weights, Tensor):
-            self.task_weights = torch.tensor(task_weights)
+            self._task_weights = torch.tensor(task_weights)
         elif task_weights is not None:
-            self.task_weights = task_weights
+            self._task_weights = task_weights
         self._accs: list[Accuracy] | None = None
         if self._record:
             self._accs = [
                 Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task
             ]
         if task_names is None:
-            self._task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
+            self._task_names: Sequence[str] = [str(i) for i in range(self._n_tasks)]
         else:
             self._task_names = task_names
 
@@ -583,13 +584,13 @@ class MultiModule(L.LightningModule):
         raise NotImplementedError()
 
     def l1(self) -> Tensor | Literal[0]:
-        if self.l1_pars["lambda"] > 0:
-            return l1(self, self.l1_pars["exclude"])
+        if self._l1_pars["lambda"] > 0:
+            return l1(self, self._l1_pars["exclude"])
         return 0
 
     def l2(self) -> Tensor | Literal[0]:
-        if self.l2_pars["lambda"] > 0:
-            return l2(self, self.l2_pars["exclude"])
+        if self._l2_pars["lambda"] > 0:
+            return l2(self, self._l2_pars["exclude"])
         return 0
 
 
