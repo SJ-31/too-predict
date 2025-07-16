@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
+import torch.optim.lr_scheduler as schedule
 from too_predict.utils import if_none
 from torch import Tensor
 from torch.optim import Optimizer
@@ -23,6 +24,16 @@ from torch.utils.data import DataLoader, Dataset
 from torchmetrics.classification import Accuracy
 
 # * Utility functions
+
+
+def timed(fn):
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    result = fn()
+    end.record()
+    torch.cuda.synchronize()
+    return result, start.elapsed_time(end) / 1000
 
 
 def tensor_cols_to_float(df: pd.DataFrame) -> pd.DataFrame:
