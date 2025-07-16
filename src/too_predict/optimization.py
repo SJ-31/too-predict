@@ -153,6 +153,8 @@ class BaseOptimizer:
             "direction": "maximize",
             "load_if_exists": True,
         }
+        if "directions" in kwargs:
+            del defaults["direction"]
         if "storage" not in kwargs and self.journal_file is not None:
             kwargs["storage"] = oj.JournalStorage(
                 oj.JournalFileBackend(self.journal_file)
@@ -162,8 +164,11 @@ class BaseOptimizer:
             study = optuna.create_study(**defaults)
             study.optimize(self.objective)
         except ValueError:
-            del defaults["direction"]
-            del defaults["load_if_exists"]
+            defaults = {
+                k: v
+                for k, v in defaults.items()
+                if k not in {"direction", "directions", "load_if_exists"}
+            }
             study = optuna.load_study(**defaults)
         return study
 
