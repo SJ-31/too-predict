@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import Callable, Literal, override
 
 import anndata as ad
@@ -157,8 +158,10 @@ def data_spec(
         and isinstance(X, ad.AnnData)
     ):
         y = X.obs.loc[:, y]
-    if isinstance(X, ad.AnnData):
+    if isinstance(X, ad.AnnData) and not X.isbacked:
         X = ut.xarray_if_sparse(X)
+    elif isinstance(X, ad.AnnData):
+        X = X.X
 
     if isinstance(X, Dataset):
         return _for_dataset(X)
@@ -208,7 +211,14 @@ class AnnDataset(torch.utils.data.Dataset):
         None
 
         """
-        self.X: torch.Tensor = torch.tensor(ut.xarray_if_sparse(adata), device=device)
+        self.isbacked: bool = adata.isbacked
+        self.file: Path = adata.file
+        if not adata.isbacked:
+            self.X: torch.Tensor = torch.tensor(
+                ut.xarray_if_sparse(adata), device=device
+            )
+        else:
+            self.X = adata.X
         self.encoders: dict[str, sp.LabelEncoder] = {}
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
@@ -274,7 +284,10 @@ class AnnDataset(torch.utils.data.Dataset):
 
     @override
     def __getitem__(self, index):
-        return self.X[index, :], self.labels[index, :]
+        val = self.X[index, :], self.labels[index, :]
+        if not self.isbacked:
+            return val
+        return torch.tensor(val[0].toarray()), val[1]
 
 
 def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:

@@ -525,7 +525,9 @@ def training_data_internal_test(
             print(f"Discarded {label}: {discarded_types}")
             print(f"Test data shape: {adata.shape}")
     else:
-        adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST_MINIMAL.h5ad"))
+        adata = ad.read_h5ad(
+            get_data("tests/all_tumors_rnaseq_TEST_MINIMAL.h5ad"), backed=backed
+        )
     return adata
 
 
