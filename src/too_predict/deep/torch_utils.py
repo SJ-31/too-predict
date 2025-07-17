@@ -287,7 +287,10 @@ class AnnDataset(torch.utils.data.Dataset):
         val = self.X[index, :], self.labels[index, :]
         if not self.isbacked:
             return val
-        return torch.tensor(val[0].toarray()), val[1]
+        as_tensor = torch.tensor(val[0].toarray().astype(np.float32))
+        if isinstance(index, int):
+            as_tensor = as_tensor.flatten()
+        return as_tensor, val[1]
 
 
 def make_dataset(X: np.ndarray, y_true: np.ndarray) -> Dataset:
