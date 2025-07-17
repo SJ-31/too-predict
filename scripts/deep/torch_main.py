@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import anndata as ad
-import lightning as L
 import pandas as pd
 import too_predict._train_utils as tt
 import too_predict.deep.logistic as d_log
@@ -39,7 +38,7 @@ MODELS = {
         {"skip": True, "filter": True, "cv": True, "holdout": False},
     ),
     "Disyak_All": (
-        lambda **kwargs: d_nn.Disyak(n_hidden=1000, dropout_p=0.2, **kwargs),
+        lambda **kwargs: d_nn.Disyak(n_hidden=3000, dropout_p=0.2, **kwargs),
         {"skip": False, "filter": True, "cv": True, "holdout": False},
     ),
 }
@@ -56,7 +55,7 @@ FILTER: Filter = Filter(
 LABELS = ("Sample_Type", "tumor_type")
 
 TRAIN_KWARGS: dict = {"max_epochs": 1000}
-EARLY_STOP: dict = {"monitor": "val_acc", "patience": 40, "mode": "max"}
+EARLY_STOP: dict = {"monitor": "val_loss", "patience": 40, "mode": "max"}
 CV_KWARGS: dict = {"batch_size": 1024, "n_splits": 5}
 N_REPEATS = 3
 OPTIMIZATION_KWARGS: dict = {"lr": 0.001}
@@ -80,7 +79,7 @@ def parse_args():
     return args
 
 
-def cross_val(adata: ad.AnnData):
+def cross_val(adata: ad.AnnData, test: bool = False):
     for name, (m, pars) in MODELS.items():
         if pars.get("skip"):
             continue
@@ -93,23 +92,29 @@ def cross_val(adata: ad.AnnData):
         # TODO: don't use random state
         outdir = OUTDIR.joinpath(name)
         outdir.mkdir(exist_ok=True)
-        model = m(in_features=n_features, n_classes_per_task=n_classes)
-        model.register_optimizers(opt_fn=opt_fn)
-        model.register_schedulers(scheduler_fn=get_scheduler)
         kwargs = TRAIN_KWARGS.copy()
-        model.set_cache("val_acc")
         kwargs["callbacks"] = [
             EarlyStopping(**EARLY_STOP),
             AverageBest(n_best=5, target="val_acc"),
         ]
-        kwargs["default_root_dir"] = outdir
-        trainer = L.Trainer(**kwargs)
+        kwargs["enable_progress_bar"] = False
+        kwargs["fast_dev_run"] = test
+        kwargs["log_every_n_steps"] = 10
+        model_kwargs = {
+            "n_classes_per_task": n_classes,
+            "in_features": n_features,
+            "cache": "val_acc",
+            "scheduler_fn": get_scheduler,
+            "optimizer_fn": opt_fn,
+        }
         if pars.get("cv", True):
             dfs = []
             for i in range(N_REPEATS):
                 cv: pd.DataFrame = cross_validate(
-                    model=model,
-                    trainer=trainer,
+                    model_fn=m,
+                    model_kwargs=model_kwargs,
+                    trainer_kwargs=kwargs,
+                    save_path=outdir,
                     adset=d_ut.AnnDataset(train, to_encode=LABELS),
                     n_classes=n_classes,
                     validation=d_ut.AnnDataset(valid, to_encode=LABELS),
@@ -123,8 +128,9 @@ def cross_val(adata: ad.AnnData):
                 hr_dir = outdir.joinpath(f"additional_splits_{i}")
                 hr_dir.mkdir(exist_ok=True)
                 _ = holdout(
-                    model=model,
-                    trainer=trainer,
+                    model_kwargs=model_kwargs,
+                    model_fn=m,
+                    trainer_kwargs=kwargs,
                     adata=adata,
                     n_classes=n_classes,
                     split_fns=tt.ADDITIONAL_SPLITS,
@@ -146,4 +152,4 @@ if __name__ == "__main__":
     else:
         adata = ut.training_data_internal()
     adata = TRANSFORM.fit_transform(adata)
-    cross_val(adata)
+    cross_val(adata, test=args["test"])

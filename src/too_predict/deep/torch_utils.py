@@ -18,9 +18,9 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from lightning.pytorch.utilities.types import OptimizerConfig
 from too_predict.utils import if_none
 from torch import Tensor
-from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
 from torchmetrics.classification import Accuracy
 
@@ -78,7 +78,7 @@ def reset_sequential(mod: nn.Module) -> None:
         if (
             isinstance(m, nn.Conv2d)
             or isinstance(m, nn.Linear)
-            or isinstance(m, Module)
+            or isinstance(m, nn.Module)
         ):
             m.reset_parameters()
 
@@ -372,6 +372,10 @@ class MultiModule(L.LightningModule):
         task_weights: Tensor | Sequence | None = None,
         l1_pars: dict | None = None,
         l2_pars: dict | None = None,
+        optimizer_fn: Callable | None = None,
+        scheduler_fn: Callable | None = None,
+        scheduler_config: dict | None = None,
+        cache: str | None | Sequence = None,
     ) -> None:
         """__init__.
 
@@ -417,9 +421,9 @@ class MultiModule(L.LightningModule):
         else:
             self._task_names = task_names
 
-        self._optimizer_fn: Callable | None = None
-        self._scheduler_fn: Callable | None = None
-        self._scheduler_config: dict | None = None
+        self._optimizer_fn: Callable | None = optimizer_fn
+        self._scheduler_fn: Callable | None = scheduler_fn
+        self._scheduler_config: dict | None = scheduler_config
 
         # Cache results after iterations or validation for custom callbacks
         self._cache: dict[str, tuple[bool, list]] = {
@@ -430,7 +434,13 @@ class MultiModule(L.LightningModule):
             "test_loss": (False, []),
             "test_acc": (False, []),
         }
+        if isinstance(cache, str):
+            self.set_cache(cache)
+        elif cache is not None:
+            for c in cache:
+                self.set_cache(c)
 
+    @override
     def forward(self, X):
         raise NotImplementedError()
 
@@ -484,6 +494,7 @@ class MultiModule(L.LightningModule):
             return tuple(p.detach() for p in proba)
         return proba.detach()
 
+    @override
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
@@ -494,6 +505,7 @@ class MultiModule(L.LightningModule):
         self._try_cache_to("train_loss", loss)
         return loss
 
+    @override
     def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:
         try:
             X, _ = batch
@@ -518,9 +530,11 @@ class MultiModule(L.LightningModule):
             self._calc_accuracy(output=output, y_true=y, prefix=acc_prefix)
         return output
 
+    @override
     def test_step(self, batch, batch_idx):
         _ = self._log_step("test_loss", "test", batch, batch_idx)
 
+    @override
     def validation_step(self, batch, batch_idx):
         _ = self._log_step("val_loss", "val", batch, batch_idx)
 
@@ -555,7 +569,8 @@ class MultiModule(L.LightningModule):
         self._scheduler_fn = scheduler_fn
         self._scheduler_config = lr_scheduler_config
 
-    def configure_optimizers(self) -> Optimizer:
+    @override
+    def configure_optimizers(self) -> OptimizerConfig:
         if self._optimizer_fn is not None:
             optimizer = self._optimizer_fn(self.named_parameters())
         else:

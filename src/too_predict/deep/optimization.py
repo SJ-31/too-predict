@@ -15,10 +15,8 @@ import too_predict.optimization as topt
 import too_predict.transformer as tt
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-from sklearn.model_selection import train_test_split
 from too_predict.deep.evaluation import cross_validate, holdout
 from too_predict.deep.nns import Disyak
-from too_predict.deep.trainer import Trainer
 from too_predict.utils import train_test_split_ad
 
 # * HPO
@@ -72,10 +70,10 @@ class DlTrialSetup(topt.TrialSetup):
         else:
             raise ValueError(f"{name} not implemented!")
 
-    def _suggest_module(self) -> Callable:
+    def _suggest_module(self) -> tuple[Callable, dict]:
         module = self._suggest_param_or_default("module")
         if isinstance(module, Callable):  # No need to adjust module parameters
-            return module
+            return module, {}
         elif isinstance(module, str):
             if module == "Disyak":
                 dropout = self._suggest_param_or_default("dropout")
@@ -83,15 +81,14 @@ class DlTrialSetup(topt.TrialSetup):
                 l2_pars = self._suggest_param_or_default("l2_pars")
                 task_weights = self._suggest_param_or_default("task_weights")
                 n_hidden = self._suggest_param_or_default("n_hidden")
-                return lambda in_features, n_classes_per_task: Disyak(
-                    in_features=in_features,
-                    n_classes_per_task=n_classes_per_task,
+                kwargs = dict(
                     dropout_p=dropout,
                     l1_pars=l1_pars,
                     l2_pars=l2_pars,
                     task_weights=task_weights,
                     n_hidden=n_hidden,
                 )
+                return lambda **kwargs: Disyak(**kwargs), kwargs
             else:
                 raise ValueError("Module name not recognized!")
         else:
@@ -100,12 +97,14 @@ class DlTrialSetup(topt.TrialSetup):
     @override
     def __call__(self, opts: dict | None = None) -> tuple:
         self.user_opts: dict = opts
-        module_fn = self._suggest_module()
+        module_fn, module_kwargs = self._suggest_module()
         optimizer_fn: Callable = self._suggest_optimizer()
         scheduler_fn: Callable = self._suggest_scheduler()
+        module_kwargs["optimizer_fn"] = optimizer_fn
+        module_kwargs["scheduler_fn"] = scheduler_fn
         transformer: tt.Transformer = self._suggest_param_or_default("transformer")
         filter: fil.Filter = self._suggest_param_or_default("filter")
-        return module_fn, optimizer_fn, scheduler_fn, transformer, filter
+        return module_fn, module_kwargs, transformer, filter
 
 
 class DlOptimizer(topt.BaseOptimizer):
@@ -167,36 +166,34 @@ class DlOptimizer(topt.BaseOptimizer):
         setup = DlTrialSetup(trial=trial, **kwargs)
         n_features, n_classes = d_ut.data_spec(adata, y=self.label_col)
         opts["n_classes"] = n_classes
-        module_fn, optimizer_fn, scheduler_fn, transformer, filter = setup(opts=opts)
+        module_fn, module_kwargs, transformer, filter = setup(opts=opts)
         n_epochs = setup._suggest_param_or_default("n_epochs")
-        module: d_ut.MultiModule = module_fn(
-            in_features=n_features, n_classes_per_task=n_classes
+        module_kwargs["cache"] = kwargs.get("set_cache")
+        module_kwargs.update(
+            {"in_features": n_features, "n_classes_per_task": n_classes}
         )
-        module.register_optimizers(opt_fn=optimizer_fn)
-        module.register_schedulers(scheduler_fn=scheduler_fn)
-        for cache in kwargs.get("set_cache", []):
-            module.set_cache(cache)
         callbacks = []
         callbacks.extend(kwargs.get("callbacks", []))
         log_root: Path | None = kwargs.get("intermediate_out", None)
         if log_root is not None:
-            log_root = log_root.joinpath(str(trial.number))
+            log_root = log_root.joinpath(
+                str(trial.number)
+            )  # This is supposed to be unique...
             log_root.mkdir(exist_ok=True)
-        trainer = L.Trainer(
-            max_epochs=n_epochs,
-            enable_checkpointing=False,  # Do not change this
-            callbacks=callbacks,
-            default_root_dir=log_root,
-        )
+
         if filter != -1:
             adata = filter.fit_transform(adata)
         if transformer != -1:
             adata = transformer.fit_transform(adata)
         train, test = train_test_split_ad(adata, test_size=kwargs.get("test_size", 0.1))
         vals = []
+        trainer_params = {"max_epochs": n_epochs, "callbacks": callbacks}
         if do_splits:
+            # TODO: pass a function to create trainer
             result: dict = holdout(
-                trainer=trainer,
+                model_fn=module_fn,
+                model_kwargs=module_kwargs,
+                trainer_kwargs=trainer_params,
                 adata=train,
                 n_classes=n_classes,
                 to_encode=self.label_col,
@@ -207,9 +204,14 @@ class DlOptimizer(topt.BaseOptimizer):
             )
             vals.append(np.mean(result.values()))
         if do_cv:
+            # TODO: add the callbacks here
+            cv_out = log_root.joinpath("cv")
+            cv_out.mkdir(exist_ok=True)
             cv_results = cross_validate(
-                model=module,
-                trainer=trainer,
+                model_fn=module_fn,
+                model_kwargs=module_kwargs,
+                trainer_kwargs=trainer_params,
+                save_path=cv_out,
                 adset=d_ut.AnnDataset(train, to_encode=self.label_col),
                 validation=d_ut.AnnDataset(test, to_encode=self.label_col),
                 n_classes=n_classes,

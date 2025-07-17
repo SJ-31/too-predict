@@ -159,8 +159,9 @@ def train_test_split_torch(
 
 
 def holdout(
-    trainer: L.Trainer,
-    model: L.LightningModule,
+    trainer_kwargs: dict,
+    model_kwargs: dict,
+    model_fn: Callable[[L.LightningModule]],
     adata: ad.AnnData,
     to_encode: tuple[str],
     n_classes: Sequence[int],
@@ -198,6 +199,12 @@ def holdout(
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
+        if save_split_path is not None:
+            root = save_split_path.joinpath(set_label)
+            root.mkdir(exist_ok=True)
+            trainer_kwargs["default_root_dir"] = root
+        trainer = L.Trainer(**trainer_kwargs)
+        model = model_fn(**model_kwargs)
         if split_is_fn:
             x_train, x_test = splitter(cur_adata)
         else:
@@ -242,7 +249,7 @@ def holdout(
                 y_true=y_true,
                 scores=proba,
                 task_names=to_encode,
-                n_classes=model._n_classes,
+                n_classes=n_classes,
             )
             return res
         pred = trainer.predict_step(x_test_tensor)
@@ -250,7 +257,7 @@ def holdout(
         return multitask_acc(
             y_true=y_true,
             predictions=pred,
-            n_classes=model._n_classes,
+            n_classes=n_classes,
             task_names=to_encode,
         )
 
@@ -277,14 +284,16 @@ def holdout(
 
 
 def cross_validate(
-    trainer: L.Trainer,
-    model: L.LightningModule,
+    trainer_kwargs: dict,
+    model_kwargs: dict,
+    model_fn: Callable[[L.LightningModule]],
     adset: d_ut.AnnDataset,
     n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,
     n_splits: int = 5,
     validation: Dataset | None = None,
     verbose: bool = False,
+    save_path: Path | None = None,
     **kwargs,
 ) -> pd.DataFrame:
     if verbose:
@@ -304,6 +313,12 @@ def cross_validate(
 
         y_true = test[:][1]
 
+        if save_path is not None:
+            root = save_path.joinpath(f"fold_{fold}")
+            root.mkdir(exist_ok=True)
+            trainer_kwargs["default_root_dir"] = root
+        trainer = L.Trainer(**trainer_kwargs)
+        model = model_fn(**model_kwargs)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
 
         y_pred = model.predict_step(test[:])
