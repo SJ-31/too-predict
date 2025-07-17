@@ -267,40 +267,13 @@ class AnnDataset(torch.utils.data.Dataset):
 
     @property
     def shape(self) -> tuple:
-        """shape.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        tuple
-
-        """
         return self.X.shape
 
     def __len__(self) -> int:
-        """__len__.
-
-        Parameters
-        ----------
-
-        Returns
-        -------
-        int
-
-        """
         return self.X.shape[0]
 
     @override
     def __getitem__(self, index):
-        """__getitem__.
-
-        Parameters
-        ----------
-        index :
-            index
-        """
         return self.X[index, :], self.labels[index, :]
 
 

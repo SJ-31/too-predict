@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import anndata as ad
+import h5py
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -38,6 +39,7 @@ NA_TYPES: set = {
     NARealType,
     NAComplexType,
 }
+SPARSE_CHUNK_SIZE = 100_000
 
 RANDOM_STATE: int = 9874  # Last modified <2025-03-05 Wed>
 # Use for CV splitters
@@ -430,17 +432,24 @@ def cell_markers_internal(
     return dct
 
 
-def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
+def training_data_internal(
+    label: str = "tumor_type", backed=None, as_dask: bool = False
+) -> ad.AnnData:
     public_data = here("remote", "public_data")
     combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
-    adata: ad.AnnData = ad.read_h5ad(combined_file)
+    if not as_dask:
+        adata: ad.AnnData = ad.read_h5ad(combined_file, backed=backed)
+        # as of [2025-07-17 Thu], loading the whole thing into memory costs ~ 6.83 GB
+    else:
+        adata = adata_as_dask(combined_file)
     adata = adata[adata.obs["tumor_type"] != "Unknown", :]
     old_shape = adata.shape
     print(f"Initial shape: {old_shape}")
     min_samples = round(len(adata) * 0.1)  # Roughly at least 10% of samples
-    sc.pp.filter_cells(adata, min_counts=5000)
-    sc.pp.filter_genes(adata, min_cells=min_samples)
-    sc.pp.filter_genes(adata, min_counts=200)
+    if not backed:
+        sc.pp.filter_cells(adata, min_counts=5000)
+        sc.pp.filter_genes(adata, min_cells=min_samples)
+        sc.pp.filter_genes(adata, min_counts=200)
     if label == "primary_site":
         adata.obs.loc[:, "primary_site"] = adata.obs["primary_site"].replace(
             {
@@ -467,26 +476,54 @@ def training_data_internal(label: str = "tumor_type") -> ad.AnnData:
                 "cervix_uteri": "uterus_ovary",
             }
         )
-    adata, discarded_types = filter_by_obs(adata, [label], min=50)
-    print(f"Discarded {label}: {discarded_types}")
-    print(f"Final shape after filtering: {adata.shape}")
-    print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
-    print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
+    if not backed:
+        adata, discarded_types = filter_by_obs(adata, [label], min=50)
+        print(f"Discarded {label}: {discarded_types}")
+        print(f"Final shape after filtering: {adata.shape}")
+        print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
+        print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
+    return adata
+
+
+def adata_size_of(adata: ad.AnnData) -> None:
+    print(f"{adata.__sizeof__() / 1e6:.3} MB")
+    print(f"{adata.__sizeof__() / 1e9:.3} GB")
+
+
+def adata_as_dask(path) -> ad.AnnData:
+    with h5py.File(path, "r") as f:
+        adata = ad.AnnData(
+            obs=ad.io.read_elem(f["obs"]),
+            var=ad.io.read_elem(f["var"]),
+        )
+        adata.X = ad.experimental.read_elem_as_dask(
+            f["X"], chunks=(SPARSE_CHUNK_SIZE, adata.shape[1])
+        )
     return adata
 
 
 def training_data_internal_test(
-    sample: float = 0.3, label: str = "tumor_type", minimal: bool = False
+    sample: float = 0.3,
+    label: str = "tumor_type",
+    minimal: bool = False,
+    backed=None,
+    as_dask: bool = False,
 ) -> ad.AnnData:
     if not minimal:
-        adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
-        sc.pp.subsample(adata, sample)
-        sc.pp.filter_genes(adata, min_cells=10)
-        sc.pp.filter_cells(adata, min_counts=5000)
-        sc.pp.filter_genes(adata, min_counts=200)
-        adata, discarded_types = filter_by_obs(adata, [label], min=20)
-        print(f"Discarded {label}: {discarded_types}")
-        print(f"Test data shape: {adata.shape}")
+        if not as_dask:
+            adata = ad.read_h5ad(
+                get_data("tests/all_tumors_rnaseq_TEST.h5ad"), backed=backed
+            )
+        else:
+            adata = adata_as_dask(get_data("tests/all_tumors_rnaseq_TEST.h5ad"))
+        if not backed:
+            sc.pp.subsample(adata, sample)
+            sc.pp.filter_genes(adata, min_cells=10)
+            sc.pp.filter_cells(adata, min_counts=5000)
+            sc.pp.filter_genes(adata, min_counts=200)
+            adata, discarded_types = filter_by_obs(adata, [label], min=20)
+            print(f"Discarded {label}: {discarded_types}")
+            print(f"Test data shape: {adata.shape}")
     else:
         adata = ad.read_h5ad(get_data("tests/all_tumors_rnaseq_TEST_MINIMAL.h5ad"))
     return adata
@@ -1002,13 +1039,8 @@ class SaveOrLoad:
                 if self.read_fn is not None:
                     return {k: self.read_fn(v) for k, v in self.out.items()}
                 return {k: self.read_fns[k](v) for k, v in self.out.items()}
-                # try:
             value = fn(self.out, *args, **kwargs)
             log.write_text("Completed successfully")
             return value
-            # except Exception as e:
-            #     print(e)
-            #     log.write_text("Failed with exception:\n------------")
-            #     log.write_text(str(e))
 
         return wrapped

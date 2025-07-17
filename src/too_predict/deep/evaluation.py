@@ -161,7 +161,7 @@ def train_test_split_torch(
 def holdout(
     trainer_kwargs: dict,
     model_kwargs: dict,
-    model_fn: Callable[[L.LightningModule]],
+    model_fn: Callable[[], L.LightningModule],
     adata: ad.AnnData,
     to_encode: tuple[str],
     n_classes: Sequence[int],
@@ -286,7 +286,7 @@ def holdout(
 def cross_validate(
     trainer_kwargs: dict,
     model_kwargs: dict,
-    model_fn: Callable[[L.LightningModule]],
+    model_fn: Callable[[], L.LightningModule],
     adset: d_ut.AnnDataset,
     n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,
