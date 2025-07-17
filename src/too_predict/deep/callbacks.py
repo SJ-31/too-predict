@@ -77,9 +77,8 @@ class AverageBest(L.Callback):
         decay: float = 0.999,
     ) -> None:
         super().__init__()
-        self._best_epochs: LargestCollection = LargestCollection(
-            length=n_best, key=lambda x: x[0]
-        )
+        self._best_epochs: LargestCollection | None = None
+        self._n_best: int = n_best
         self._target: Literal["train_loss", "val_acc", "val_loss", "train_acc"] = target
 
     def _get_best_score_and_push(self, module: MultiModule, target: str) -> None:
@@ -91,14 +90,21 @@ class AverageBest(L.Callback):
                 self._best_epochs.push((score, deepcopy(module.state_dict())))
             module.cache_clear(target)
 
+    @override
     def on_train_epoch_end(self, trainer, pl_module):
         self._get_best_score_and_push(pl_module, self._target)
 
+    @override
     def on_validation_epoch_end(self, trainer, pl_module):
         if not self._target.startswith("val"):
             return
         self._get_best_score_and_push(pl_module, self._target)
 
+    @override
+    def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        self._best_epochs = LargestCollection(length=self.n_best, key=lambda x: x[0])
+
+    @override
     def on_fit_end(self, trainer, pl_module) -> None:
         """Average collected parameters and transfer them to `model`"""
         parameters = []
