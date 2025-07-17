@@ -1,7 +1,9 @@
 #!/usr/bin/env ipython
 
 from pathlib import Path
+from typing import Literal
 
+import anndata as ad
 import joblib
 import pandas as pd
 import too_predict.utils as ut
@@ -23,12 +25,10 @@ else:
     OPTUNA_JOURNALS = here("remote", "repos", "too-predict", "optuna_journals")
     OPTUNA_STORAGE = here("remote", "repos", "too-predict", "optuna_artifactstore")
 OUTDIR = here("data", "output", "optimization")
+CACHE: Path = here("remote", "repos", "too-predict", "adatas", "torch_optimization")
 REF, FEAT = ut.ref_feature_lists_internal()
 
 torch.set_default_dtype(torch.float32)
-
-if torch.cuda.is_available():
-    torch.set_default_device("cuda:0")
 
 
 def parse_args():
@@ -68,6 +68,9 @@ def choose_optimization(dct, adata) -> None:
             feature_col="GENEID",
         )
         n_epochs = 1000
+    transformer: Transformer | Literal[-1] = Transformer(
+        "clr", impute_fn=Imputer("plus_one"), inplace=False
+    )
     sample_opts = {
         # Module arguments
         "module": "Disyak",
@@ -85,10 +88,8 @@ def choose_optimization(dct, adata) -> None:
         "lr": 0.001,  # All optimizers
         "momentum": [0, 0.9],  # SGD
         # Extras
-        "transformer": Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False),
         # Try without filtering first
         # [2025-06-18 Wed] Ask Aj though
-        "filter": filter,
         # Scheduling
         "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
         # PolynomialLR
@@ -100,6 +101,25 @@ def choose_optimization(dct, adata) -> None:
         # CyclicLR
         "mode": ["triangular", "triangular2"],
     }
+
+    @ut.SaveOrLoad(
+        out=CACHE.joinpath("optimization.h5ad"),
+        read_fn=lambda x: ad.read_h5ad(x, backed=True),
+    )
+    def get_adata(f) -> ad.AnnData:
+        if TEST == "_test":
+            return ut.training_data_internal_test(minimal=True)
+        adata = ut.training_data_internal()
+        if filter != -1:
+            adata = filter.fit_transform(adata)
+        if transformer != -1:
+            adata = transformer.fit_transform(adata)
+        adata.write_h5ad(adata)
+        adata = ad.read_h5ad(f, backed=True)
+        return adata
+
+    adata = get_adata()
+
     searcher = DlOptimizer(
         label_col=("tumor_type", "Sample_Type"),
         journal_file=journal_file,

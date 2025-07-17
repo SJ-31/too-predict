@@ -21,7 +21,9 @@ from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 
 OUTDIR: Path = here("data", "output", "deep", "cross_validation")
+CACHE: Path = here("remote", "repos", "too-predict", "adatas", "torch_main")
 torch.set_default_dtype(torch.float32)
+
 
 # * Models to test
 MODELS = {
@@ -79,12 +81,29 @@ def parse_args():
     return args
 
 
+def get_adata(f, test, filter):
+    if test:
+        adata = ut.training_data_internal_test(minimal=True)
+    else:
+        adata = ut.training_data_internal()
+        adata = TRANSFORM.fit_transform(adata)
+        if filter:
+            adata = FILTER.fit_transform(adata)
+        adata.write_h5ad(f)
+        adata = ad.read_h5ad(f, backed=True)
+    return adata
+
+
 def cross_val(adata: ad.AnnData, test: bool = False):
     for name, (m, pars) in MODELS.items():
         if pars.get("skip"):
             continue
-        if pars.get("filter"):
-            adata = FILTER.fit_transform(adata)
+        filter = pars.get("filter", False)
+        saved_file = CACHE.joinpath(f"{name}_filter={filter}.h5ad")
+        adata_fn = ut.SaveOrLoad(
+            out=saved_file, read_fn=lambda x: ad.read_h5ad(x, backed=True)
+        )(get_adata)
+        adata = adata_fn(test=test, filter=filter)
         n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
         train, valid = ut.train_test_split_ad(
             adata, test_size=0.1, random_state=ut.RANDOM_STATE
