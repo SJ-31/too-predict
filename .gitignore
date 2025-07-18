@@ -8,6 +8,8 @@ log/
 dist/
 rust/target
 *lightning_logs
+*.snakemake
+tests/*.log
 src/too_predict/_rust_helpers*
 reports
 !reports/templates
