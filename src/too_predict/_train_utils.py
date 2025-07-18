@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -10,15 +11,17 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import ShuffleSplit
 from sklearn.tree import DecisionTreeClassifier
 
+import too_predict.deep.logistic as d_log
 import too_predict.evaluation as te
 import too_predict.model as tm
 import too_predict.recoder as rt
 import too_predict.transformer as trf
 from too_predict.corrector import Corrector
+from too_predict.deep.nns import Disyak
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
-from too_predict.model import PredBase, RandomForestClassifier, XGBEstimator
+from too_predict.model import Pipeline, PredBase, RandomForestClassifier, XGBEstimator
 from too_predict.range_finder import RangeFinderPred
 from too_predict.transformer import Transformer
 from too_predict.utils import (
@@ -107,6 +110,22 @@ MODELS: dict = {
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_",
         "s": True,
+        "w": ("additional"),
+    },
+    "clr_xgboost_edger_half": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "half_organoid_primary_feature_list_3000",
+        "s": False,
+        "w": ("additional"),
+    },
+    "clr_xgboost_edger_half_per_type": {
+        "m": lambda: tm.PredBase(model=tm.XGBEstimator()),
+        "t": "clr",
+        "i": "plus_one",
+        "f": "edgeR_half_50_per_type",
+        "s": False,
         "w": ("additional"),
     },
     "xgboost_edger_per_type_ovp": {
@@ -243,13 +262,13 @@ MODELS: dict = {
         "f": "edgeR_median_lfc_feature_list_1000",
         "s": True,
     },
-    "clr_ebm_edger": {
-        "m": lambda: tm.PredBase(model=ExplainableBoostingClassifier(n_jobs=-2)),
-        "t": "clr",
-        "i": "plus_one",
-        "f": "edgeR_median_lfc_feature_list_3000",
-        "s": True,  # [2025-03-27 Thu] Want to try this out badly, but it's so slow
-    },
+    # "clr_ebm_edger": {
+    #     "m": lambda: tm.PredBase(model=ExplainableBoostingClassifier(n_jobs=-2)),
+    #     "t": "clr",
+    #     "i": "plus_one",
+    #     "f": "edgeR_median_lfc_feature_list_3000",
+    #     "s": True,  # [2025-03-27 Thu] Want to try this out badly, but it's so slow
+    # },
     "clr_dt_edger": {  # A surrogate model
         "m": lambda: tm.PredBase(model=DecisionTreeClassifier()),
         "t": "clr",
@@ -535,7 +554,7 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_",
-        "s": False,
+        "s": True,
         "p": trf.into_ranks,
     },
     "clr_ranks-std_mean_xgb_edger_per_type_ovp": {
@@ -543,49 +562,49 @@ MODELS: dict = {
         "t": "clr",
         "i": "plus_one",
         "f": "edgeR_70_per_type_ovp_",
-        "s": False,
+        "s": True,
         "p": lambda x: trf.into_ranks(x, True),
     },
     # *** Range finder
     # [2025-06-04 Wed] Not yet
-    "clr_rf_mean_xgb_edger_per_type_ovp_t_enriched": {
-        "m": lambda: RangeFinderPred(
-            model=tm.PredBase(model=tm.XGBEstimator()),
-            features_per_label=70,
-            purity_cutoff=0.3,
-            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
-        ),
-        "t": None,
-        "i": None,
-        "f": "edgeR_70_per_type_ovp_tissue_enriched",
-        "s": True,
-    },
-    "clr_rf_bin_xgb_edger_per_type_ovp_t_enriched": {
-        "m": lambda: RangeFinderPred(
-            model=tm.PredBase(model=tm.XGBEstimator()),
-            features_per_label=70,
-            mask_method="binary",
-            purity_cutoff=0.3,
-            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
-        ),
-        "t": None,
-        "i": None,
-        "f": "edgeR_70_per_type_ovp_tissue_enriched",
-        "s": True,
-    },
-    "clr_rf_median_xgb_edger_per_type_ovp_t_enriched": {
-        "m": lambda: RangeFinderPred(
-            model=tm.PredBase(model=tm.XGBEstimator()),
-            features_per_label=70,
-            mask_method="median",
-            purity_cutoff=0.3,
-            transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
-        ),
-        "t": None,
-        "i": None,
-        "f": "edgeR_70_per_type_ovp_tissue_enriched",
-        "s": True,
-    },
+    # "clr_rf_mean_xgb_edger_per_type_ovp_t_enriched": {
+    #     "m": lambda: RangeFinderPred(
+    #         model=tm.PredBase(model=tm.XGBEstimator()),
+    #         features_per_label=70,
+    #         purity_cutoff=0.3,
+    #         transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+    #     ),
+    #     "t": None,
+    #     "i": None,
+    #     "f": "edgeR_70_per_type_ovp_tissue_enriched",
+    #     "s": True,
+    # },
+    # "clr_rf_bin_xgb_edger_per_type_ovp_t_enriched": {
+    #     "m": lambda: RangeFinderPred(
+    #         model=tm.PredBase(model=tm.XGBEstimator()),
+    #         features_per_label=70,
+    #         mask_method="binary",
+    #         purity_cutoff=0.3,
+    #         transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+    #     ),
+    #     "t": None,
+    #     "i": None,
+    #     "f": "edgeR_70_per_type_ovp_tissue_enriched",
+    #     "s": True,
+    # },
+    # "clr_rf_median_xgb_edger_per_type_ovp_t_enriched": {
+    #     "m": lambda: RangeFinderPred(
+    #         model=tm.PredBase(model=tm.XGBEstimator()),
+    #         features_per_label=70,
+    #         mask_method="median",
+    #         purity_cutoff=0.3,
+    #         transformer=Transformer("clr", impute_fn=Imputer("plus_one")),
+    #     ),
+    #     "t": None,
+    #     "i": None,
+    #     "f": "edgeR_70_per_type_ovp_tissue_enriched",
+    #     "s": True,
+    # },
 }
 
 # * Additional splits
@@ -728,15 +747,18 @@ def organoid_test_task(
 
 
 def read_model_spec(
-    spec: dict,
-) -> tuple[
-    Filter | None,
-    PredBase,
-    Transformer,
-    Balancer | None,
-    rt.Recoder | None,
-    Corrector | None,
-]:
+    spec: dict, pipeline: bool = False
+) -> (
+    tuple[
+        Filter | None,
+        PredBase,
+        Transformer,
+        Balancer | None,
+        rt.Recoder | None,
+        Corrector | None,
+    ]
+    | Pipeline
+):
     try:
         M: PredBase = spec.get("m")()
     except TypeError:
@@ -773,7 +795,7 @@ def read_model_spec(
         )
     else:
         F = None
-    B: Balancer = spec.get("b")
+    B: Balancer | None = spec.get("b")
     transformation_name = spec.get("t")
     kwargs: dict = spec.get("k", {})
     if transformation_name == "clr" and references is not None:
@@ -785,4 +807,48 @@ def read_model_spec(
         post_process=post_process,
         **kwargs,
     )
-    return F, M, T, B, encoding, C
+    if not pipeline:
+        return F, M, T, B, encoding, C
+    steps = []
+    if B is not None:
+        steps.append(B)
+    if C is not None:
+        steps.append(C)
+    if F is not None:
+        steps.append(F)
+    if encoding is not None:
+        steps.append(encoding)
+    steps.append(T)
+    steps.append(M)
+
+    return Pipeline(steps)
+
+
+def default_filter_transform(smk_config: dict) -> tuple[Filter, Transformer]:
+    dct = smk_config["defaults"]["shallow"]
+    t = Transformer(
+        dct["transform"], impute_fn=Imputer(dct["imputation"]), inplace=False
+    )
+    f = Filter(
+        features=FEATURE_LISTS[dct["feature_set"]],
+        feature_col=dct["feature_col"],
+        inplace=False,
+    )
+    return f, t
+
+
+def get_model_fn(name: str, config: dict | None = None) -> Callable:
+    if name == "MultiLevel":
+        model = d_log.MultiLevel
+    elif name == "MtcLR":
+        model = d_log.MtcLr
+    elif name in {"Disyak", "Disyak_All"}:
+        model = Disyak
+
+    if config is None:
+        config = {}
+
+    def make_model(**kwargs):
+        return model(**kwargs, **config)
+
+    return make_model

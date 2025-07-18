@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 import pickle
+from collections.abc import Sequence
 from functools import partial
 from typing import Callable, Literal, override
 
@@ -745,3 +746,23 @@ class PredWithCorrection(PredBase):
     def predict_proba(self, X: ad.AnnData) -> np.ndarray:
         x = self._transform(X)
         return self.model.predict_proba(x)
+
+
+# * Pipeline
+
+
+class Pipeline:
+    def __init__(self, steps: Sequence) -> None:
+        self.preprocessing: Sequence = steps[:-1]
+        self.predictor: PredBase = steps[-1]
+        pass
+
+    def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
+        for step in self.preprocessing:
+            x = step.fit_transform(x)
+        self.predictor.fit(x, y)
+
+    def predict(self, x) -> np.ndarray:
+        for step in self.preprocessing:
+            x = step.fit_transform(x)
+        return self.predictor.predict(x)
