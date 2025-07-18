@@ -1,0 +1,28 @@
+configfile: "env.yaml"
+
+
+def raw(file):
+    return f"{config['raw']}/{file}"
+
+
+rule all:
+    input:
+        multiext(f"{config['raw']}/iris_raw", ".csv", ".txt"),
+        [raw(f"{d}.txt") for d in config["specs"]["first"]],
+
+
+rule get_iris:
+    output:
+        csv=raw("iris_raw.csv"),
+        meta=raw("iris_raw.txt"),
+    script:
+        "main.py"
+
+
+rule show_dict:
+    output:
+        [raw(f"{d}.txt") for d in config["specs"]["first"]],
+    script:
+        "main.py"
+
+
