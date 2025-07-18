@@ -102,7 +102,7 @@ class AverageBest(L.Callback):
 
     @override
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        self._best_epochs = LargestCollection(length=self.n_best, key=lambda x: x[0])
+        self._best_epochs = LargestCollection(length=self._n_best, key=lambda x: x[0])
 
     @override
     def on_fit_end(self, trainer, pl_module) -> None:
