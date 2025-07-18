@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython
+import pickle
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Callable, Literal
@@ -11,6 +12,9 @@ import sklearn.metrics as me
 import sklearn.metrics as met
 import sklearn.model_selection as ms
 from rpy2.rinterface_lib.embedded import RRuntimeError
+from sklearn.linear_model import LinearRegression
+from torch.utils.data import Dataset
+from torchmetrics.functional.classification import accuracy
 
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
@@ -571,3 +575,217 @@ def agg_lr_coefs(
             agg = np.array(vals).var(axis=0)
         tmp[cls] = agg
     return pd.DataFrame(tmp, index=feature_names)
+
+
+# * Effective robustness
+
+
+class Robustness:
+    """Helper class to compute effective and relative robustness
+
+    Parameters
+    ----------
+    train : Dataset to rain models on
+    shifted_test : test dataset consisting of data from the shifted distribution
+    standard_test : test dataset consisting of data from the same distribution as train
+    n_classes : int
+        number of classes in the dataset
+    y_idx : for sklearn models, the index of the y array to use for training (in
+        the case where the datasets are multitask)
+    """
+
+    def __init__(
+        self,
+        train: Dataset,
+        shifted_test: Dataset,
+        standard_test: Dataset,
+        n_classes: int,
+        beta_path: Path | None = None,
+        y_idx: int | None = None,
+    ) -> None:
+        self._train: Dataset = train
+        self._shifted_test: Dataset = shifted_test
+        self._standard_test: Dataset = standard_test
+        self.beta: LinearRegression | None | Path = None
+        if beta_path is not None and beta_path.exists():
+            with open(beta_path, "r") as f:
+                self.beta = pickle.load(f)
+        self._y_idx: None | int = y_idx
+        self._n_classes: int = n_classes
+
+        # Numpy ndarray copies of data
+        self._has_numpy: bool = False
+        self._train_x: np.ndarray | None = None
+        self._train_y: np.ndarray | None = None
+        self._shifted_x: np.ndarray | None = None
+        self._shifted_y: np.ndarray | None = None
+        self._standard_x: np.ndarray | None = None
+        self._standard_y: np.ndarray | None = None
+
+    def _validate_spec(
+        self,
+        model_fn: Callable,
+        numpy: bool | None = None,
+        train_fn: Callable | None = None,
+        pretrained: bool | None = None,
+    ) -> None:
+        """Validate dictionary used to construct and train a model
+
+        Parameters
+        ----------
+        model_fn : Callable returning a pytorch module or sklearn model. May or may not
+            be fitted
+        numpy : if given, model is taken to be an sklearn model and will be given the
+            train and test data as numpy arrays
+        train_fn : the training function for pytorch modules. Must take a dataset
+        pretrained : if the model has been fit already. If true, then it will not
+            be fit with ``self.train``
+        """
+        if numpy is None and train_fn is None:
+            raise ValueError(
+                "If the model isn't expected to take a numpy array, train_fn must be provided!"
+            )
+
+    def _fit(self, model, spec: dict) -> None:
+        if not spec.get("pretrained"):
+            if spec.get("numpy"):
+                model.fit(self._train_x, self._train_y)
+            else:
+                train = spec["train_fn"]
+                train(model, self._train)
+
+    def _acc(
+        self,
+        model,
+        spec: dict,
+        test_dset: Dataset | None = None,
+        test_x: np.ndarray | None = None,
+        test_y: np.ndarray | None = None,
+    ) -> float:
+        if spec.get("numpy"):
+            preds = model.predict(test_x)
+            return met.accuracy_score(y_true=test_y, y_pred=preds)
+        else:
+            preds = model(test_dset[:][0])
+            return accuracy(
+                preds=preds,
+                target=test_y,
+                num_classes=self._n_classes,
+                task="multiclass",
+            ).item()
+
+    def _acc_pair(
+        self, model, spec: dict, with_standard: bool = True
+    ) -> tuple[float, float]:
+        """Helper function to compute the standard and shifted accuracy of the model
+        defined in ```spec```
+        """
+        standard_acc = 0.0
+        if spec.get("numpy"):
+            if with_standard:
+                standard_acc = self._acc(
+                    model, test_x=self._standard_x, test_y=self._standard_y
+                )
+            shifted_acc = self._acc(
+                model, test_x=self._shifted_y, test_y=self._shifted_x
+            )
+        else:
+            if with_standard:
+                standard_acc = self._acc(model, test_dset=self._standard_test)
+            shifted_acc = self._acc(model, test_dset=self._shifted_test)
+        return standard_acc, shifted_acc
+
+    def effective_robustness(self, mspec: dict) -> float:
+        self._validate_spec(**mspec)
+        if not self.beta:
+            self.beta = self.get_beta()
+        model = mspec["model_fn"]()
+        self._set_np([mspec])
+        self._fit(model, mspec)
+        standard_acc, shifted_acc = self._acc_pair(model, mspec)
+        return shifted_acc - self.beta.predict(standard_acc)
+
+    def relative_robustness(self, ispec: dict, mspec: dict) -> float:
+        """Compute relative robustness
+
+        Parameters
+        ----------
+        ispec : dict
+            model spec dictionary with robustness intervention
+        mspec : dict
+            standard model spec dictionary
+
+        Returns
+        -------
+        float : Relative Robustness score
+        """
+        self._validate_spec(**ispec)
+        self._validate_spec(**mspec)
+        self._set_np([ispec, mspec])
+        imodel = ispec["model_fn"]()
+        self._fit(imodel, ispec)
+        _, intervention_acc = self._acc_pair(imodel, ispec, False)
+
+        mmodel = mspec["model_fn"]()
+        self._fit(mmodel, mspec)
+        _, standard_acc = self._acc_pair(mmodel, mspec, False)
+        return intervention_acc - standard_acc
+
+    def _set_np(self, specs: Sequence[dict]) -> None:
+        """Instantiate numpy arrays"""
+        has_numpy: bool = any([m.get("numpy") for m in specs])
+        if has_numpy and not self._has_numpy:
+            self._train_x, self._train_y = [x.numpy() for x in self._train[:]]
+            self._shifted_x, self._shifted_y = [
+                x.numpy() for x in self._shifted_test[:]
+            ]
+            self._standard_x, self._standard_y = [
+                x.numpy() for x in self._standard_test[:]
+            ]
+            if self._y_idx is not None:
+                self._train_y = self._train_y[:, self._y_idx]
+                self._shifted_y = self._shifted_y[:, self._y_idx]
+                self._standard_y = self._standard_y[:, self._y_idx]
+            self._has_numpy = True
+
+    def get_beta(
+        self, models: Sequence[dict], save_to: Path | str | None = None
+    ) -> LinearRegression:
+        """Compute accuracies on standard dataset to find model with which to calculate
+            beta
+
+        Parameters
+        ----------
+        models : Sequence
+            A sequence of model dictionaries - see _validate_spec for the required keys
+            The models specified here should be standard models with no robustness
+            intervention
+        save_to : Path
+            Path to save fitted model to
+
+        Returns
+        -------
+        LinearRegression fitted to compute baseline accuracies
+        """
+        self._set_np(models)
+        vals: dict = {"name": [], "standard_acc": [], "shifted_acc": []}
+        for i, spec in enumerate(models):
+            self._validate_spec(spec)
+            model = spec["model_fn"]()
+            name = spec.get("name", f"model_{i}")
+            self._fit(model, spec)
+            shifted_acc, standard_acc = self._acc_pair(model, spec)
+            vals["shifted_acc"].append(shifted_acc)
+            vals["standard_acc"].append(standard_acc)
+            vals["name"].append(name)
+        beta = LinearRegression()
+        beta.fit(vals["standard_acc"], y=vals["shifted_acc"])
+        if save_to:
+            if isinstance(save_to, str):
+                save_to = Path(save_to)
+            with open(save_to, "wb") as f:
+                pickle.dump(beta, f)
+            metrics = pd.DataFrame(vals)
+            metric_file = save_to.parent.joinpath(f"{save_to.stem}.csv")
+            metrics.to_csv(metric_file, index=False)
+        return beta
