@@ -6,6 +6,7 @@ from typing import Literal
 import anndata as ad
 import numpy as np
 import pandas as pd
+import yaml
 from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import ShuffleSplit
@@ -852,3 +853,34 @@ def get_model_fn(name: str, config: dict | None = None) -> Callable:
         return model(**kwargs, **config)
 
     return make_model
+
+
+# * Snakemake
+
+
+class DummySnake:
+    def __init__(
+        self,
+        rule: str,
+        input: dict | None = None,
+        output: dict | None = None,
+        configfile: Path | str | None = None,
+        params: dict | None = None,
+        log: dict | None = None,
+        threads: int | None = None,
+        wildcards: dict | None = None,
+        scriptdir: str | None = None,
+        resources: dict | None = None,
+    ) -> None:
+        self.rule: str = rule
+        if configfile is not None:
+            with open(configfile, "r") as f:
+                self.config: dict = yaml.safe_load(f)
+        else:
+            self.config = {}
+        self.params: dict = params if params is not None else {}
+        self.input: dict = input if input is not None else {}
+        self.output: dict = output if output is not None else {}
+        self.wildcards: dict = wildcards if wildcards is not None else {}
+        self.scriptdir: str | None = None
+        self.resources: dict = resources if resources is not None else {}
