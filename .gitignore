@@ -11,6 +11,7 @@ rust/target
 *.snakemake
 tests/*.log
 src/too_predict/_rust_helpers*
+scripts/deep/*log
 reports
 !reports/templates
 rust/Cargo.lock

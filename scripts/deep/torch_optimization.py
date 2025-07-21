@@ -56,7 +56,7 @@ else:
     logdir=here("log"),
 )
 def choose_optimization(dct, adata) -> None:
-    storage_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.log")
+    storage_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.db")
     artifact_dir = here(OPTUNA_STORAGE, f"torch_optimization{TEST}")
     if TEST == "_test":
         filter = -1
@@ -88,6 +88,8 @@ def choose_optimization(dct, adata) -> None:
         "lr": 0.001,  # All optimizers
         "momentum": [0, 0.9],  # SGD
         # Extras
+        "transformer": -1,
+        "filter": -1,
         # Try without filtering first
         # [2025-06-18 Wed] Ask Aj though
         # Scheduling
@@ -122,7 +124,7 @@ def choose_optimization(dct, adata) -> None:
 
     searcher = DlOptimizer(
         label_col=("tumor_type", "Sample_Type"),
-        journal_file=storage_file,
+        storage_file=storage_file,
         artifact_dir=artifact_dir,
     )
     cv_output = OUTDIR.joinpath("cv_output")
@@ -146,7 +148,9 @@ def choose_optimization(dct, adata) -> None:
         batch_size=1024,
     )
     study = searcher.run_study(
-        study_name="optimizer_selection", directions=["maximize", "maximize"]
+        study_name="optimizer_selection",
+        directions=["maximize", "maximize"],
+        storage=f"sqlite:///{storage_file}",
     )
     joblib.dump(study, dct["study_obj"])
     df = study.trials_dataframe()
@@ -182,7 +186,7 @@ def choose_epochs(dct, adata) -> None:
     }
     searcher = DlOptimizer(
         label_col=("tumor_type", "Sample_Type"),
-        journal_file=journal_file,
+        storage_file=journal_file,
         artifact_dir=artifact_dir,
     )
     searcher.make_objective(
