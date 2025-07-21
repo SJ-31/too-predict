@@ -1,12 +1,11 @@
-include: "setup.smk"
+include: "Snakefile"
 
 
-model_cv_results = expand(
-    "{out}/deep/cross_validation/{date}/{model}/cv_results.csv",
-    out=OUT,
-    date=config.get("date", TODAY),
-    model=config["models"]["dl"].keys(),
-)
+outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}"
+models = config["models"]["dl"].keys()
+model_cv_results = expand("{out}/{model}/cv_results.csv", out=outpath, model=models)
+n_folds = range(config["defaults"]["dl"]["cv"]["n_splits"])
+fold_output = expand("{out}/{model}/fold_{n}", out=outpath, model=models, n=n_folds)
 
 
 rule all:
@@ -33,6 +32,7 @@ rule cross_validate:
             out=OUT, date=config.get("date", TODAY)
         ),
     output:
-        model_cv_results,
+        cv=model_cv_results,
+        fold_dir=directory(fold_output),
     script:
         f"{config['scripts']}/torch_cross_val.py"

@@ -1,9 +1,13 @@
-include: "setup.smk"
+include: "Snakefile"
+
+
+script = f"{config['scripts']}/robustness.py"
 
 
 rule all:
     input:
         beta=f"{OUT}/effective_robustness_beta.pkl",
+        # evaluation =
 
 
 rule prep:
@@ -14,14 +18,26 @@ rule prep:
             adatas=["train.h5ad", "shifted_test.h5ad", "standard_test.h5ad"],
         ),
     script:
-        f"{config['scripts']}/robustness.py"
+        script
 
 
 rule get_beta:
     # Obtain the linear regression model for computing effective robustness
     input:
-        rules.eff_prep.output,
+        rules.prep.output,
     output:
         rules.all.input.beta,
     script:
-        f"{config['scripts']}/robustness.py"
+        script
+
+
+# rule evaluate:
+#     input:
+#         beta_path=rules.all.input.beta,
+#         train=rules.prep.output[0],
+#         shifted_test=rules.prep.output[1],
+#         standard_test=rules.prep.output[2],
+#     output:
+#         rules.all.input.evaluation,
+#     script:
+#         script
