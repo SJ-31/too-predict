@@ -1,9 +1,4 @@
-configfile: "env.yaml"
-
-
-# Use these variables to specify output
-REPOS = config["repos"] if not config["test"] else f"{config["repos"]}/tests"
-OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}/tests"
+include: "setup.smk"
 
 
 rule all:
@@ -11,17 +6,18 @@ rule all:
         beta=f"{OUT}/effective_robustness_beta.pkl",
 
 
-# * Effective robustness
-rule eff_prep:
+rule prep:
     output:
         expand(
             "{out}/{adatas}",
             out=f"{REPOS}/effective_robustness",
             adatas=["train.h5ad", "shifted_test.h5ad", "standard_test.h5ad"],
         ),
+    script:
+        f"{config['scripts']}/robustness.py"
 
 
-rule eff_get_beta:
+rule get_beta:
     # Obtain the linear regression model for computing effective robustness
     input:
         rules.eff_prep.output,
