@@ -596,21 +596,43 @@ class Robustness:
 
     def __init__(
         self,
-        train: Dataset,
-        shifted_test: Dataset,
-        standard_test: Dataset,
         n_classes: int,
+        train: Dataset | None = None,
+        shifted_test: Dataset | None = None,
+        standard_test: Dataset | None = None,
+        train_ad: ad.AnnData | None = None,
+        shifted_test_ad: ad.AnnData | None = None,
+        standard_test_ad: ad.AnnData | None = None,
         beta_path: Path | None = None,
+        baselines_path: Path | None = None,
         y_idx: int | None = None,
+        y_col: str | None = None,
     ) -> None:
+        missing_dset = any(
+            [x is not None for x in [train, shifted_test, standard_test]]
+        )
+        missing_adata = any(
+            [x is None for x in [train_ad, shifted_test_ad, standard_test_ad]]
+        )
+        if missing_dset or missing_adata:
+            raise ValueError(
+                "Training data and test data must be given as either AnnData objects or dataset objects"
+            )
         self._train: Dataset = train
         self._shifted_test: Dataset = shifted_test
         self._standard_test: Dataset = standard_test
+
+        self._train_ad: ad.AnnData = train_ad
+        self._shifted_test_ad: ad.AnnData = shifted_test_ad
+        self._standard_test_ad: ad.AnnData = standard_test_ad
+
         self.beta: LinearRegression | None | Path = None
         if beta_path is not None and beta_path.exists():
             with open(beta_path, "r") as f:
                 self.beta = pickle.load(f)
+        self.baselines_path: Path | None = baselines_path
         self._y_idx: None | int = y_idx
+        self._y_col: None | str = y_col
         self._n_classes: int = n_classes
 
         # Numpy ndarray copies of data
@@ -624,9 +646,11 @@ class Robustness:
 
     def _validate_spec(
         self,
+        name: str,
         model_fn: Callable,
         numpy: bool | None = None,
-        train_fn: Callable | None = None,
+        adata: bool | None = None,
+        train_fn: Callable | Literal["fit"] | None = None,
         pretrained: bool | None = None,
     ) -> None:
         """Validate dictionary used to construct and train a model
@@ -637,19 +661,22 @@ class Robustness:
             be fitted
         numpy : if given, model is taken to be an sklearn model and will be given the
             train and test data as numpy arrays
+        adata : if given, model will be called with fit on the adata object
         train_fn : the training function for pytorch modules. Must take a dataset
+            if Literal 'fit', then the model is assumed to have a fit function to be called
+            on the data
         pretrained : if the model has been fit already. If true, then it will not
             be fit with ``self.train``
         """
-        if numpy is None and train_fn is None:
-            raise ValueError(
-                "If the model isn't expected to take a numpy array, train_fn must be provided!"
-            )
+        if train_fn is None:
+            raise ValueError("How to train the model must be specified!")
 
     def _fit(self, model, spec: dict) -> None:
         if not spec.get("pretrained"):
-            if spec.get("numpy"):
+            if spec.get("numpy") and spec.get("train_fn") == "fit":
                 model.fit(self._train_x, self._train_y)
+            elif spec.get("adata") and spec.get("train_fn") == "fit":
+                model.fit(self._train_ad, self._y_col)  # Fit to training adata
             else:
                 train = spec["train_fn"]
                 train(model, self._train)
@@ -659,17 +686,22 @@ class Robustness:
         model,
         spec: dict,
         test_dset: Dataset | None = None,
+        test_adata: ad.AnnData | None = None,
         test_x: np.ndarray | None = None,
         test_y: np.ndarray | None = None,
     ) -> float:
         if spec.get("numpy"):
             preds = model.predict(test_x)
             return met.accuracy_score(y_true=test_y, y_pred=preds)
+        elif spec.get("adata"):
+            preds = model.predict(test_adata)
+            y_true = test_adata.obs.loc[:, self._y_col]
+            return met.accuracy_score(y_true=y_true, y_pred=preds)
         else:
             preds = model(test_dset[:][0])
             return accuracy(
                 preds=preds,
-                target=test_y,
+                target=test_dset[:][1],
                 num_classes=self._n_classes,
                 task="multiclass",
             ).item()
@@ -681,18 +713,23 @@ class Robustness:
         defined in ```spec```
         """
         standard_acc = 0.0
-        if spec.get("numpy"):
-            if with_standard:
-                standard_acc = self._acc(
-                    model, test_x=self._standard_x, test_y=self._standard_y
-                )
-            shifted_acc = self._acc(
-                model, test_x=self._shifted_y, test_y=self._shifted_x
+        if with_standard:
+            standard_acc = self._acc(
+                model,
+                test_x=self._standard_x,
+                test_y=self._standard_y,
+                test_dset=self._standard_test,
+                test_adata=self._standard_test_ad,
+                spec=spec,
             )
-        else:
-            if with_standard:
-                standard_acc = self._acc(model, test_dset=self._standard_test)
-            shifted_acc = self._acc(model, test_dset=self._shifted_test)
+        shifted_acc = self._acc(
+            model,
+            test_x=self._shifted_y,
+            test_y=self._shifted_x,
+            test_dset=self._shifted_test_ad,
+            test_adata=self._shifted_test_ad,
+            spec=spec,
+        )
         return standard_acc, shifted_acc
 
     def effective_robustness(self, mspec: dict) -> float:
@@ -749,7 +786,10 @@ class Robustness:
             self._has_numpy = True
 
     def get_beta(
-        self, models: Sequence[dict], save_to: Path | str | None = None
+        self,
+        models: Sequence[dict],
+        save_to: Path | str | None = None,
+        save_baselines: bool = False,
     ) -> LinearRegression:
         """Compute accuracies on standard dataset to find model with which to calculate
             beta
@@ -769,19 +809,42 @@ class Robustness:
         """
         self._set_np(models)
         vals: dict = {"name": [], "standard_acc": [], "shifted_acc": []}
+        if save_baselines and self.baselines_path is None:
+            raise ValueError(
+                "Saving baseline models has been set, but no path has been provided!"
+            )
+        if self.baselines_path is not None:
+            baselines: set = {b.stem for b in self.baselines_path.glob(".pkl")}
+        else:
+            baselines = set()
         for i, spec in enumerate(models):
-            self._validate_spec(spec)
+            self._validate_spec(**spec)
             model = spec["model_fn"]()
-            name = spec.get("name", f"model_{i}")
-            self._fit(model, spec)
-            shifted_acc, standard_acc = self._acc_pair(model, spec)
-            vals["shifted_acc"].append(shifted_acc)
-            vals["standard_acc"].append(standard_acc)
-            vals["name"].append(name)
+            from_saved: bool = False
+            try:
+                name = spec.get("name", f"model_{i}")
+                if name not in baselines:
+                    self._fit(model, spec)
+                else:
+                    with open(self.baselines_path.joinpath(f"{name}.pkl"), "r") as f:
+                        model = pickle.load(f)
+                shifted_acc, standard_acc = self._acc_pair(model, spec)
+                vals["shifted_acc"].append(shifted_acc)
+                vals["standard_acc"].append(standard_acc)
+                vals["name"].append(name)
+                if save_baselines and not from_saved:
+                    with open(f"{name}.pkl", "wb") as f:
+                        pickle.dump(model, f)
+            except Exception as e:
+                print(
+                    f"WARNING: baseline model {name} failed with the following exception:"
+                )
+                print(f"\t{str(e)}")
+                print("ignoring...\n")
         beta = LinearRegression()
-        beta.fit(vals["standard_acc"], y=vals["shifted_acc"])
+        beta.fit(np.array(vals["standard_acc"]).reshape(-1, 1), y=vals["shifted_acc"])
         if save_to:
-            if isinstance(save_to, str):
+            if not isinstance(save_to, Path):
                 save_to = Path(save_to)
             with open(save_to, "wb") as f:
                 pickle.dump(beta, f)
