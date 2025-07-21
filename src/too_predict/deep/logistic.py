@@ -126,7 +126,7 @@ class MtcLr(d_ut.MultiModule):
     @override
     def forward(self, X) -> tuple[Tensor]:
         results = []
-        for i in range(self.n_tasks):
+        for i in range(self._n_tasks):
             results.append(self.lrs[str(i)](X))
         return tuple(results)
 
@@ -239,7 +239,7 @@ class MultiLevel(d_ut.MultiModule):
     @override
     def forward(self, X) -> tuple[Tensor]:
         results = []
-        for i in range(self.n_tasks):
+        for i in range(self._n_tasks):
             results.append(self.lrs[str(i)](X))
         return tuple(results)
 
@@ -247,7 +247,7 @@ class MultiLevel(d_ut.MultiModule):
     def criterion(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
         total_loss: Tensor = 0
         n_samples: int = y_true.shape[0]
-        if self.n_tasks > 1:
+        if self._n_tasks > 1:
             total_loss += (
                 1
                 / 2
