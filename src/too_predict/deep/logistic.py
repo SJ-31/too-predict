@@ -135,7 +135,7 @@ class MtcLr(d_ut.MultiModule):
         total_loss = 0.0
         if len(y_pred) > 1:
             total_loss += multitask_cross_entropy_loss(
-                y_pred, y_true, weights=self.task_weights
+                y_pred, y_true, weights=self._task_weights
             )
         else:
             total_loss += nn.functional.cross_entropy(y_pred[0], y_true)
@@ -249,11 +249,8 @@ class MultiLevel(d_ut.MultiModule):
         n_samples: int = y_true.shape[0]
         if self._n_tasks > 1:
             total_loss += (
-                1
+                multitask_cross_entropy_loss(y_pred, y_true, weights=self._task_weights)
                 / 2
-                * multitask_cross_entropy_loss(
-                    y_pred, y_true, weights=self.task_weights
-                )
             )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
