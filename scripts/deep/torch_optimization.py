@@ -56,7 +56,7 @@ else:
     logdir=here("log"),
 )
 def choose_optimization(dct, adata) -> None:
-    journal_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.log")
+    storage_file = here(OPTUNA_JOURNALS, f"torch_select_optimizer{TEST}.log")
     artifact_dir = here(OPTUNA_STORAGE, f"torch_optimization{TEST}")
     if TEST == "_test":
         filter = -1
@@ -122,7 +122,7 @@ def choose_optimization(dct, adata) -> None:
 
     searcher = DlOptimizer(
         label_col=("tumor_type", "Sample_Type"),
-        journal_file=journal_file,
+        journal_file=storage_file,
         artifact_dir=artifact_dir,
     )
     cv_output = OUTDIR.joinpath("cv_output")

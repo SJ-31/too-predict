@@ -113,7 +113,7 @@ class DlOptimizer(topt.BaseOptimizer):
         label_col: Sequence[str] = ("tumor_type", "Sample_Type"),
         save_cv: bool = True,
         ignore_duplicated: bool = True,
-        journal_file: Path | str | None = None,
+        storage_file: Path | str | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
         super().__init__(
@@ -122,7 +122,7 @@ class DlOptimizer(topt.BaseOptimizer):
             save_model=False,
             save_cv=save_cv,
             ignore_duplicated=ignore_duplicated,
-            journal_file=journal_file,
+            storage_file=storage_file,
             artifact_dir=artifact_dir,
         )
 

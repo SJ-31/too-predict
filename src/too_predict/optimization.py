@@ -113,14 +113,14 @@ class BaseOptimizer:
         save_model: bool = True,
         save_cv: bool = True,
         ignore_duplicated: bool = True,
-        journal_file: Path | str | None = None,
+        storage_file: Path | str | None = None,
         artifact_dir: Path | None = None,
     ) -> None:
         self.label_col: str = label_col
         self.save_model: bool = save_model
         self.save_cv: bool = save_cv
-        self.journal_file: str | None = (
-            str(journal_file) if isinstance(journal_file, Path) else journal_file
+        self.storage: str | None = (
+            str(storage_file) if isinstance(storage_file, Path) else storage_file
         )
         self.artifact_dir: Path | None = artifact_dir
         self.ignore_duplicated: bool = ignore_duplicated
@@ -155,10 +155,8 @@ class BaseOptimizer:
         }
         if "directions" in kwargs:
             del defaults["direction"]
-        if "storage" not in kwargs and self.journal_file is not None:
-            kwargs["storage"] = oj.JournalStorage(
-                oj.JournalFileBackend(self.journal_file)
-            )
+        if "storage" not in kwargs and self.storage is not None:
+            kwargs["storage"] = oj.JournalStorage(oj.JournalFileBackend(self.storage))
         defaults.update(kwargs)
         try:
             study = optuna.create_study(**defaults)
@@ -301,8 +299,8 @@ class Optimizer(BaseOptimizer):
             if pruner is not None:
                 study_kwargs["pruner"] = pruner
             obj_kwargs = {"adata": x_train, "cv_splits": n_inner}
-            if self.journal_file is not None:  # This enables parallelization
-                out = self.journal_file.joinpath(f"fold_{fold}.log")
+            if self.storage is not None:  # This enables parallelization
+                out = self.storage.joinpath(f"fold_{fold}.log")
                 jfile = oj.JournalFileBackend(str(out))
                 study_kwargs["storage"] = oj.JournalStorage(jfile)
             if self.artifact_dir is not None:
