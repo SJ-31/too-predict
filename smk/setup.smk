@@ -1,0 +1,14 @@
+configfile: "env.yaml"
+
+
+from datetime import date
+
+# Use these variables to specify output
+REPOS = config["out"]["repos"] if not config["test"] else config["out"]["test_repos"]
+OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}/tests"
+TODAY = date.today().isoformat()
+
+
+def dated(file):
+    date = config.get("date", "")
+    return f"{date}-{file}"
