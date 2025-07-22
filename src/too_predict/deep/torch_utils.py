@@ -215,9 +215,10 @@ class AnnDataset(torch.utils.data.Dataset):
         """
         self.isbacked: bool = adata.isbacked
         self.file: Path = adata.file
+        self.device: str = device
         if not adata.isbacked:
             self.X: torch.Tensor = torch.tensor(
-                ut.xarray_if_sparse(adata), device=device
+                ut.xarray_if_sparse(adata), device=self.device
             )
         else:
             self.X = adata.X
@@ -292,7 +293,7 @@ class AnnDataset(torch.utils.data.Dataset):
         arr = val[0].toarray().astype(np.float32)
         if arr.shape[0] == 1:
             arr = arr.flatten()
-        as_tensor = torch.from_numpy(arr)
+        as_tensor = torch.from_numpy(arr).to(device=self.device)
         return as_tensor, val[1]
 
 
