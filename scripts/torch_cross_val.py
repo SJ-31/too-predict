@@ -21,11 +21,13 @@ except ImportError:
     smk = ut.DummySnake(rule="my_rule", configfile="my_config")
 
 torch.set_default_dtype(torch.float32)
+torch.set_float32_matmul_precision("high")
 
 
 LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["defaults"]["dl"]
 N_REPEATS = smk.config["cv_n_repeats"]
+TEST: bool = smk.config["test"]
 
 FILTER, TRANSFORM = tt.default_filter_transform(smk.config)
 # TODO: the transformation NEEDS to be a hyperparameter that you optimize for
@@ -50,13 +52,20 @@ def cross_val(in_file: str):
     train, valid = ut.train_test_split_ad(
         adata, test_size=0.1, random_state=ut.RANDOM_STATE
     )
+    train_set = d_ut.AnnDataset(
+        train, to_encode=LABELS, device="cpu" if TEST else DL_CONFIG["device"]
+    )
+    valid_set = d_ut.AnnDataset(
+        valid, to_encode=LABELS, device="cpu" if TEST else DL_CONFIG["device"]
+    )
     outdir = Path(smk.params["outdir"]).joinpath(model)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["callbacks"] = [
         EarlyStopping(**DL_CONFIG["early_stop"]),
         AverageBest(n_best=5, target="val_acc"),
     ]
-    if smk.config["test"]:
+    trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
+    if TEST:
         trainer_kwargs["log_every_n_steps"] = 1
         trainer_kwargs["max_epochs"] = 10
     model_kwargs = {
@@ -73,9 +82,10 @@ def cross_val(in_file: str):
             model_kwargs=model_kwargs,
             trainer_kwargs=trainer_kwargs,
             save_path=outdir,
-            adset=d_ut.AnnDataset(train, to_encode=LABELS),
+            adset=train_set,
             n_classes=n_classes,
-            validation=d_ut.AnnDataset(valid, to_encode=LABELS),
+            validation=valid_set,
+            device=DL_CONFIG["device"],
             **DL_CONFIG["cv"],
         )
         cv.loc[:, "repeat"] = i
@@ -84,7 +94,7 @@ def cross_val(in_file: str):
 
 
 if smk.rule == "preprocess":
-    if smk.config["test"]:
+    if TEST:
         adata = ut.training_data_internal_test(minimal=True)
     else:
         adata = ut.training_data_internal()
