@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import override
 
 import anndata as ad
-import lightning as L
 import numpy as np
 import optuna
 import optuna.artifacts as oa
@@ -13,6 +12,7 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.filter as fil
 import too_predict.optimization as topt
 import too_predict.transformer as tt
+import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from too_predict.deep.evaluation import cross_validate, holdout
@@ -169,6 +169,11 @@ class DlOptimizer(topt.BaseOptimizer):
         opts["n_classes"] = n_classes
         module_fn, module_kwargs, transformer, filter = setup(opts=opts)
         n_epochs = setup._suggest_param_or_default("n_epochs")
+        matmul_precision: float | None = setup._suggest_param_or_default(
+            "matmul_precision"
+        )
+        if matmul_precision:
+            torch.set_float32_matmul_precision(matmul_precision)
         module_kwargs["cache"] = kwargs.get("set_cache")
         module_kwargs.update(
             {"in_features": n_features, "n_classes_per_task": n_classes}
@@ -188,7 +193,11 @@ class DlOptimizer(topt.BaseOptimizer):
             adata = transformer.fit_transform(adata)
         train, test = train_test_split_ad(adata, test_size=kwargs.get("test_size", 0.1))
         vals = []
-        trainer_params = {"max_epochs": n_epochs, "callbacks": callbacks}
+        trainer_params = {
+            "max_epochs": n_epochs,
+            "callbacks": callbacks,
+            "precision": setup._suggest_param_or_default("precision"),
+        }
         if do_splits:
             result: dict = holdout(
                 model_fn=module_fn,
