@@ -116,7 +116,7 @@ def choose_optimization(dct, adata) -> None:
             adata = filter.fit_transform(adata)
         if transformer != -1:
             adata = transformer.fit_transform(adata)
-        adata.write_h5ad(adata)
+        adata.write_h5ad(f)
         adata = ad.read_h5ad(f, backed=True)
         return adata
 
