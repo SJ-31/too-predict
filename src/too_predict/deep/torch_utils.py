@@ -132,7 +132,7 @@ def n_uniques(x: torch.Tensor | np.ndarray | Sequence) -> int:
 def data_spec(
     X: Dataset | DataLoader | torch.Tensor | np.ndarray | ad.AnnData,
     y: torch.Tensor | np.ndarray | None | pd.DataFrame = None,
-) -> tuple:
+) -> tuple[int, tuple[int, ...]]:
     """Return a tuple of (n_features, n_classes) for the given dataset
     If multitask, the second element is a tuple of length n_tasks
     """
@@ -149,11 +149,13 @@ def data_spec(
         if is_atomic(y) or y.shape[1] == 1:
             n_classes = n_uniques(y)
         else:
-            n_classes = tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
+            n_classes: tuple[int, int] = tuple(
+                [n_uniques(y[:, i]) for i in range(y.shape[1])]
+            )
         return x.shape[1], n_classes
 
     if (
-        isinstance(y, tuple)
+        (isinstance(y, tuple) or isinstance(y, list))
         and isinstance(next(iter(y)), str)
         and isinstance(X, ad.AnnData)
     ):
@@ -171,7 +173,7 @@ def data_spec(
         return X.shape[1], tuple([len(y[s].unique()) for s in y])
     elif isinstance(y, np.ndarray) and len(y.shape) > 1:
         return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
-    return X.shape[1], len(set(y))
+    return X.shape[1], tuple(len(set(y)))
 
 
 # * Datasets
@@ -751,10 +753,16 @@ def l2(model: nn.Module, exclude: Sequence[str] = ()) -> Tensor | Literal[0]:
     -------
     Tensor
 
+    Notes
+    -----
+    Prefer to use the "weight_decay" parameter in the optimizer over this
     """
     with torch.no_grad():
-        return sum(
-            torch.sum(torch.pow(v, 2))
-            for k, v in model.named_parameters()
-            if k not in exclude
+        return (
+            sum(
+                torch.sum(torch.pow(v, 2))
+                for k, v in model.named_parameters()
+                if k not in exclude
+            )
+            / 2
         )

@@ -5,7 +5,9 @@ outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}"
 models = config["models"]["dl"].keys()
 model_cv_results = expand("{out}/{model}/cv_results.csv", out=outpath, model=models)
 n_folds = range(config["defaults"]["dl"]["cv"]["n_splits"])
-fold_output = expand("{out}/{model}/fold_{n}", out=outpath, model=models, n=n_folds)
+fold_output = expand(
+    "{out}/{model}/fold_{n}/lightning_logs", out=outpath, model=models, n=n_folds
+)
 
 
 rule all:

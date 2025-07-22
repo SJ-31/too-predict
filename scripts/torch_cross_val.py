@@ -45,9 +45,7 @@ def cross_val(in_file: str):
     adata = ad.read_h5ad(in_file, backed=True)
     model = Path(in_file).stem
     model_kwargs = MODELS[model].get("params", {})
-
     model_fn = get_model_fn(model, model_kwargs)
-
     n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
     train, valid = ut.train_test_split_ad(
         adata, test_size=0.1, random_state=ut.RANDOM_STATE
@@ -58,8 +56,8 @@ def cross_val(in_file: str):
         EarlyStopping(**DL_CONFIG["early_stop"]),
         AverageBest(n_best=5, target="val_acc"),
     ]
-    trainer_kwargs["fast_dev_run"] = smk.config["test"] == "true"
     if smk.config["test"]:
+        trainer_kwargs["log_every_n_steps"] = 1
         trainer_kwargs["max_epochs"] = 10
     model_kwargs = {
         "n_classes_per_task": n_classes,
