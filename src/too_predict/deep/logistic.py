@@ -85,7 +85,6 @@ class MtcLr(d_ut.MultiModule):
         self.lmbda: float = lmbda
         self.l2: float = l2
         self.lrs: nn.ModuleDict = nn.ModuleDict()
-        self.task_label_map: dict = {}
         for i, n_classes in enumerate(n_classes_per_task):
             # Initialize LR model for each task
             lr = nn.LazyLinear(n_classes)
@@ -169,9 +168,9 @@ class DecomposedLinear(L.LightningModule):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.bias: Tensor
-        self.theta: Tensor
-        self.gamma: Tensor
+        self.bias: nn.Parameter
+        self.theta: nn.Parameter
+        self.gamma: nn.Parameter
         if theta is None:
             self.theta = nn.Parameter()
         else:
@@ -216,9 +215,7 @@ class MultiLevel(d_ut.MultiModule):
         )
         self.lrs: nn.ModuleDict = nn.ModuleDict()
         self.theta: Tensor = nn.Parameter(torch.empty((in_features,)))
-        self.task_label_map: dict = {}
         for i, n_classes in enumerate(n_classes_per_task):
-            self.task_label_map[i] = list(range(n_classes))
             self.lrs[str(i)] = DecomposedLinear(
                 in_features=in_features,
                 out_features=n_classes,
