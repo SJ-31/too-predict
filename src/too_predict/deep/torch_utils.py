@@ -225,7 +225,7 @@ class AnnDataset(torch.utils.data.Dataset):
         self.encoders: dict[str, sp.LabelEncoder] = {}
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
-        )
+        ).to(self.device)
         self.n_classes: dict = {}
         self.label_cols: tuple = to_encode
         if isinstance(to_encode, str):
@@ -404,11 +404,11 @@ class MultiModule(L.LightningModule):
             self._task_weights = torch.tensor(task_weights)
         elif task_weights is not None:
             self._task_weights = task_weights
-        self._accs: list[Accuracy] | None = None
+        self._accs: nn.ModuleList | None = None
         if self._record:
-            self._accs = [
-                Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task
-            ]
+            self._accs = nn.ModuleList(
+                [Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task]
+            )
         if task_names is None:
             self._task_names: Sequence[str] = [str(i) for i in range(self._n_tasks)]
         else:

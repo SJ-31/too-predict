@@ -5,6 +5,7 @@ import itertools
 from collections.abc import Sequence
 from typing import override
 
+import lightning as L
 import numpy as np
 import sklearn.linear_model as sl
 import too_predict.deep.torch_utils as d_ut
@@ -39,8 +40,7 @@ class DummyLR(d_ut.MultiModule):
     @override
     def criterion(self, y_pred, y_true):
         cel = nn.functional.cross_entropy(input=y_pred, target=y_true)
-        with torch.no_grad():
-            l2 = cel + self.l2 * torch.sum(self.linear.weight**2)
+        l2 = cel + self.l2 * torch.sum(self.linear.weight**2)
         return l2
 
     @override
@@ -158,7 +158,7 @@ class MtcLr(d_ut.MultiModule):
 # * Implementation of [2]
 
 
-class DecomposedLinear(nn.Module):
+class DecomposedLinear(L.LightningModule):
     def __init__(
         self,
         in_features: int,
@@ -245,7 +245,7 @@ class MultiLevel(d_ut.MultiModule):
 
     @override
     def criterion(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
-        total_loss: Tensor = 0
+        total_loss: Tensor = torch.tensor(0.0).to(self.device)
         n_samples: int = y_true.shape[0]
         if self._n_tasks > 1:
             total_loss += (
@@ -257,12 +257,10 @@ class MultiLevel(d_ut.MultiModule):
 
         total_loss /= n_samples
         # Regularization
-        with torch.no_grad():
-            reg_theta = self.lmbda_1 * torch.sum(torch.abs(self.theta))
-            reg_gamma = 0
-            for lr in self.lrs.values():
-                reg_gamma += torch.sum(torch.abs(lr.gamma))
-            reg_gamma *= self.lmbda_2
-            total_loss += reg_theta + reg_gamma
-
+        reg_theta = self.lmbda_1 * torch.sum(torch.abs(self.theta))
+        reg_gamma = 0
+        for lr in self.lrs.values():
+            reg_gamma += torch.sum(torch.abs(lr.gamma))
+        reg_gamma *= self.lmbda_2
+        total_loss += reg_theta + reg_gamma
         return total_loss
