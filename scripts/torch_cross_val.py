@@ -21,13 +21,16 @@ except ImportError:
     smk = ut.DummySnake(rule="my_rule", configfile="my_config")
 
 torch.set_default_dtype(torch.float32)
-torch.set_float32_matmul_precision("high")
 
 
 LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["defaults"]["dl"]
 N_REPEATS = smk.config["cv_n_repeats"]
 TEST: bool = smk.config["test"]
+
+if mlp := DL_CONFIG["matmul_precision"].lower() != "none":
+    torch.set_float32_matmul_precision(mlp)
+
 
 FILTER, TRANSFORM = tt.default_filter_transform(smk.config)
 # TODO: the transformation NEEDS to be a hyperparameter that you optimize for
@@ -61,7 +64,7 @@ def cross_val(in_file: str):
     outdir = Path(smk.params["outdir"]).joinpath(model)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["callbacks"] = [
-        EarlyStopping(**DL_CONFIG["early_stop"]),
+        # EarlyStopping(**DL_CONFIG["early_stop"]),
         AverageBest(n_best=5, target="val_acc"),
     ]
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
