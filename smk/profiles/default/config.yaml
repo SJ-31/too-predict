@@ -1,4 +1,3 @@
-executor: slurm
 rerun-triggers: mtime
 cores: 1
 keep-incomplete: True

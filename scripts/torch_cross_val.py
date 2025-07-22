@@ -28,7 +28,7 @@ DL_CONFIG = smk.config["defaults"]["dl"]
 N_REPEATS = smk.config["cv_n_repeats"]
 TEST: bool = smk.config["test"]
 
-if mlp := DL_CONFIG["matmul_precision"].lower() != "none":
+if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
 
 
@@ -39,7 +39,7 @@ MODELS = smk.config["models"]["dl"]
 
 
 def opt_fn(pars):
-    return optim.Adam(pars, **DL_CONFIG["optimization"])
+    return optim.Adam(pars, **DL_CONFIG["optimizer"])
 
 
 def get_scheduler(optimizer):

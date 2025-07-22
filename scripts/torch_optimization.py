@@ -44,6 +44,7 @@ else:
     default_opts["n_epochs"] = DL_CONFIG["trainer"]["max_epochs"]
     default_opts["matmul_precision"] = DL_CONFIG["matmul_precision"]
     default_opts["precision"] = DL_CONFIG["trainer"]["precision"]
+    default_opts["lr"] = DL_CONFIG["optimizer"]["lr"]
     if smk.rule == "choose_optimization":
         changes = {
             "dropout": [0.2, 0.5],
