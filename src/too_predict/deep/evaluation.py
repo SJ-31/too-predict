@@ -204,7 +204,8 @@ def holdout(
             root.mkdir(exist_ok=True)
             trainer_kwargs["default_root_dir"] = root
         trainer = L.Trainer(**trainer_kwargs)
-        model = model_fn(**model_kwargs)
+        with trainer.init_module():
+            model = model_fn(**model_kwargs)
         if split_is_fn:
             x_train, x_test = splitter(cur_adata)
         else:
@@ -294,6 +295,7 @@ def cross_validate(
     validation: Dataset | None = None,
     verbose: bool = False,
     save_path: Path | None = None,
+    device: str = "cpu",
     **kwargs,
 ) -> pd.DataFrame:
     if verbose:
@@ -318,9 +320,11 @@ def cross_validate(
             root.mkdir(exist_ok=True)
             trainer_kwargs["default_root_dir"] = root
         trainer = L.Trainer(**trainer_kwargs)
-        model = model_fn(**model_kwargs)
+        with trainer.init_module():
+            model = model_fn(**model_kwargs)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
 
+        model.to(torch.device(device))
         y_pred = model.predict_step(test[:])
         acc = multitask_acc(
             y_true=y_true, predictions=y_pred, task_names=tasks, n_classes=n_classes
