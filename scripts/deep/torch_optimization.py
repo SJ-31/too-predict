@@ -130,6 +130,7 @@ def choose_optimization(dct, adata) -> None:
     cv_output = OUTDIR.joinpath("cv_output")
     cv_output.mkdir(exist_ok=True)
     OUTDIR.mkdir(exist_ok=True)
+    device = "cuda:0" if TEST == "" else "cpu"
     searcher.make_objective(
         adata=adata,
         opts=sample_opts,
@@ -138,6 +139,7 @@ def choose_optimization(dct, adata) -> None:
         do_cv=True,
         cv_splits=3,
         save_intermediate=True,
+        device=device,
         intermediate_out=cv_output,
         verbose=TEST != "",
         set_cache=["val_acc"],

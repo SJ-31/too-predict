@@ -140,6 +140,7 @@ class BaseOptimizer:
         do_cv: bool = True,
         split_fns: dict | None = None,
         split_masks: dict | None = None,
+        device: str = "cpu",
         cv_splits=5,
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,

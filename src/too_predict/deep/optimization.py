@@ -135,6 +135,7 @@ class DlOptimizer(topt.BaseOptimizer):
         do_cv: bool = True,
         split_fns: dict | None = None,
         split_masks: dict | None = None,
+        device: str = "cpu",
         cv_splits=5,
         opts: dict | None = None,
         artifact_store: oa.FileSystemArtifactStore | None = None,
@@ -189,7 +190,6 @@ class DlOptimizer(topt.BaseOptimizer):
         vals = []
         trainer_params = {"max_epochs": n_epochs, "callbacks": callbacks}
         if do_splits:
-            # TODO: pass a function to create trainer
             result: dict = holdout(
                 model_fn=module_fn,
                 model_kwargs=module_kwargs,
@@ -198,13 +198,20 @@ class DlOptimizer(topt.BaseOptimizer):
                 n_classes=n_classes,
                 to_encode=self.label_col,
                 split_fns=split_fns,
+                device=device,
                 split_masks=split_masks,
                 minimal=True,
                 verbose=False,
             )
             vals.append(np.mean(result.values()))
+        train_set = d_ut.AnnDataset(
+            train,
+            to_encode=self.label_col,
+            device=device,
+        )
+        valid_set = d_ut.AnnDataset(test, device=device)
+
         if do_cv:
-            # TODO: add the callbacks here
             cv_out = log_root.joinpath("cv")
             cv_out.mkdir(exist_ok=True)
             cv_results = cross_validate(
@@ -212,8 +219,9 @@ class DlOptimizer(topt.BaseOptimizer):
                 model_kwargs=module_kwargs,
                 trainer_kwargs=trainer_params,
                 save_path=cv_out,
-                adset=d_ut.AnnDataset(train, to_encode=self.label_col),
-                validation=d_ut.AnnDataset(test, to_encode=self.label_col),
+                adset=train_set,
+                validation=valid_set,
+                device=device,
                 n_classes=n_classes,
                 n_splits=cv_splits,
                 verbose=kwargs.get("verbose", False),

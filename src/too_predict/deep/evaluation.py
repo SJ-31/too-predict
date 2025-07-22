@@ -171,6 +171,7 @@ def holdout(
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
     minimal: bool = False,
+    device: str = "cpu",
     outdir: Path | None = None,
     validation: float | None = None,
     **kwargs,
@@ -221,7 +222,7 @@ def holdout(
                 f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
             )
         v_loader = (
-            DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode))
+            DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode, device=device))
             if isinstance(v_adata, ad.AnnData)
             else None
         )
@@ -237,11 +238,14 @@ def holdout(
                     save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
                     index=False,
                 )
-        train_l = DataLoader(d_ut.AnnDataset(x_train, to_encode=to_encode), **kwargs)
-        test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode)
+        train_l = DataLoader(
+            d_ut.AnnDataset(x_train, to_encode=to_encode, device=device), **kwargs
+        )
+        test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
         x_test_tensor, y_true = test_dset[:]
 
         trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
+        model.to(device)
 
         if not minimal:
             proba = model.predict_proba(x_test_tensor)
