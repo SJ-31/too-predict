@@ -1,10 +1,12 @@
 #!/usr/bin/env ipython
 
+import os
 from pathlib import Path
 
 import anndata as ad
 import joblib
 import too_predict._train_utils as tt
+import too_predict.deep.torch_utils as d_ut
 import too_predict.utils as ut
 import torch
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
@@ -58,7 +60,7 @@ else:
     default_opts["matmul_precision"] = DL_CONFIG["matmul_precision"]
     default_opts["precision"] = DL_CONFIG["trainer"]["precision"]
     default_opts["lr"] = DL_CONFIG["optimizer"]["lr"]
-    if smk.rule == "choose_optimization":
+    if smk.rule == "main_hpo":
         changes = {
             "dropout": [0.2, 0.5],
             "task_weights": torch.tensor([1, 1.2]),
@@ -76,12 +78,22 @@ else:
             "precision": ["32-true", "16-mixed"],
             "matmul_precision": ["high", "medium", "highest"],
         }
+    else:
+        raise ValueError("No rule specified!")
 
+    default_opts.update(changes)
     adata = ad.read_h5ad(str(smk.input), backed=True)
+    date = smk.params["date"]
     searcher = DlOptimizer(
         label_col=LABELS,
         storage_file=smk.params["storage_file"],
         artifact_dir=smk.params["artifact_dir"],
+        log_fn=lambda x: d_ut.comet_logger(
+            x,
+            True,
+            api_key=os.environ.get("COMET_API_KEY"),
+            project_name=f"{date}-{smk.rule}",
+        ),
     )
     searcher.make_objective(
         adata=adata,
@@ -89,14 +101,12 @@ else:
         do_splits=smk.config["do_holdout"],
         do_cv=smk.config["do_cv"],
         cv_splits=DL_CONFIG["cv"]["n_splits"],
-        save_intermediate=True,
         device=DL_CONFIG["device"],
-        intermediate_out=smk.output["cv"],
         verbose=TEST != "",
         set_cache=["val_acc"],
         callbacks=[
-            EarlyStopping(monitor="val_loss", patience=40, mode="min"),
-            AverageBest(n_best=10, target="val_acc"),
+            # EarlyStopping(monitor="val_loss", patience=40, mode="min"),
+            # AverageBest(n_best=10, target="val_acc"),
         ],
         batch_size=DL_CONFIG["cv"]["batch_size"],
     )

@@ -7,6 +7,7 @@ from datetime import date
 REPOS = config["out"]["repos"] if not config["test"] else config["out"]["test_repos"]
 OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}/tests"
 TODAY = date.today().isoformat()
+DATE = config.get("date", TODAY)
 
 
 def dated(file):

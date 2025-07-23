@@ -11,8 +11,7 @@ import too_predict.utils as ut
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.loggers import CometLogger
+from lightning.pytorch.callbacks import EarlyStopping
 from too_predict._train_utils import get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.evaluation import cross_validate
@@ -66,7 +65,7 @@ def cross_val(in_file: str):
     outdir = Path(smk.params["outdir"]).joinpath(model)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["callbacks"] = [
-        # EarlyStopping(**DL_CONFIG["early_stop"]),
+        EarlyStopping(**DL_CONFIG["early_stop"]),
         AverageBest(n_best=5, target="val_acc"),
     ]
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
@@ -81,6 +80,7 @@ def cross_val(in_file: str):
         "optimizer_fn": opt_fn,
     }
     dfs = []
+    date = smk.params["date"]
     for i in range(N_REPEATS):
         cv: pd.DataFrame = cross_validate(
             model_fn=model_fn,
@@ -89,7 +89,7 @@ def cross_val(in_file: str):
                 f"fold_{x}",
                 True,
                 api_key=os.environ.get("COMET_API_KEY"),
-                project_name=f"cross_val-{model}",
+                project_name=f"{date}-cross_val-{model}",
             ),
             trainer_kwargs=trainer_kwargs,
             adset=train_set,
