@@ -14,7 +14,20 @@ from too_predict.deep.optimization import DlOptimizer
 try:
     from snakemake.script import snakemake as smk
 except ImportError:
-    smk = ut.DummySnake(rule="my_rule", configfile="my_config")
+    smk = ut.DummySnake(
+        rule="choose_optimization",
+        configfile="env.yaml",
+        input="../data/tests/adatas/optuna/optimze.h5ad",
+        output={
+            "trial_df": "../data/output/tests/optuna_df.csv",
+            "study_obj": "../data/output/tests/optuna.pkl",
+        },
+        params={
+            "storage_file": "../data/output/tests/optuna.db",
+            "artifact_dir": "../data/output/tests/",
+        },
+    )
+    smk.config["test"] = True
 
 torch.set_default_dtype(torch.float32)
 
@@ -38,7 +51,7 @@ if smk.rule == "preprocess":
     if DL_CONFIG["filter"]:
         adata = filter.fit_transform(adata)
     adata = transform.fit_transform(adata)
-    adata.write_h5ad(smk.output)
+    adata.write_h5ad(str(smk.output))
 else:
     default_opts = DL_CONFIG["hpo"].copy()
     default_opts["n_epochs"] = DL_CONFIG["trainer"]["max_epochs"]
@@ -64,7 +77,7 @@ else:
             "matmul_precision": ["high", "medium", "highest"],
         }
 
-    adata = ad.read_h5ad(smk.input, backed=True)
+    adata = ad.read_h5ad(str(smk.input), backed=True)
     searcher = DlOptimizer(
         label_col=LABELS,
         storage_file=smk.params["storage_file"],
@@ -87,11 +100,12 @@ else:
         ],
         batch_size=DL_CONFIG["cv"]["batch_size"],
     )
+    path = Path(smk.params["storage_file"]).resolve()
     study = searcher.run_study(
         study_name="optimizer_selection",
         directions=["maximize", "maximize"],
-        storage=f"sqlite:///{smk.params['storage_file']}",
+        storage=f"sqlite:///{path}",
     )
     joblib.dump(study, smk.output["study_obj"])
     df = study.trials_dataframe()
-    df.to_csv(smk.output["trial_df"], index=False)
+    df.to_csv(smk.output["df"], index=False)
