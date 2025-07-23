@@ -15,6 +15,7 @@ import too_predict.transformer as tt
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from lightning.pytorch.loggers import Logger
 from too_predict.deep.evaluation import cross_validate, holdout
 from too_predict.deep.nns import Disyak
 from too_predict.utils import train_test_split_ad
@@ -115,6 +116,7 @@ class DlOptimizer(topt.BaseOptimizer):
         ignore_duplicated: bool = True,
         storage_file: Path | str | None = None,
         artifact_dir: Path | None = None,
+        log_fn: Callable[[str], Logger] | None = None,
     ) -> None:
         super().__init__(
             score_fn=None,
@@ -125,6 +127,7 @@ class DlOptimizer(topt.BaseOptimizer):
             storage_file=storage_file,
             artifact_dir=artifact_dir,
         )
+        self.log_fn: Callable = log_fn
 
     @override
     def _objective(
@@ -205,6 +208,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 trainer_kwargs=trainer_params,
                 adata=train,
                 n_classes=n_classes,
+                logger_fn=lambda x: self.log_fn(f"{trial.number}-holdout_{x}"),
                 to_encode=self.label_col,
                 split_fns=split_fns,
                 device=device,
@@ -229,6 +233,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 trainer_kwargs=trainer_params,
                 save_path=cv_out,
                 adset=train_set,
+                logger_fn=lambda x: self.log_fn(f"{trial.number}-cv_fold_{x}"),
                 validation=valid_set,
                 device=device,
                 n_classes=n_classes,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Iterable, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Callable, Literal, override
 
@@ -19,6 +20,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from lightning.pytorch.loggers.comet import CometLogger
 from lightning.pytorch.utilities.types import OptimizerConfig
 from too_predict.utils import if_none
 from torch import Tensor
@@ -767,3 +769,15 @@ def l2(model: nn.Module, exclude: Sequence[str] = ()) -> Tensor | Literal[0]:
             )
             / 2
         )
+
+
+# * Logging
+
+
+def comet_logger(exp_name: str, prefix_with_date: bool = True, **kwargs) -> CometLogger:
+    if prefix_with_date:
+        d = date.today().isoformat() if prefix_with_date else ""
+        exp_name = f"{d}-{exp_name}"
+    logger = CometLogger(**kwargs)
+    logger.experiment.set_name(exp_name)
+    return logger

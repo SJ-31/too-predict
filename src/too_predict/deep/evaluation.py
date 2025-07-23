@@ -15,6 +15,7 @@ import too_predict.utils as ut
 import torch
 import torch.nn as nn
 import torchmetrics.functional.classification as tmet
+from lightning.pytorch.loggers import CometLogger, Logger
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from xgboost import XGBClassifier
@@ -167,6 +168,7 @@ def holdout(
     n_classes: Sequence[int],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
+    logger_fn: Callable[[str], Logger] | None = None,
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
@@ -187,6 +189,8 @@ def holdout(
     validation : float | None
         If not none, the percentage of the test split to use for validation data in
         early stopping and reporting training metrics
+    logger_fn : Optional function taking name of holdout set and returning Lightning
+        logger
 
     Returns
     ------
@@ -204,6 +208,8 @@ def holdout(
             root = save_split_path.joinpath(set_label)
             root.mkdir(exist_ok=True)
             trainer_kwargs["default_root_dir"] = root
+        if logger_fn is not None:
+            trainer_kwargs["logger"] = logger_fn(set_label)
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)
@@ -298,10 +304,23 @@ def cross_validate(
     n_splits: int = 5,
     validation: Dataset | None = None,
     verbose: bool = False,
+    logger_fn: Callable[[int], Logger] | None = None,
     save_path: Path | None = None,
     device: str = "cpu",
     **kwargs,
 ) -> pd.DataFrame:
+    """Run cross-validation
+
+    Parameters
+    ----------
+    trainer_kwargs : Keyword arguments passed to Lightning trainer
+    logger_fn : Optional function taking in the fold number and returning a Lightning
+        logger
+
+    Returns
+    -------
+    Dataframe summarizing cv accuracies
+    """
     if verbose:
         print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
@@ -323,6 +342,9 @@ def cross_validate(
             root = save_path.joinpath(f"fold_{fold}")
             root.mkdir(exist_ok=True)
             trainer_kwargs["default_root_dir"] = root
+        if logger_fn is not None:
+            trainer_kwargs["logger"] = logger_fn(fold)
+
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)
@@ -339,7 +361,10 @@ def cross_validate(
     if verbose:
         print("Cross validation completed")
     df = pd.DataFrame(metrics)
-    return d_ut.tensor_cols_to_float(df)
+    df = d_ut.tensor_cols_to_float(df)
+    if isinstance(trainer.logger, CometLogger):
+        trainer.logger.experiment.log_table("cv_summary.csv", df, True)
+    return df
 
 
 class Baseline:

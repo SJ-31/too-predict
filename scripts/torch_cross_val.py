@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import os
 from pathlib import Path
 
 import anndata as ad
@@ -11,6 +12,7 @@ import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.loggers import CometLogger
 from too_predict._train_utils import get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.evaluation import cross_validate
@@ -83,8 +85,13 @@ def cross_val(in_file: str):
         cv: pd.DataFrame = cross_validate(
             model_fn=model_fn,
             model_kwargs=model_kwargs,
+            logger_fn=lambda x: d_ut.comet_logger(
+                f"fold_{x}",
+                True,
+                api_key=os.environ.get("COMET_API_KEY"),
+                project_name=f"cross_val-{model}",
+            ),
             trainer_kwargs=trainer_kwargs,
-            save_path=outdir,
             adset=train_set,
             n_classes=n_classes,
             validation=valid_set,
