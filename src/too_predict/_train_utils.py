@@ -878,7 +878,7 @@ def get_callback_fn(name: str, config: dict | None = None) -> Callable:
 def smk_callbacks(config: dict) -> list[Callable]:
     """Retrieve enabled callbacks from config dictionary"""
     callbacks = []
-    for callback, dct in config["callbacks"]:
+    for callback, dct in config["callbacks"].items():
         if dct.get("enabled"):
             callbacks.append(get_callback_fn(callback, dct["params"]))
     return callbacks

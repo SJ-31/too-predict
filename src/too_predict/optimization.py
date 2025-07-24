@@ -3,6 +3,7 @@
 # Study: optimization based on an objective function
 # Trial: a single execution of the objective function
 import pickle
+from collections.abc import Sequence
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Literal, override
@@ -64,9 +65,13 @@ class TrialSetup:
             If the value of `param_name` in user_opts is a tuple, the first and
         second values are interpreted as start, end of a range and the last
         as the step
+            If a sequence and the first item is "literal" or "lit", return the second item
+               regardless
             If a list, interpreted as categorical options
         """
         val = self.user_opts.get(param_name)
+        if isinstance(val, Sequence) and len(val) > 0 and val[0] in {"literal", "lit"}:
+            return val[1]
         if isinstance(val, str) and val.lower() == "none":
             return None
         if val is None:
