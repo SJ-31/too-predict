@@ -91,7 +91,7 @@ else:
         log_fn=lambda x: d_ut.lightning_logger(
             x,
             platform="tensorboard",
-            save_dir=f"{smk.params["outdir"]}/tensorboard",
+            save_dir=str(smk.output["log"]),
         ),
     )
     searcher.make_objective(
@@ -104,8 +104,8 @@ else:
         verbose=TEST != "",
         set_cache=["val_acc"],
         callbacks=[
-            # EarlyStopping(monitor="val_loss", patience=40, mode="min"),
-            # AverageBest(n_best=10, target="val_acc"),
+            # lambda: EarlyStopping(monitor="val_loss", patience=40, mode="min"),
+            # lambda: AverageBest(n_best=10, target="val_acc"),
         ],
         batch_size=DL_CONFIG["cv"]["batch_size"],
     )

@@ -18,9 +18,7 @@ rule all:
 rule preprocess:
     output:
         expand(
-            "{storage}/adatas/torch_main/{models}.h5ad",
-            storage=REPOS,
-            models=config["models"]["dl"].keys(),
+            "{storage}/adatas/torch_main/{models}.h5ad", storage=REPOS, models=models
         ),
     script:
         f"{config['scripts']}/torch_cross_val.py"

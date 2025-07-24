@@ -84,7 +84,7 @@ class Disyak(d_ut.MultiModule):
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss: torch.Tensor = 0
         if self._n_tasks > 1:
-            loss = multitask_cross_entropy_loss(
+            total_loss += multitask_cross_entropy_loss(
                 y_pred, y_true, weights=self._task_weights, model=self, prefix=context
             )
         else:

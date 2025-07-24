@@ -33,7 +33,7 @@ rule main_hpo:
         rules.preprocess.output,
     output:
         **results_spec("torch_hpo", False),
-        outdir=directory(f"{outpath}/tensorboard"),
+        log=directory(f"{outpath}/tensorboard"),
     params:
         storage_file=f"{store_dir}/optim.db",
         artifact_dir=f"{artifact_dir}/optim",
