@@ -493,7 +493,7 @@ class MultiModule(L.LightningModule):
     def training_step(self, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = self.criterion(y_pred=output, y_true=y)
+        loss = self.criterion(y_pred=output, y_true=y, context="train")
         self.log("train_loss", loss)
         if self._record:
             self._calc_accuracy(output=output, y_true=y, prefix="train")
@@ -518,7 +518,7 @@ class MultiModule(L.LightningModule):
     def _log_step(self, log_to, acc_prefix: str, batch, batch_idx):
         x, y = batch
         output = self(x)
-        loss = self.criterion(y_pred=output, y_true=y)
+        loss = self.criterion(y_pred=output, y_true=y, context=acc_prefix)
         self.log(log_to, loss)
         self._try_cache_to(log_to, loss)
         if self._record:
@@ -583,15 +583,14 @@ class MultiModule(L.LightningModule):
             lr_scheduler_config["scheduler"] = self._scheduler_fn(optimizer)
         return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
 
-    def criterion(self, y_pred, y_true):
+    def criterion(self, y_pred, y_true, context: str | None = None):
         """criterion.
 
         Parameters
         ----------
-        y_pred :
-            y_pred
-        y_true :
-            y_true
+        context : str
+            Optional string denoting when the criterion was calculated e.g. "train"
+            "validation" etc.
         """
         raise NotImplementedError()
 
