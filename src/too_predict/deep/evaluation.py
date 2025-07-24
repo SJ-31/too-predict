@@ -394,14 +394,22 @@ class Baseline:
 
 
 def multitask_cross_entropy_loss(
-    y_pred: Tensor, y_true: Tensor, weights: Tensor | None = None
+    y_pred: Tensor,
+    y_true: Tensor,
+    weights: Tensor | None = None,
+    model: L.LightningModule | None = None,
+    prefix: str = "",
 ) -> Tensor:
     losses: Tensor = torch.empty(y_true.shape[1])
     for i, (task_pred, task_y) in enumerate(
         zip(y_pred, torch.unbind(y_true, dim=1))
     ):  # Gives y_hat = softmax(Xw + b)
         # tensor of shape n_samples, n_classes
-        losses[i] = nn.functional.cross_entropy(task_pred, task_y)
+        loss = nn.functional.cross_entropy(task_pred, task_y)
+        if model is not None:
+            name = f"loss_{i}" if not prefix else f"{prefix}_loss_{i}"
+            model.log(name, loss)
+        losses[i] = loss
         # Get loss on tasks separately
     if weights is not None and len(weights) == len(losses):
         losses = losses * weights
