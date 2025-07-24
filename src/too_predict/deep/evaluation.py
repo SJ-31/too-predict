@@ -301,6 +301,7 @@ def cross_validate(
     adset: d_ut.AnnDataset,
     n_classes: Sequence[int],
     random_state: int | None = ut.RANDOM_STATE,
+    callbacks: list[Callable[[], L.Callback]] | None = None,
     n_splits: int = 5,
     validation: Dataset | None = None,
     verbose: bool = False,
@@ -345,6 +346,8 @@ def cross_validate(
         if logger_fn is not None:
             trainer_kwargs["logger"] = logger_fn(fold)
 
+        if callbacks is not None:
+            trainer_kwargs["callbacks"] = [c() for c in callbacks]
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)

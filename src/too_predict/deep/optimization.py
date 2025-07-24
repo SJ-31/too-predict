@@ -179,8 +179,6 @@ class DlOptimizer(topt.BaseOptimizer):
         module_kwargs.update(
             {"in_features": n_features, "n_classes_per_task": n_classes}
         )
-        callbacks = []
-        callbacks.extend(kwargs.get("callbacks", []))
         log_root: Path | str | None = kwargs.get("intermediate_out", None)
         if log_root is not None:
             if isinstance(log_root, str):
@@ -198,7 +196,6 @@ class DlOptimizer(topt.BaseOptimizer):
         vals = []
         trainer_params = {
             "max_epochs": n_epochs,
-            "callbacks": callbacks,
             "precision": setup._suggest_param_or_default("precision"),
         }
         if do_splits:
@@ -234,6 +231,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 model_fn=module_fn,
                 model_kwargs=module_kwargs,
                 trainer_kwargs=trainer_params,
+                callbacks=kwargs.get("callbacks"),
                 save_path=cv_out,
                 adset=train_set,
                 logger_fn=lambda x: self.log_fn(f"{trial.number}-cv_fold_{x}"),
