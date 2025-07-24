@@ -56,14 +56,18 @@ if smk.rule == "preprocess":
     adata.write_h5ad(str(smk.output))
 else:
     default_opts = DL_CONFIG["hpo"].copy()
-    default_opts["n_epochs"] = DL_CONFIG["trainer"]["max_epochs"]
     default_opts["matmul_precision"] = DL_CONFIG["matmul_precision"]
     default_opts["precision"] = DL_CONFIG["trainer"]["precision"]
     default_opts["lr"] = DL_CONFIG["optimizer"]["lr"]
     if smk.rule == "main_hpo":
         changes = {
             "dropout": [0.2, 0.5],
-            "task_weights": torch.tensor([1, 1.2]),
+            "task_weights": [
+                torch.tensor([1, 2]),
+                torch.tensor([1, 4]),
+                torch.tensor([1, 8]),
+                torch.tensor([1, 16]),
+            ],
             "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
             "n_hidden": [1000, 2000, None],
             "betas": [(0.9, 0.999), (0.7, 0.888)],
