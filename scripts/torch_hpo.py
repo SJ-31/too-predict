@@ -88,11 +88,10 @@ else:
         label_col=LABELS,
         storage_file=smk.params["storage_file"],
         artifact_dir=smk.params["artifact_dir"],
-        log_fn=lambda x: d_ut.comet_logger(
+        log_fn=lambda x: d_ut.lightning_logger(
             x,
-            True,
-            api_key=os.environ.get("COMET_API_KEY"),
-            project_name=f"{date}-{smk.rule}",
+            platform="tensorboard",
+            save_dir=f"{smk.params["outdir"]}/tensorboard",
         ),
     )
     searcher.make_objective(

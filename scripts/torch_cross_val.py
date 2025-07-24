@@ -80,16 +80,14 @@ def cross_val(in_file: str):
         "optimizer_fn": opt_fn,
     }
     dfs = []
-    date = smk.params["date"]
     for i in range(N_REPEATS):
         cv: pd.DataFrame = cross_validate(
             model_fn=model_fn,
             model_kwargs=model_kwargs,
-            logger_fn=lambda x: d_ut.comet_logger(
-                f"fold_{x}",
-                True,
-                api_key=os.environ.get("COMET_API_KEY"),
-                project_name=f"{date}-cross_val-{model}",
+            logger_fn=lambda x: d_ut.lightning_logger(
+                f"fold_{x}_repeat_{i}",
+                platform="tensorboard",
+                save_dir=outdir.joinpath("tensorboard"),
             ),
             trainer_kwargs=trainer_kwargs,
             adset=train_set,

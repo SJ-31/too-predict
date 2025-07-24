@@ -2,12 +2,12 @@ include: "Snakefile"
 
 
 outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}"
-models = config["models"]["dl"].keys()
+model_dict = config["models"]["dl"]
+models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
 model_cv_results = expand("{out}/{model}/cv_results.csv", out=outpath, model=models)
-n_folds = range(config["defaults"]["dl"]["cv"]["n_splits"])
-fold_output = expand(
-    "{out}/{model}/fold_{n}/lightning_logs", out=outpath, model=models, n=n_folds
-)
+model_logs = [
+    directory(d) for d in expand("{out}/{model}/tensorboard", out=outpath, model=models)
+]
 
 
 rule all:
@@ -30,11 +30,10 @@ rule cross_validate:
     input:
         rules.preprocess.output,
     params:
-        outdir="{out}/deep/cross_validation/{date}/".format(
-            out=OUT, date=config.get("date", TODAY)
-        ),
+        outdir="{out}/deep/cross_validation/{date}/".format(out=OUT, date=DATE),
+        date=DATE,
     output:
         cv=model_cv_results,
-        fold_dir=directory(fold_output),
+        log=model_logs,
     script:
         f"{config['scripts']}/torch_cross_val.py"
