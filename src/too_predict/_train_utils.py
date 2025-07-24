@@ -875,6 +875,15 @@ def get_callback_fn(name: str, config: dict | None = None) -> Callable:
 # * Snakemake
 
 
+def smk_callbacks(config: dict) -> list[Callable]:
+    """Retrieve enabled callbacks from config dictionary"""
+    callbacks = []
+    for callback, dct in config["callbacks"]:
+        if dct.get("enabled"):
+            callbacks.append(get_callback_fn(callback, dct["params"]))
+    return callbacks
+
+
 class DummySnake:
     def __init__(
         self,

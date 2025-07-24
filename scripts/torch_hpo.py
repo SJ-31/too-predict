@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-import os
 from pathlib import Path
 
 import anndata as ad
@@ -9,8 +8,6 @@ import too_predict._train_utils as tt
 import too_predict.deep.torch_utils as d_ut
 import too_predict.utils as ut
 import torch
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.optimization import DlOptimizer
 
 try:
@@ -54,36 +51,41 @@ if smk.rule == "preprocess":
         adata = filter.fit_transform(adata)
     adata = transform.fit_transform(adata)
     adata.write_h5ad(str(smk.output))
-else:
+elif smk.rule == "main":
+    hpo_task = smk.config["hpo_task"]
     default_opts = DL_CONFIG["hpo"].copy()
     default_opts["matmul_precision"] = DL_CONFIG["matmul_precision"]
     default_opts["precision"] = DL_CONFIG["trainer"]["precision"]
     default_opts["lr"] = DL_CONFIG["optimizer"]["lr"]
-    if smk.rule == "main_hpo":
+    if hpo_task == "adam":
         changes = {
-            "dropout": [0.2, 0.5],
+            "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
+            "betas": [(0.9, 0.999), (0.7, 0.888)],
+            "amsgrad": [True, False],
+            "weight_decay": [0, 0.01, 0.001, 0.0001],
+            "momentum": [0, 0.9],
+        }
+    elif hpo_task == "scheduling":
+        changes = {
+            "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
+            "mode": ["triangular", "triangular2"],
+        }
+    elif hpo_task == "task_weights":
+        changes = {
             "task_weights": [
                 torch.tensor([1, 2]),
                 torch.tensor([1, 4]),
                 torch.tensor([1, 8]),
                 torch.tensor([1, 16]),
             ],
-            "l1_pars": [{"lambda": 0.001}, {"lambda": 0.01}],
-            "n_hidden": [1000, 2000, None],
-            "betas": [(0.9, 0.999), (0.7, 0.888)],
-            "amsgrad": [True, False],  # Adam
-            "weight_decay": [0, 0.01, 0.001, 0.0001],  # Adam, SGD
-            "momentum": [0, 0.9],  # SGD
-            "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
-            "mode": ["triangular", "triangular2"],
         }
-    elif smk.rule == "choose_precision":
+    elif hpo_task == "precision":
         changes = {
             "precision": ["32-true", "16-mixed"],
             "matmul_precision": ["high", "medium", "highest"],
         }
     else:
-        raise ValueError("No rule specified!")
+        raise ValueError("No task specified!")
 
     default_opts.update(changes)
     adata = ad.read_h5ad(str(smk.input), backed=True)
@@ -107,10 +109,7 @@ else:
         device=DL_CONFIG["device"],
         verbose=TEST != "",
         set_cache=["val_acc"],
-        callbacks=[
-            # lambda: EarlyStopping(monitor="val_loss", patience=40, mode="min"),
-            # lambda: AverageBest(n_best=10, target="val_acc"),
-        ],
+        callbacks=tt.smk_callbacks(DL_CONFIG),
         batch_size=DL_CONFIG["cv"]["batch_size"],
     )
     path = Path(smk.params["storage_file"]).resolve()
