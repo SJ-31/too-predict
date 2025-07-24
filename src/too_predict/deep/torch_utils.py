@@ -20,7 +20,7 @@ import torch.nn as nn
 import torch.nn.init as init
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-from lightning.pytorch.loggers.comet import CometLogger
+from lightning.pytorch.loggers import CometLogger, TensorBoardLogger, WandbLogger
 from lightning.pytorch.utilities.types import OptimizerConfig
 from too_predict.utils import if_none
 from torch import Tensor
@@ -773,10 +773,24 @@ def l2(model: nn.Module, exclude: Sequence[str] = ()) -> Tensor | Literal[0]:
 # * Logging
 
 
-def comet_logger(exp_name: str, prefix_with_date: bool = True, **kwargs) -> CometLogger:
+def lightning_logger(
+    exp_name: str,
+    prefix_with_date: bool = True,
+    platform: Literal["comet", "wandb", "tensorboard"] = "comet",
+    **kwargs,
+) -> CometLogger | WandbLogger | TensorBoardLogger:
     if prefix_with_date:
         d = date.today().isoformat() if prefix_with_date else ""
         exp_name = f"{d}-{exp_name}"
-    logger = CometLogger(**kwargs)
-    logger.experiment.set_name(exp_name)
+    if platform == "comet":
+        logger = CometLogger(**kwargs)
+        logger.experiment.set_name(exp_name)
+    elif platform == "wandb":
+        kwargs.update({"name": exp_name})
+        logger = WandbLogger(**kwargs)
+    elif platform == "tensorboard":
+        if "save_dir" in kwargs:
+            kwargs["name"] = ""
+        kwargs.update({"version": exp_name})
+        logger = TensorBoardLogger(**kwargs)
     return logger
