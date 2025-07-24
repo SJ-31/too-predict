@@ -1,9 +1,20 @@
 include: "Snakefile"
 
 
+task_options = ("scheduling", "adam", "precision", "task_weights")
+
+hpo_task = config.get("hpo_task", "").lower()
+if hpo_task not in task_options:
+    raise ValueError(
+        f"""
+    The top-level config parameter `hpo_task` must be specified
+        Options: {task_options}
+    """
+    )
+
 store_dir = f"{REPOS}/{config['out']['optuna']['storage']}"
 artifact_dir = f"{REPOS}/{config['out']['optuna']['artifacts']}"
-outpath = f"{OUT}/optimization/{config.get('date', TODAY)}"
+outpath = f"{OUT}/optimization/{config.get('date', TODAY)}_{hpo_task}"
 model_cache = f"{REPOS}/adatas/optuna"
 
 
@@ -13,12 +24,13 @@ def results_spec(name, input: bool = False):
         out["cv"] = f"{outpath}/{name}_cv"
     else:
         out["cv"] = directory(f"{outpath}/{name}_cv")
+        out["log"] = directory(f"{outpath}/tensorboard")
     return out
 
 
 rule all:
     input:
-        **results_spec("torch_hpo", True),
+        **results_spec(hpo_task, True),
 
 
 rule preprocess:
@@ -28,19 +40,14 @@ rule preprocess:
         f"{config['scripts']}/torch_hpo.py"
 
 
-rule main_hpo:
+rule main:
     input:
         rules.preprocess.output,
     output:
-        **results_spec("torch_hpo", False),
-        log=directory(f"{outpath}/tensorboard"),
+        **results_spec(hpo_task, False),
     params:
         storage_file=f"{store_dir}/optim.db",
         artifact_dir=f"{artifact_dir}/optim",
         date=DATE,
     script:
         f"{config['scripts']}/torch_hpo.py"
-
-
-# TODO: make these
-# rule choose_precision:
