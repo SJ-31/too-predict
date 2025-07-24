@@ -157,8 +157,6 @@ class DlOptimizer(topt.BaseOptimizer):
             Proportion of the dataset to allocate to the test split in holdout validation. Default is 0.1.
         intermediate_out : Path, optional
             Directory path where intermediate outputs (e.g., cross-validation results) will be saved. If provided, a subdirectory named after the trial number will be created.
-        save_intermediate : bool, optional
-            If True, saves intermediate results during cross-validation to the specified `intermediate_out` directory. Default is False.
         verbose : bool, optional
             If True, enables verbose output during cross-validation. Default is False.
         batch_size : int, optional
@@ -183,8 +181,10 @@ class DlOptimizer(topt.BaseOptimizer):
         )
         callbacks = []
         callbacks.extend(kwargs.get("callbacks", []))
-        log_root: Path | None = kwargs.get("intermediate_out", None)
+        log_root: Path | str | None = kwargs.get("intermediate_out", None)
         if log_root is not None:
+            if isinstance(log_root, str):
+                log_root = Path(log_root)
             log_root = log_root.joinpath(
                 str(trial.number)
             )  # This is supposed to be unique...
@@ -225,8 +225,11 @@ class DlOptimizer(topt.BaseOptimizer):
         valid_set = d_ut.AnnDataset(test, device=device)
 
         if do_cv:
-            cv_out = log_root.joinpath("cv")
-            cv_out.mkdir(exist_ok=True)
+            if log_root is not None:
+                cv_out = log_root.joinpath("cv")
+                cv_out.mkdir(exist_ok=True)
+            else:
+                cv_out = None
             cv_results = cross_validate(
                 model_fn=module_fn,
                 model_kwargs=module_kwargs,
