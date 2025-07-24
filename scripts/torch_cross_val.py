@@ -12,7 +12,7 @@ import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.callbacks import EarlyStopping
-from too_predict._train_utils import get_model_fn
+from too_predict._train_utils import get_callback_fn, get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.evaluation import cross_validate
 
@@ -64,10 +64,10 @@ def cross_val(in_file: str):
     )
     outdir = Path(smk.params["outdir"]).joinpath(model)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
-    trainer_kwargs["callbacks"] = [
-        EarlyStopping(**DL_CONFIG["early_stop"]),
-        AverageBest(n_best=5, target="val_acc"),
-    ]
+    callbacks = []
+    for callback, dct in DL_CONFIG["callbacks"]:
+        if dct.get("enabled"):
+            callbacks.append(get_callback_fn(callback, dct["params"]))
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
     if TEST:
         trainer_kwargs["log_every_n_steps"] = 1
@@ -84,6 +84,7 @@ def cross_val(in_file: str):
         cv: pd.DataFrame = cross_validate(
             model_fn=model_fn,
             model_kwargs=model_kwargs,
+            callbacks=callbacks,
             logger_fn=lambda x: d_ut.lightning_logger(
                 f"fold_{x}_repeat_{i}",
                 platform="tensorboard",

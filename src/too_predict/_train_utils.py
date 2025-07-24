@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from interpret.glassbox import ExplainableBoostingClassifier
+from lightning.pytorch.callbacks import EarlyStopping
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import ShuffleSplit
 from sklearn.tree import DecisionTreeClassifier
@@ -18,6 +19,7 @@ import too_predict.model as tm
 import too_predict.recoder as rt
 import too_predict.transformer as trf
 from too_predict.corrector import Corrector
+from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.nns import Disyak
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
@@ -853,6 +855,21 @@ def get_model_fn(name: str, config: dict | None = None) -> Callable:
         return model(**kwargs, **config)
 
     return make_model
+
+
+def get_callback_fn(name: str, config: dict | None = None) -> Callable:
+    if name == "early_stop":
+        cb = EarlyStopping
+    elif name == "average_best":
+        cb = AverageBest
+
+    if config is None:
+        config = {}
+
+    def make(**kwargs):
+        return cb(**kwargs, **config)
+
+    return make
 
 
 # * Snakemake
