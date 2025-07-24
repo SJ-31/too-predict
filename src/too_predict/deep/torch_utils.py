@@ -403,7 +403,7 @@ class MultiModule(L.LightningModule):
         self._n_classes: Sequence[int] = n_classes_per_task
         self._task_weights: Tensor = None
         if task_weights is not None and not isinstance(task_weights, Tensor):
-            self._task_weights = torch.tensor(task_weights)
+            self._task_weights = torch.tensor(task_weights).to(self.device)
         elif task_weights is not None:
             self._task_weights = task_weights
         self._accs: nn.ModuleList | None = None

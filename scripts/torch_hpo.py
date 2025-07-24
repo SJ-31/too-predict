@@ -72,12 +72,7 @@ elif smk.rule == "main":
         }
     elif hpo_task == "task_weights":
         changes = {
-            "task_weights": [
-                torch.tensor([1, 2]),
-                torch.tensor([1, 4]),
-                torch.tensor([1, 8]),
-                torch.tensor([1, 16]),
-            ],
+            "task_weights": [(1, 2), (1, 4), (1, 8)],
         }
     elif hpo_task == "precision":
         changes = {
