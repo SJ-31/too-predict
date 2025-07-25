@@ -9,6 +9,12 @@ import lightning as L
 import torch
 from sortedcontainers import SortedList
 from too_predict.deep.torch_utils import MultiModule
+from torch.optim.lr_scheduler import LRScheduler
+
+"""
+References
+[1] Smith, S. L., Kindermans, P.-J., Ying, C., & Le, Q. V. (2018). Don’t Decay the Learning Rate, Increase the Batch Size (No. arXiv:1711.00489). arXiv. https://doi.org/10.48550/arXiv.1711.00489
+"""
 
 # * Utilities
 #
@@ -124,3 +130,85 @@ class AverageBest(L.Callback):
                     "WARNING: AverageBest failed to take average, reverting to original weights..."
                 )
                 pass
+
+
+class BatchSizeScaler(L.Callback):
+    """Implements the increasing batch size strategy described in [1]
+
+    Parameters
+    ----------
+    factor : Scaling factor by which to increase the batch size by
+    total_iters : The number of epochs before the batch size getes scaled
+    max : Maximum batch size before scaling stops completely
+    scheduler_fn : Function taking the model's optimizer as a single argument
+        and returns a scheduler
+    callback_metric : Trainer metric to pass to scheduler on step. If not provided,
+        scheduler is assumed not to require a metric
+    """
+
+    def __init__(
+        self,
+        factor: int = 5,
+        max: int | None = None,
+        total_iters: int = 10,
+        scheduler_fn: Callable | None = None,
+        callback_metric: str = "",
+    ) -> None:
+        super().__init__()
+        self._factor: int = factor
+        self._max: int | None = max
+        self._total_iters: int = total_iters
+        self._stopped: bool = False
+        self._scheduler_fn: Callable | None = scheduler_fn
+        self._scheduler: LRScheduler | None = None
+        self._callback_metric: str = callback_metric
+
+    @override
+    def on_train_start(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        if self._max is None:
+            self._max = len(trainer.train_dataloader.dataset) / 10
+        # local import to avoid circular import
+        from lightning.pytorch.strategies import DeepSpeedStrategy
+
+        if self._scheduler_fn is not None:
+            self._scheduler = self._scheduler_fn(trainer.model.optimizers())
+
+        if isinstance(trainer.strategy, DeepSpeedStrategy):
+            raise RuntimeError(
+                f"The `{type(trainer.strategy).__name__}` does not support `accumulate_grad_batches` changing between epochs."
+            )
+        if trainer.accumulate_grad_batches != 1:
+            raise ValueError(
+                "You have set `accumulate_grad_batches` and are using the `GradientAccumulationScheduler` callback. Either remove `accumulate_grad_batches` from the Trainer or remove the callback."
+            )
+        return super().on_train_start(trainer, pl_module)
+
+    @override
+    def on_train_epoch_end(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        if self._stopped and self._scheduler is not None:
+            if self._callback_metric:
+                self._scheduler.step(
+                    metrics=trainer.callback_metrics[self._callback_metric],
+                    epoch=trainer.current_epoch,
+                )
+            else:
+                self._scheduler.step(epoch=trainer.current_epoch)
+        return super().on_train_epoch_end(trainer, pl_module)
+
+    @override
+    def on_train_epoch_start(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        if self._stopped:
+            return
+        batch_size = trainer.train_dataloader.batch_size
+        if trainer.accumulate_grad_batches * batch_size >= self._max:
+            self._stopped = True
+        elif (1 + trainer.current_epoch) % self._total_iters == 0:
+            trainer.accumulate_grad_batches = (
+                trainer.accumulate_grad_batches * self._factor
+            )
