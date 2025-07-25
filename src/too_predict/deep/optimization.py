@@ -16,6 +16,7 @@ import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.loggers import Logger
+from too_predict.deep.callbacks import BatchSizeScaler
 from too_predict.deep.evaluation import cross_validate, holdout
 from too_predict.deep.nns import Disyak
 from too_predict.utils import train_test_split_ad
@@ -51,22 +52,30 @@ class DlTrialSetup(topt.TrialSetup):
         else:
             raise ValueError(f"{name} not implemented!")
 
-    def _suggest_scheduler(self) -> Callable:
+    def _suggest_scheduler(self) -> tuple[bool, Callable]:
         name = self._suggest_param_or_default("scheduler")
         if name == "ReduceLROnPlateau":
             patience = self._suggest_param_or_default("patience")
             factor = self._suggest_param_or_default("factor")
-            return lambda x: schedule.ReduceLROnPlateau(
+            return False, lambda x: schedule.ReduceLROnPlateau(
                 x, factor=factor, patience=patience
             )
         elif name == "CyclicLR":
             mode = self._suggest_param_or_default("mode")
-            return lambda x: schedule.CyclicLR(x, mode=mode)
+            return False, lambda x: schedule.CyclicLR(x, mode=mode)
         elif name == "PolynomialLR":
             power = self._suggest_param_or_default("power")
             total_iters = self._suggest_param_or_default("total_iters")
-            return lambda x: schedule.PolynomialLR(
+            return False, lambda x: schedule.PolynomialLR(
                 x, power=power, total_iters=total_iters
+            )
+        elif name == "BatchSizeScaler":
+            factor = self._suggest_param_or_default("bs_factor")
+            total_iters = self._suggest_param_or_default("bs_interval")
+            return True, lambda x: BatchSizeScaler(
+                factor=factor,
+                total_iters=total_iters,
+                scheduler_fn=lambda x: schedule.ConstantLR(x),
             )
         else:
             raise ValueError(f"{name} not implemented!")
@@ -100,9 +109,12 @@ class DlTrialSetup(topt.TrialSetup):
         self.user_opts: dict = opts
         module_fn, module_kwargs = self._suggest_module()
         optimizer_fn: Callable = self._suggest_optimizer()
-        scheduler_fn: Callable = self._suggest_scheduler()
+        is_callback, scheduler_fn = self._suggest_scheduler()
         module_kwargs["optimizer_fn"] = optimizer_fn
-        module_kwargs["scheduler_fn"] = scheduler_fn
+        if not is_callback:
+            module_kwargs["scheduler_fn"] = scheduler_fn
+        else:
+            self.user_opts["callbacks"].append(scheduler_fn)
         transformer: tt.Transformer = self._suggest_param_or_default("transformer")
         filter: fil.Filter = self._suggest_param_or_default("filter")
         return module_fn, module_kwargs, transformer, filter
@@ -221,6 +233,7 @@ class DlOptimizer(topt.BaseOptimizer):
         )
         valid_set = d_ut.AnnDataset(test, device=device)
 
+        callbacks = kwargs.get("callbacks", []).extend(opts.get("callbacks", []))
         if do_cv:
             if log_root is not None:
                 cv_out = log_root.joinpath("cv")
@@ -231,7 +244,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 model_fn=module_fn,
                 model_kwargs=module_kwargs,
                 trainer_kwargs=trainer_params,
-                callbacks=kwargs.get("callbacks"),
+                callbacks=callbacks,
                 save_path=cv_out,
                 adset=train_set,
                 logger_fn=lambda x: self.log_fn(f"{trial.number}-cv_fold_{x}"),

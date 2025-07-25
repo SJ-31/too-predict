@@ -67,8 +67,10 @@ elif smk.rule == "main":
         }
     elif hpo_task == "scheduling":
         changes = {
-            "scheduler": ["ReduceLROnPlateau", "PolynomialLR"],
+            "scheduler": ["ReduceLROnPlateau", "PolynomialLR", "BatchSizeScaler"],
             "mode": ["triangular", "triangular2"],
+            "bs_factor": 5,
+            "bs_total_iters": 10,
         }
     elif hpo_task == "task_weights":
         changes = {
