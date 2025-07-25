@@ -197,7 +197,6 @@ class BatchSizeScaler(L.Callback):
                 )
             else:
                 self._scheduler.step(epoch=trainer.current_epoch)
-        return super().on_train_epoch_end(trainer, pl_module)
 
     @override
     def on_train_epoch_start(

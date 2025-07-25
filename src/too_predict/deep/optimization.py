@@ -75,7 +75,7 @@ class DlTrialSetup(topt.TrialSetup):
             return True, lambda x: BatchSizeScaler(
                 factor=factor,
                 total_iters=total_iters,
-                scheduler_fn=lambda x: schedule.ConstantLR(x),
+                scheduler_fn=lambda x: schedule.StepLR(x, step_size=10),
             )
         else:
             raise ValueError(f"{name} not implemented!")
