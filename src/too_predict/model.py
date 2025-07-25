@@ -764,5 +764,5 @@ class Pipeline:
 
     def predict(self, x) -> np.ndarray:
         for step in self.preprocessing:
-            x = step.fit_transform(x)
+            x = step.fit_transform(x)  # BUG: this really should be transform
         return self.predictor.predict(x)

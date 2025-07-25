@@ -410,6 +410,8 @@ class Transformer:
 
     # * Transform
     def transform(self, _=None) -> ad.AnnData | None | np.ndarray:
+        # WARNING: this really isn't how you should implement transform, but
+        # most of the transformations below are sample-independent
         if self.impute and self.method != "robust_clr":
             self.counts = self.impute(self.counts)
         if self.method in IMPLEMENTED_SIMULATION:

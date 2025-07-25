@@ -42,11 +42,7 @@ import too_predict.model as tm
 import too_predict.multitask as multi
 import too_predict.plotting as tp
 import too_predict.r_utils as ru
-import too_predict.range_finder as tr
-import too_predict.recoder as rt
 import too_predict.utils as ut
-import torch
-from joblib import Parallel, delayed, parallel
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from numba import jit
@@ -63,6 +59,7 @@ from too_predict._train_utils import (
 )
 from too_predict.corrector import Corrector
 from too_predict.deep.logistic import MultiLevel
+from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
 from torch.utils.data import DataLoader
 
@@ -74,18 +71,19 @@ ensembldb = importr("ensembldb")
 obs = pd.read_csv(here("data", "training_data_obs.csv"))
 
 hg38 = here("data", "Homo_sapiens.GRCh38.113.sqlite")
-adata = ut.training_data_internal_test()
+adata = ut.training_data_internal_test(minimal=True)
 
 
 spc = MODELS["clr_ranks_mean_xgb_edger_per_type_ovp"]
 
 adata.obs["is_organoid"] = adata.obs["Sample_Type"] != "primary"
-F, M, T, B, E, C = read_model_spec(spc)
 adata.obs.loc[:, "not_primary"] = adata.obs["Sample_Type"] != "primary"
 
 adata = adata[
     adata.obs["Sample_Type"].isin(["primary", "metastatic", "primary_blood"]), :
 ]
+
+F, model, T, B, R, C = read_model_spec(spc, pipeline=False)
 filtered = F.fit_transform(adata)
 filtered.X = filtered.X.toarray()
 
@@ -96,14 +94,4 @@ def get_labs(adata) -> np.ndarray:
     return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
 
 
-# %%
-
-torch.set_default_dtype(torch.float64)
-adset = d_ut.AnnDataset(filtered, to_encode=("tumor_type", "Sample_Type"))
-
-n_features, n_classes = d_ut.data_spec(adset)
-model = MultiLevel(in_features=n_features, n_classes_per_task=n_classes)
-opti = model.get_optimizers()
-trainer = d_ut.Trainer(model, n_epochs=5, record_test_score=False)
-
-cv_res = d_ev.cross_validate(trainer, adset, batch_size=64)
+transformer = Transformer("clr", Imputer("plus_one"), post_process=)
