@@ -371,6 +371,8 @@ class MultiModule(L.LightningModule):
         scheduler_fn: Callable | None = None,
         scheduler_config: dict | None = None,
         cache: str | None | Sequence = None,
+        log_norm: bool = False,
+        scaler: TorchScaler | None = None,
     ) -> None:
         """__init__.
 
@@ -388,6 +390,11 @@ class MultiModule(L.LightningModule):
             to ignore from the calculation
         l2_pars : dict
             Parameters for l2 regularization, dict of two keys: {"lambda", "exclude"}
+        log_norm : bool
+            Whether to log the gradient norm
+        scaler : TorchScaler
+            Fitted (ideally on entire train set) scaler that will apply transformation
+            to each batch prior to training
 
         Returns
         -------
@@ -400,6 +407,7 @@ class MultiModule(L.LightningModule):
         self._record: bool = record_metrics
         self._l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
         self._l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self._log_norm: bool = log_norm
         self._n_classes: Sequence[int] = n_classes_per_task
         self._task_weights: Tensor = None
         if task_weights is not None and not isinstance(task_weights, Tensor):
@@ -419,6 +427,7 @@ class MultiModule(L.LightningModule):
         self._optimizer_fn: Callable | None = optimizer_fn
         self._scheduler_fn: Callable | None = scheduler_fn
         self._scheduler_config: dict | None = scheduler_config
+        self._scaler: TorchScaler | None = None
 
         # Cache results after iterations or validation for custom callbacks
         self._cache: dict[str, tuple[bool, list]] = {
@@ -489,34 +498,52 @@ class MultiModule(L.LightningModule):
             return tuple(p.detach() for p in proba)
         return proba.detach()
 
+    def maybe_scale(self, x):
+        if self._scaler is not None:
+            return self._scaler.transform(x)
+        return x
+
     @override
     def training_step(self, batch, batch_idx):
         x, y = batch
+        x = self.maybe_scale(x)
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, context="train")
         self.log("train_loss", loss)
         if self._record:
             self._calc_accuracy(output=output, y_true=y, prefix="train")
         self._try_cache_to("train_loss", loss)
+        if self._log_norm:
+            norm = (
+                sum(
+                    p.grad.norm(2).item() ** 2
+                    for p in self.parameters()
+                    if p.grad is not None
+                )
+                ** 0.5
+            )
+            self.log("gradient_norm", norm)
         return loss
 
     @override
     def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:
         try:
-            X, _ = batch
+            x, _ = batch
         except ValueError:
-            X = batch
-        if isinstance(X, DataLoader):
-            X = X.dataset[:][0]
-        elif isinstance(X, Dataset):
-            X = X[:]
-        proba = self(X)
+            x = batch
+        if isinstance(x, DataLoader):
+            x = x.dataset[:][0]
+        elif isinstance(x, Dataset):
+            x = x[:]
+        x = self.maybe_scale(x)
+        proba = self(x)
         if isinstance(proba, tuple):
             return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
         return proba.argmax(axis=1)
 
     def _log_step(self, log_to, acc_prefix: str, batch, batch_idx):
         x, y = batch
+        x = self.maybe_scale(x)
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, context=acc_prefix)
         self.log(log_to, loss)
@@ -794,3 +821,56 @@ def lightning_logger(
         kwargs.update({"version": exp_name})
         logger = TensorBoardLogger(**kwargs)
     return logger
+
+
+# * Normalization and scaling
+
+
+class TorchScaler:
+    def __init__(self) -> None:
+        pass
+
+    def fit(self, x: Tensor) -> None:
+        raise NotImplementedError
+
+    def transform(self, x: Tensor) -> Tensor:
+        raise NotImplementedError
+
+    def fit_transform(self, x: Tensor) -> Tensor:
+        self.fit(x)
+        return self.transform(x)
+
+
+class TorchStandardScaler(TorchScaler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mean: Tensor
+        self.std: Tensor
+
+    @override
+    def fit(self, x: Tensor):
+        self.mean = x.mean(0, keepdim=True)
+        self.std = x.std(0, unbiased=False, keepdim=True)
+
+    @override
+    def transform(self, x):
+        x -= self.mean
+        x /= self.std + 1e-7
+        return x
+
+
+class TorchMinMaxScaler(TorchScaler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.min: Tensor
+        self.diff: Tensor
+
+    @override
+    def fit(self, x: Tensor) -> None:
+        self.min = x.min(0).values
+        self.diff = x.max(0).values - self.min
+
+    @override
+    def transform(self, x: Tensor) -> Tensor:
+        x_std = (x - self.min) / self.diff
+        return x_std * self.diff + self.min

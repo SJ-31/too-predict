@@ -175,6 +175,7 @@ def holdout(
     minimal: bool = False,
     device: str = "cpu",
     outdir: Path | None = None,
+    scaler: d_ut.TorchScaler | None = None,
     validation: float | None = None,
     **kwargs,
 ) -> dict:
@@ -211,8 +212,6 @@ def holdout(
         if logger_fn is not None:
             trainer_kwargs["logger"] = logger_fn(set_label)
         trainer = L.Trainer(**trainer_kwargs)
-        with trainer.init_module():
-            model = model_fn(**model_kwargs)
         if split_is_fn:
             x_train, x_test = splitter(cur_adata)
         else:
@@ -249,6 +248,11 @@ def holdout(
         )
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
         x_test_tensor, y_true = test_dset[:]
+        if scaler is not None:
+            scaler.fit(train_l.dataset[:][0])
+            model_kwargs["scaler"] = scaler
+        with trainer.init_module():
+            model = model_fn(**model_kwargs)
 
         trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
         model.to(device)
@@ -307,6 +311,7 @@ def cross_validate(
     verbose: bool = False,
     logger_fn: Callable[[int], Logger] | None = None,
     save_path: Path | None = None,
+    scaler: d_ut.TorchScaler | None = None,
     device: str = "cpu",
     **kwargs,
 ) -> pd.DataFrame:
@@ -330,6 +335,8 @@ def cross_validate(
     tasks = adset.label_cols
     for task in tasks:
         metrics[task] = []
+    if scaler is not None:
+        model_kwargs["scaler"] = scaler
     for fold, (train_idx, test_idx) in enumerate(splits):
         if verbose:
             print(f"fold {fold} started")
@@ -343,16 +350,20 @@ def cross_validate(
             root = save_path.joinpath(f"fold_{fold}")
             root.mkdir(exist_ok=True)
             trainer_kwargs["default_root_dir"] = root
+
         if logger_fn is not None:
             trainer_kwargs["logger"] = logger_fn(fold)
 
+        if scaler is not None:
+            scaler.fit(train.dataset[:][0])
+
         if callbacks is not None:
             trainer_kwargs["callbacks"] = [c() for c in callbacks]
+
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
-
         model.to(torch.device(device))
         y_pred = model.predict_step(test[:])
         acc = multitask_acc(
