@@ -108,6 +108,7 @@ class DlTrialSetup(topt.TrialSetup):
     def __call__(self, opts: dict | None = None) -> tuple:
         self.user_opts: dict = opts
         module_fn, module_kwargs = self._suggest_module()
+        module_kwargs["scaler"] = self._suggest_param_or_default("scaler")
         optimizer_fn: Callable = self._suggest_optimizer()
         is_callback, scheduler_fn = self._suggest_scheduler()
         module_kwargs["optimizer_fn"] = optimizer_fn

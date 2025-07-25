@@ -76,6 +76,8 @@ elif smk.rule == "main":
         changes = {
             "task_weights": [(1, 2), (1, 4), (1, 8)],
         }
+    elif hpo_task == "scaling":
+        changes = {"scaler": ["MinMax", "Standard"]}
     elif hpo_task == "precision":
         changes = {
             "precision": ["32-true", "16-mixed"],

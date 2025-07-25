@@ -14,7 +14,7 @@ if hpo_task not in task_options:
 
 store_dir = f"{REPOS}/{config['out']['optuna']['storage']}"
 artifact_dir = f"{REPOS}/{config['out']['optuna']['artifacts']}"
-outpath = f"{OUT}/optimization/{config.get('date', TODAY)}_{hpo_task}"
+outpath = f"{OUT}/optimization/{config.get('date', TODAY)}"
 model_cache = f"{REPOS}/adatas/optuna"
 
 
@@ -24,7 +24,7 @@ def results_spec(name, input: bool = False):
         out["cv"] = f"{outpath}/{name}_cv"
     else:
         out["cv"] = directory(f"{outpath}/{name}_cv")
-        out["log"] = directory(f"{outpath}/tensorboard")
+        out["log"] = directory(f"{outpath}/{name}_tensorboard")
     return out
 
 
