@@ -856,7 +856,6 @@ def preserving_sample(
     adata: ad.AnnData,
     key: str,
     fraction: float = 0.4,
-    inplace: bool = True,
     rng: np.random.Generator = RNG,
     with_replacement: bool = False,
 ) -> None | ad.AnnData:
@@ -877,10 +876,7 @@ def preserving_sample(
             rng.choice(current.obs.index, size=count, replace=with_replacement)
         )
     mapped: np.ndarray = index_map[wanted_indices].values
-    if inplace:
-        adata = adata[mapped, :]
-    else:
-        return adata[mapped, :].copy()
+    return adata[mapped, :].copy()
 
 
 def do_call(fn, pars: dict | None):
