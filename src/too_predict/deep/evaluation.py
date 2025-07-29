@@ -243,10 +243,11 @@ def holdout(
                     save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
                     index=False,
                 )
-        train_l = DataLoader(
-            d_ut.AnnDataset(x_train, to_encode=to_encode, device=device), **kwargs
+        train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
+            x_train, to_encode=to_encode, device=device
         )
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
+        train_l = DataLoader(train_dset, **kwargs)
         x_test_tensor, y_true = test_dset[:]
         if scaler is not None:
             scaler.fit(train_l.dataset[:][0])
@@ -267,14 +268,16 @@ def holdout(
                 n_classes=n_classes,
             )
             return res
-        pred = trainer.predict_step(x_test_tensor)
-
-        return multitask_acc(
-            y_true=y_true,
-            predictions=pred,
-            n_classes=n_classes,
-            task_names=to_encode,
+        acc_kwargs = {"n_classes": n_classes, "task_names": to_encode}
+        test_acc = multitask_acc(
+            y_true=y_true, predictions=model.predict_step(test_dset[:]), **acc_kwargs
         )
+        train_acc = multitask_acc(
+            y_true=train_dset[:][1],
+            predictions=model.predict_step(train_dset[:]),
+            **acc_kwargs,
+        )
+        return test_acc, train_acc
 
     splitters: dict = split_fns if split_fns is not None else split_masks
     result: dict = {}
@@ -288,10 +291,11 @@ def holdout(
                     result[set_label][task], outdir=cur_outdir, prefix=f"{task}_"
                 )
     if outdir is not None and minimal:
-        tasks = list(next(iter(result.values())).keys())
+        tasks = list(next(iter(result.values()))[0].keys())
         to_df = {"set": result.keys()}
         for t in tasks:
-            to_df[t] = [v[t] for v in result.values()]
+            to_df[f"{t}_test_acc"] = [v[0][t] for v in result.values()]
+            to_df[f"{t}_train_acc"] = [v[1][t] for v in result.values()]
         df = pd.DataFrame(to_df)
         df = d_ut.tensor_cols_to_float(df)
         df.to_csv(outdir.joinpath("accuracy.csv"), index=False)
@@ -312,6 +316,7 @@ def cross_validate(
     logger_fn: Callable[[int], Logger] | None = None,
     save_path: Path | None = None,
     scaler: d_ut.TorchScaler | None = None,
+    with_train_acc: bool = True,
     device: str = "cpu",
     **kwargs,
 ) -> pd.DataFrame:
@@ -334,7 +339,9 @@ def cross_validate(
     metrics: dict = {"fold": []}
     tasks = adset.label_cols
     for task in tasks:
-        metrics[task] = []
+        metrics[f"{task}_valid_acc"] = []
+        if with_train_acc:
+            metrics[f"{task}_train_acc"] = []
     if scaler is not None:
         model_kwargs["scaler"] = scaler
     for fold, (train_idx, test_idx) in enumerate(splits):
@@ -343,8 +350,6 @@ def cross_validate(
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
         test: Dataset = Subset(adset, test_idx)
         val_loader = DataLoader(validation)
-
-        y_true = test[:][1]
 
         if save_path is not None:
             root = save_path.joinpath(f"fold_{fold}")
@@ -365,12 +370,23 @@ def cross_validate(
             model = model_fn(**model_kwargs)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
         model.to(torch.device(device))
-        y_pred = model.predict_step(test[:])
         acc = multitask_acc(
-            y_true=y_true, predictions=y_pred, task_names=tasks, n_classes=n_classes
+            y_true=test[:][1],
+            predictions=model.predict_step(test[:]),
+            task_names=tasks,
+            n_classes=n_classes,
         )
+        if with_train_acc:
+            train_acc = multitask_acc(
+                y_true=train.dataset[:][1],
+                predictions=model.predict_step(train.dataset[:]),
+                task_names=tasks,
+                n_classes=n_classes,
+            )
         for t in tasks:
-            metrics[t].append(acc[t])
+            metrics[f"{t}_valid_acc"].append(acc[t])
+            if with_train_acc:
+                metrics[f"{t}_train_acc"].append(train_acc[t])
         metrics["fold"].append(fold)
     if verbose:
         print("Cross validation completed")
