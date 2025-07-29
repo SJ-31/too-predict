@@ -38,7 +38,7 @@ class DummyLR(d_ut.MultiModule):
         return self.softmax(self.linear(X))
 
     @override
-    def criterion(self, y_pred, y_true):
+    def criterion(self, y_pred, y_true, context: str | None = None):
         cel = nn.functional.cross_entropy(input=y_pred, target=y_true)
         l2 = cel + self.l2 * torch.sum(self.linear.weight**2)
         return l2
@@ -130,7 +130,7 @@ class MtcLr(d_ut.MultiModule):
         return tuple(results)
 
     @override
-    def criterion(self, y_pred, y_true):
+    def criterion(self, y_pred, y_true, context=None):
         total_loss = 0.0
         if len(y_pred) > 1:
             total_loss += multitask_cross_entropy_loss(
@@ -241,7 +241,9 @@ class MultiLevel(d_ut.MultiModule):
         return tuple(results)
 
     @override
-    def criterion(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
+    def criterion(
+        self, y_pred: Tensor, y_true: Tensor, context: str | None = None
+    ) -> Tensor:
         total_loss: Tensor = torch.tensor(0.0).to(self.device)
         n_samples: int = y_true.shape[0]
         if self._n_tasks > 1:

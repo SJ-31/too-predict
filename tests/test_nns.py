@@ -38,7 +38,7 @@ from too_predict.deep.evaluation import multitask_acc, train_test_split_torch
 from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
 from too_predict.deep.trainer import Trainer
 from too_predict.imputer import Imputer
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 cache = here("data", ".sklearn")
 # %%
@@ -83,7 +83,9 @@ EPOCHS = 20
 
 
 def test_disyak():
-    model = d_nn.Disyak(n_features, n_classes_per_task=n_classes, record_metrics=False)
+    model = d_nn.HardSharer(
+        n_features, n_classes_per_task=n_classes, record_metrics=False
+    )
     optimizer = optim.Adam(model.named_parameters(), lr=0.001)
     sch = schedule.ReduceLROnPlateau(optimizer=optimizer, patience=40)
     trainer = Trainer(
@@ -111,7 +113,9 @@ def test_disyak():
 
 
 def test_lightning():
-    model = d_nn.Disyak(n_features, n_classes_per_task=n_classes, record_metrics=True)
+    model = d_nn.HardSharer(
+        n_features, n_classes_per_task=n_classes, record_metrics=True
+    )
     trainer = L.Trainer(
         max_epochs=EPOCHS,
         log_every_n_steps=1,
@@ -137,7 +141,38 @@ def test_lightning():
     return model, trainer
 
 
-model, trainer = test_lightning()
+# %%
+
+
+def test_overfit():
+    model_fn = get_model_fn("Disyak")
+    set = d_ut.AnnDataset(adata1[:2, :], to_encode=("Sample_Type", "tumor_type"))
+    trainer_kwargs = {
+        "max_epochs": 3,
+        "enable_progress_bar": False,
+        "enable_checkpointing": False,
+        "log_every_n_steps": 1,
+    }
+    cv: pd.DataFrame = d_ev.cross_validate(
+        model_fn=model_fn,
+        model_kwargs={
+            "n_classes_per_task": n_classes,
+            "in_features": n_features,
+            "cache": "val_acc",
+        },
+        trainer_kwargs=trainer_kwargs,
+        adset=set,
+        n_classes=n_classes,
+        validation=valid_adset,
+        device="cpu",
+        n_splits=2,
+        # scaler=d_ut.TorchStandardScaler(),
+    )
+    return cv
+
+
+print(test_overfit())
+
 # %%
 
 
@@ -161,12 +196,10 @@ def test_cross_val():
         n_classes=n_classes,
         validation=valid_adset,
         device="cpu",
-        n_splits=4,
+        n_splits=3,
         # scaler=d_ut.TorchStandardScaler(),
     )
-    print(cv)
+    return cv
 
 
-test_cross_val()
-
-# (model, trainer), time = d_ut.timed(lambda: test_lightning())
+cv = test_cross_val()

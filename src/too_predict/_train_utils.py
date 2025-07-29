@@ -20,7 +20,7 @@ import too_predict.recoder as rt
 import too_predict.transformer as trf
 from too_predict.corrector import Corrector
 from too_predict.deep.callbacks import AverageBest
-from too_predict.deep.nns import Disyak
+from too_predict.deep.nns import HardSharer
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
@@ -846,7 +846,7 @@ def get_model_fn(name: str, config: dict | None = None) -> Callable:
     elif name == "MtcLR":
         model = d_log.MtcLr
     elif name in {"Disyak", "Disyak_All"}:
-        model = Disyak
+        model = HardSharer
 
     if config is None:
         config = {}
