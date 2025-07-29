@@ -592,6 +592,8 @@ class Robustness:
         number of classes in the dataset
     y_idx : for sklearn models, the index of the y array to use for training (in
         the case where the datasets are multitask)
+    y_col : specifies the column in adata.obs to target
+    to_encode : tuple of columns in adata.obs to use when generating AnnDataset
     """
 
     def __init__(
@@ -607,14 +609,13 @@ class Robustness:
         baselines_path: Path | None = None,
         y_idx: int | None = None,
         y_col: str | None = None,
+        to_encode: tuple[str] | None = None,
     ) -> None:
-        missing_dset = any(
-            [x is not None for x in [train, shifted_test, standard_test]]
-        )
+        missing_dset = any([x is None for x in [train, shifted_test, standard_test]])
         missing_adata = any(
             [x is None for x in [train_ad, shifted_test_ad, standard_test_ad]]
         )
-        if missing_dset or missing_adata:
+        if missing_dset and missing_adata:
             raise ValueError(
                 "Training data and test data must be given as either AnnData objects or dataset objects"
             )
@@ -625,8 +626,11 @@ class Robustness:
         self._train_ad: ad.AnnData = train_ad
         self._shifted_test_ad: ad.AnnData = shifted_test_ad
         self._standard_test_ad: ad.AnnData = standard_test_ad
+        self._to_encode: tuple[str] | None = None
 
         self.beta: LinearRegression | None | Path = None
+        if isinstance(beta_path, str):
+            beta_path = Path(beta_path)
         if beta_path is not None and beta_path.exists():
             with open(beta_path, "r") as f:
                 self.beta = pickle.load(f)
@@ -652,6 +656,7 @@ class Robustness:
         adata: bool | None = None,
         train_fn: Callable | Literal["fit"] | None = None,
         pretrained: bool | None = None,
+        multitask_key: int | None = None,
     ) -> None:
         """Validate dictionary used to construct and train a model
 
@@ -667,6 +672,8 @@ class Robustness:
             on the data
         pretrained : if the model has been fit already. If true, then it will not
             be fit with ``self.train``
+        multitask_key : if the model returns multiple outputs, ``multitask_key`` is the index of
+            of the output to use for comparison
         """
         if train_fn is None:
             raise ValueError("How to train the model must be specified!")
@@ -698,7 +705,9 @@ class Robustness:
             y_true = test_adata.obs.loc[:, self._y_col]
             return met.accuracy_score(y_true=y_true, y_pred=preds)
         else:
-            preds = model(test_dset[:][0])
+            preds = model.predict_step(test_dset[:])
+            if key := spec.get("multitask_key"):
+                preds = preds[key]
             return accuracy(
                 preds=preds,
                 target=test_dset[:][1],
