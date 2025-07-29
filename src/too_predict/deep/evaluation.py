@@ -412,7 +412,7 @@ class Baseline:
         for model, y in zip(self.models, d_ut.iter_cols(y)):
             model.fit(X, y)
 
-    def predict(self, X):
+    def predict_step(self, X):
         if isinstance(X, Tensor):
             X = X.numpy()
         return np.column_stack(tuple(m.predict(X) for m in self.models))

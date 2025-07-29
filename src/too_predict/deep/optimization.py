@@ -18,7 +18,7 @@ import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.loggers import Logger
 from too_predict.deep.callbacks import BatchSizeScaler
 from too_predict.deep.evaluation import cross_validate, holdout
-from too_predict.deep.nns import Disyak
+from too_predict.deep.nns import HardSharer
 from too_predict.utils import train_test_split_ad
 
 # * HPO
@@ -98,7 +98,7 @@ class DlTrialSetup(topt.TrialSetup):
                     task_weights=task_weights,
                     n_hidden=n_hidden,
                 )
-                return lambda **kwargs: Disyak(**kwargs), kwargs
+                return lambda **kwargs: HardSharer(**kwargs), kwargs
             else:
                 raise ValueError("Module name not recognized!")
         else:
