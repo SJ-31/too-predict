@@ -406,9 +406,13 @@ class Baseline:
         """ """
         self.models: list = [XGBClassifier(**kwargs) for _ in n_classes_per_task]
 
-    def fit(self, X, y):
+    def fit(self, X, y=None):
         if isinstance(X, Tensor):
             X = X.numpy()
+        elif isinstance(X, Dataset):
+            x_tensor, y_tensor = X[:]
+            X = x_tensor.numpy()
+            y = y_tensor.numpy()
         for model, y in zip(self.models, d_ut.iter_cols(y)):
             model.fit(X, y)
 

@@ -632,7 +632,7 @@ class Robustness:
         if isinstance(beta_path, str):
             beta_path = Path(beta_path)
         if beta_path is not None and beta_path.exists():
-            with open(beta_path, "r") as f:
+            with open(beta_path, "rb") as f:
                 self.beta = pickle.load(f)
         self.baselines_path: Path | None = baselines_path
         self._y_idx: None | int = y_idx

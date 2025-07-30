@@ -845,7 +845,7 @@ def get_model_fn(name: str, config: dict | None = None) -> Callable:
         model = d_log.MultiLevel
     elif name == "MtcLR":
         model = d_log.MtcLr
-    elif name in {"Disyak", "Disyak_All"}:
+    elif "Disyak" in name or "Parallel" in name:
         model = HardSharer
 
     if config is None:
