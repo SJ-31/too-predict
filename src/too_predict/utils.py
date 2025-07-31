@@ -435,8 +435,9 @@ def cell_markers_internal(
 def training_data_internal(
     label: str = "tumor_type", backed=None, as_dask: bool = False
 ) -> ad.AnnData:
-    public_data = here("remote", "public_data")
-    combined_file = here(public_data, "all_tumors_rnaseq.h5ad")
+    root: Path = res.files(too_predict)
+    public_data = root.parent.parent.joinpath("remote").joinpath("public_data")
+    combined_file = public_data.joinpath("all_tumors_rnaseq.h5ad")
     if not as_dask:
         adata: ad.AnnData = ad.read_h5ad(combined_file, backed=backed)
         # as of [2025-07-17 Thu], loading the whole thing into memory costs ~ 6.83 GB
@@ -583,10 +584,10 @@ def ref_feature_lists_internal(
     add_all: bool = True, remove_zeros: bool = False
 ) -> tuple[dict, dict]:
     features, refs = {}, {}
-    fs_dir = here("data", "output", "feature_selection")
+    fs_dir: Path = get_data("output/feature_selection")
     for i, (fname, add_to) in enumerate(
         zip(
-            [here(fs_dir, "feature_lists"), here(fs_dir, "reference_lists")],
+            [fs_dir.joinpath("feature_lists"), fs_dir.joinpath("reference_lists")],
             [features, refs],
         )
     ):
