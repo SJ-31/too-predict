@@ -9,6 +9,9 @@ OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}
 TODAY = date.today().isoformat()
 DATE = config.get("date", TODAY)
 
+if config["test"]:
+    config["defaults"]["dl"]["device"] = "cpu"
+
 
 def dated(file):
     date = config.get("date", "")
