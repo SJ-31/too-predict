@@ -31,7 +31,7 @@ References
 class BranchNet(L.LightningModule):
     loss_p: float = 0.4
 
-    def __init__(self, device: str = "cpu", y_idx: int = 0) -> None:
+    def __init__(self, y_idx: int = 0) -> None:
         super().__init__()
         self.hidden_neurons: int = 0
         self.bn0: nn.Module
@@ -43,7 +43,6 @@ class BranchNet(L.LightningModule):
         self.bn1: nn.Module
         self.bn2: nn.Module
         self.y_idx: int = 0  # For improved multi-class compatibility
-        self.device: str = device
 
     @override
     def forward(self, X: Tensor) -> Tensor:
@@ -217,9 +216,9 @@ class BranchNet(L.LightningModule):
 
     @staticmethod
     def fit_trees(
-        train: Dataset | None,
-        x: np.ndarray | None,
-        y: np.ndarray | None,
+        train: Dataset | None = None,
+        x: np.ndarray | None = None,
+        y: np.ndarray | None = None,
         save_to: Path | None = None,
         idx: int = 0,
     ) -> ensemble.ExtraTreesClassifier:
@@ -320,11 +319,11 @@ class MultiBranch(MultiModule):
         if branchnets is not None:
             self.branchnets: nn.ModuleList = nn.ModuleList(branchnets)
             for net in self.branchnets:
-                net.w1.requires_grad = False
+                net.w1.requires_grad = False  # with this
             self.bn_fitted = True
         else:
             self.branchnets = nn.ModuleList(
-                [BranchNet(self.device, i) for i, _ in enumerate(self._n_classes)]
+                [BranchNet(y_idx=i) for i, _ in enumerate(self._n_classes)]
             )
 
         self.shared: nn.Parameter = nn.Parameter(torch.eye(self._in_features))
@@ -344,8 +343,7 @@ class MultiBranch(MultiModule):
             y = y.numpy()
             savedir = Path(savedir) if isinstance(savedir, str) else savedir
             for i, (name, y_true) in enumerate(zip(self._task_names, iter_cols(y))):
-                if savedir is not None:
-                    outpath = savedir.joinpath(name)
+                outpath = savedir.joinpath(name) if savedir is not None else None
                 trees = BranchNet.fit_trees(x=x, y=y_true, save_to=outpath)
                 self.branchnets[i].build_model_from_ensemble(trees)
         else:
@@ -370,6 +368,6 @@ class MultiBranch(MultiModule):
     @override
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss = 0
-        for cur_pred, cur_truth in zip(iter_cols(y_pred), iter_cols(y_true)):
+        for cur_pred, cur_truth in zip(y_pred, iter_cols(y_true)):
             total_loss += BranchNet.criterion(y_pred=cur_pred, y_true=cur_truth)
         return total_loss
