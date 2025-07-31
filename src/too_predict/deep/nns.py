@@ -135,3 +135,79 @@ class HardSharer(d_ut.MultiModule):
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
         total_loss += self.l2() + self.l1()
         return total_loss
+
+
+class Disyak(d_ut.MultiModule):
+    """Implementation of [1]
+
+    Notes
+    -----
+    During training, columns of the tensor y_true should be ordered by increasing
+        task specificity e.g. [ organ_system, disease_state, cancer_type ] etc.
+        so that the more specific tasks can make use of all hidden layers
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        n_hidden: int | None = 2000,
+        task_weights: Tensor | Sequence | None = None,
+        dropout_p: float = 0.2,
+        l1_pars: dict | None = None,
+        l2_pars: dict | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(
+            in_features=in_features,
+            n_classes_per_task=n_classes_per_task,
+            task_weights=task_weights,
+            l1_pars=l1_pars,
+            l2_pars=l2_pars,
+            **kwargs,
+        )
+        if n_hidden is None:
+            n_hidden = in_features
+        self.hlayers: nn.ModuleList = nn.ModuleList()
+        self.olayers: nn.ModuleList = nn.ModuleList()
+        self.acti: nn.Module = nn.Tanh()
+        self.softmax: nn.Softmax = nn.Softmax()
+        self.dropout: nn.Dropout = nn.Dropout(p=dropout_p)
+        for n_classes in n_classes_per_task:
+            self.hlayers.append(nn.LazyLinear(n_hidden))
+            out = nn.LazyLinear(n_classes)
+            out.register_forward_hook(logistic_hook)
+            self.olayers.append(out)
+
+    def _activate(self, input: Tensor) -> Tensor:
+        return self.dropout(self.acti(input))
+
+    @override
+    def reset_parameters(self):
+        for m, o in zip(self.hlayers, self.olayers):
+            d_ut.reset_sequential(o)
+            d_ut.reset_sequential(m)
+
+    @override
+    def forward(self, X):
+        modules, outs = iter(self.hlayers), iter(self.olayers)
+        result = []
+        hidden: torch.Tensor = self._activate(next(modules)(X))
+        o1 = next(outs)
+        result.append(o1(hidden))
+        for out, m in zip(outs, modules):
+            hidden = self._activate(m(hidden))
+            result.append(out(hidden))
+        return tuple(result)
+
+    @override
+    def criterion(self, y_pred, y_true, context: str | None = None):
+        total_loss: torch.Tensor = 0
+        if self._n_tasks > 1:
+            total_loss += multitask_cross_entropy_loss(
+                y_pred, y_true, weights=self._task_weights, model=self, prefix=context
+            )
+        else:
+            total_loss += nn.functional.cross_entropy(y_pred, y_true)
+        total_loss += self.l2() + self.l1()
+        return total_loss

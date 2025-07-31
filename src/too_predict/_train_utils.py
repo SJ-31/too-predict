@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import anndata as ad
+import lightning as L
 import numpy as np
 import pandas as pd
 import yaml
@@ -20,7 +21,7 @@ import too_predict.recoder as rt
 import too_predict.transformer as trf
 from too_predict.corrector import Corrector
 from too_predict.deep.callbacks import AverageBest
-from too_predict.deep.nns import HardSharer
+from too_predict.deep.nns import Disyak, HardSharer
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
@@ -840,16 +841,23 @@ def default_filter_transform(smk_config: dict) -> tuple[Filter, Transformer]:
     return f, t
 
 
-def get_model_fn(name: str, config: dict | None = None) -> Callable:
+def get_model_fn(
+    name: str, config: dict | None = None, return_module: bool = False
+) -> Callable | L.LightningModule:
     if name == "MultiLevel":
         model = d_log.MultiLevel
     elif name == "MtcLR":
         model = d_log.MtcLr
-    elif "Disyak" in name or "Parallel" in name:
+    elif "Parallel" in name:
         model = HardSharer
+    elif "Disyak" in name:
+        model = Disyak
 
     if config is None:
         config = {}
+
+    if return_module:
+        return model
 
     def make_model(**kwargs):
         return model(**kwargs, **config)
