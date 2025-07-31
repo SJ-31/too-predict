@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-import pickle
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import override
@@ -43,6 +42,7 @@ class BranchNet(L.LightningModule):
         self.bn1: nn.Module
         self.bn2: nn.Module
         self.y_idx: int = 0  # For improved multi-class compatibility
+        self.trees_fitted: bool = False
 
     @override
     def forward(self, X: Tensor) -> Tensor:
@@ -146,6 +146,7 @@ class BranchNet(L.LightningModule):
         w2 = get_w2((self.out_features, self.hidden_neurons))
         self.bn2 = nn.BatchNorm1d(self.hidden_neurons, device=self.device)
         self.w2 = nn.Parameter(w2, requires_grad=False)
+        self.trees_fitted = True
 
     def build_from_dict(self, fn_dict):
         self.w1 = nn.Parameter(fn_dict["w1"])
@@ -236,15 +237,17 @@ class BranchNet(L.LightningModule):
 
     def fit(
         self,
-        ensemble: ensemble.ExtraTreesClassifier | Path,
         train: Dataset,
+        ensemble: ensemble.ExtraTreesClassifier | Path | None = None,
         val: Dataset | None = None,
         epochs=1500,
         learning_rate=0.01,
+        show_progress: bool = True,
     ):
         if isinstance(ensemble, Path):
             ensemble = load_pickle(ensemble)
-        self.build_model_from_ensemble(ensemble)
+        if not self.trees_fitted:
+            self.build_model_from_ensemble(ensemble)
 
         min_val_loss = 10000000
         patience = 0
@@ -256,7 +259,8 @@ class BranchNet(L.LightningModule):
         scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=180)
         for i, _ in enumerate(progress_bar):
             loss = self._one_epoch(train, optimizer)
-            progress_bar.set_description(f"Loss: {loss:.6f}")
+            if show_progress:
+                progress_bar.set_description(f"Loss: {loss:.6f}")
             loss_history.append(loss)
             if val is not None:
                 val_loss = self.val_step(val)
@@ -351,9 +355,32 @@ class MultiBranch(MultiModule):
                 trees = load_pickle(savedir.joinpath(task))
                 self.branchnets[i].build_model_from_ensemble(trees)
 
+    def fit_branchnets(
+        self,
+        train: Dataset,
+        val: Dataset | None = None,
+        freeze: bool = False,
+        epochs: int = 1500,
+        lr: float = 0.01,
+        show_progress: bool = True,
+    ):
+        """Fit branchnets separately using authors' original implementation"""
+        for bn in self.branchnets:
+            bn: BranchNet
+            bn.fit(
+                train=train,
+                val=val,
+                epochs=epochs,
+                learning_rate=lr,
+                show_progress=show_progress,
+            )
+            if freeze:
+                for param in bn.parameters():
+                    param.requires_grad = False
+
     @override
     def forward(self, X):
-        x = F.linear(X, self.shared, bias=self.shared_bias)
+        x = nn.functional.relu(F.linear(X, self.shared, bias=self.shared_bias))
         result = [bn(x) for bn in self.branchnets]
         return tuple(result)
 

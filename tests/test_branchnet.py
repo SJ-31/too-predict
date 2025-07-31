@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import accuracy_score
+from too_predict.deep.evaluation import multitask_acc
 from too_predict.imputer import Imputer
 from torch.utils.data import DataLoader
 
@@ -28,7 +29,7 @@ adata = transformer.fit_transform(adata)
 train, test = ut.train_test_split_ad(adata)
 encode = ["Sample_Type", "tumor_type"]
 train_adset = d_ut.AnnDataset(train, to_encode=encode)
-valid_adset = d_ut.AnnDataset(test, to_encode=encode)
+test_adset = d_ut.AnnDataset(test, to_encode=encode)
 
 trees = ExtraTreesClassifier()
 trees.fit(train.X, y=train.obs["tumor_type"])
@@ -37,22 +38,82 @@ train_acc = accuracy_score(
 )
 test_acc = accuracy_score(y_pred=trees.predict(test.X), y_true=test.obs["tumor_type"])
 
-tree = trees.estimators_[0].tree_
-all_path_to_parent = []  # list of ...
-path_to_parent = []
-parents = []
+
+def test_train_together():
+    n_features, n_classes = d_ut.data_spec(adata, y=encode)
+
+    trainer = L.Trainer(max_epochs=10)
+
+    mbn = bn.MultiBranch(n_features, n_classes_per_task=n_classes)
+    mbn.fit_trees(train_adset)
+
+    train_acc_before = multitask_acc(
+        y_true=train_adset[:][1],
+        predictions=mbn.predict_step(train_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    test_acc_before = multitask_acc(
+        y_true=test_adset[:][1],
+        predictions=mbn.predict_step(test_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    trainer.fit(model=mbn, train_dataloaders=DataLoader(train_adset, batch_size=32))
+    train_acc_after = multitask_acc(
+        y_true=train_adset[:][1],
+        predictions=mbn.predict_step(train_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    test_acc_after = multitask_acc(
+        y_true=test_adset[:][1],
+        predictions=mbn.predict_step(test_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    print(f"{train_acc_before}")
+    print(f"{train_acc_after}")
+    print(f"{test_acc_before}")
+    print(f"{test_acc_after}")
 
 
-class_prop = []
+def test_train_before():
+    n_features, n_classes = d_ut.data_spec(adata, y=encode)
+    trainer = L.Trainer(max_epochs=10)
+    mbn = bn.MultiBranch(n_features, n_classes_per_task=n_classes)
+    mbn.fit_trees(train_adset)
+    mbn.fit_branchnets(train_adset, freeze=True, epochs=20, show_progress=False)
+    train_acc_before = multitask_acc(
+        y_true=train_adset[:][1],
+        predictions=mbn.predict_step(train_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    test_acc_before = multitask_acc(
+        y_true=test_adset[:][1],
+        predictions=mbn.predict_step(test_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    trainer.fit(model=mbn, train_dataloaders=DataLoader(train_adset, batch_size=32))
+    train_acc_after = multitask_acc(
+        y_true=train_adset[:][1],
+        predictions=mbn.predict_step(train_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    test_acc_after = multitask_acc(
+        y_true=test_adset[:][1],
+        predictions=mbn.predict_step(test_adset[:][0]),
+        task_names=["Sample_Type", "tumor_type"],
+        n_classes=n_classes,
+    )
+    print(f"{train_acc_before=}")
+    print(f"{train_acc_after=}")
+    print(f"{test_acc_before=}")
+    print(f"{test_acc_after=}")
 
-# trees = bn.BranchNet.fit_trees(train_adset)
-# net = bn.BranchNet()
-# net.fit(trees, train_adset, epochs=100)
 
-n_features, n_classes = d_ut.data_spec(adata, y=encode)
-
-trainer = L.Trainer(max_epochs=10)
-
-mbn = bn.MultiBranch(n_features, n_classes_per_task=n_classes)
-
-trainer.fit(mbn, train_dataloaders=DataLoader(train_adset))
+# test_train_together()
+# test_train_before()
