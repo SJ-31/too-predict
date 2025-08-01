@@ -755,7 +755,7 @@ class Robustness:
         self._set_np([mspec])
         self._fit(model, mspec)
         standard_acc, shifted_acc = self._acc_pair(model, mspec)
-        return shifted_acc - self.beta.predict(standard_acc)
+        return (shifted_acc - self.beta.predict(np.array([[standard_acc]]))).item()
 
     def relative_robustness(self, ispec: dict, mspec: dict) -> float:
         """Compute relative robustness

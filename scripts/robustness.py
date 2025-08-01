@@ -101,7 +101,6 @@ elif smk.rule == "fit_deep":
             trainer_kwargs["max_epochs"] = 1
         trainer = L.Trainer(**trainer_kwargs)
         trainer.fit(model, train_dataloaders=DataLoader(train, **LOADER_KWARGS))
-        print(model.state_dict().keys())
         torch.save(model, smk.output.get(name))
         # trainer.save_checkpoint(smk.output.get(name))
 # * Evaluate saved DL models
