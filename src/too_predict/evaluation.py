@@ -675,7 +675,7 @@ class Robustness:
         multitask_key : if the model returns multiple outputs, ``multitask_key`` is the index of
             of the output to use for comparison
         """
-        if train_fn is None:
+        if train_fn is None and not pretrained:
             raise ValueError("How to train the model must be specified!")
 
     def _fit(self, model, spec: dict) -> None:
@@ -706,11 +706,17 @@ class Robustness:
             return met.accuracy_score(y_true=y_true, y_pred=preds)
         else:
             preds = model.predict_step(test_dset[:])
-            if key := spec.get("multitask_key"):
-                preds = preds[key]
+            truth = test_dset[:][1]
+            if (
+                key := spec.get("multitask_key")
+                and len(truth.shape) > 1
+                and len(preds.shape) > 1
+            ):
+                preds = preds[:, key]
+                truth = truth[:, key]
             return accuracy(
                 preds=preds,
-                target=test_dset[:][1],
+                target=truth,
                 num_classes=self._n_classes,
                 task="multiclass",
             ).item()
@@ -735,7 +741,7 @@ class Robustness:
             model,
             test_x=self._shifted_y,
             test_y=self._shifted_x,
-            test_dset=self._shifted_test_ad,
+            test_dset=self._shifted_test,
             test_adata=self._shifted_test_ad,
             spec=spec,
         )
