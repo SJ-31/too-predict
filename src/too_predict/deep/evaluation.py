@@ -416,10 +416,14 @@ class Baseline:
         for model, y in zip(self.models, d_ut.iter_cols(y)):
             model.fit(X, y)
 
-    def predict_step(self, X):
-        if isinstance(X, Tensor):
-            X = X.numpy()
-        return np.column_stack(tuple(m.predict(X) for m in self.models))
+    def predict_step(self, batch):
+        try:
+            x, _ = batch
+        except ValueError:
+            x = batch
+        if isinstance(x, Tensor):
+            x = x.numpy()
+        return torch.tensor(np.column_stack(tuple(m.predict(x) for m in self.models)))
 
     def predict_proba(self, X):
         if isinstance(X, Tensor):
