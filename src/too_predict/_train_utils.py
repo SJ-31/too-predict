@@ -828,8 +828,18 @@ def read_model_spec(
     return Pipeline(steps)
 
 
-def default_filter_transform(smk_config: dict) -> tuple[Filter, Transformer]:
-    dct = smk_config["defaults"]["shallow"]
+def default_filter_transform(
+    smk_config: dict | None = None,
+) -> tuple[Filter, Transformer]:
+    if smk_config:
+        dct = smk_config["defaults"]["shallow"]
+    else:
+        dct = {
+            "transform": "clr",
+            "feature_set": "edgeR_median_lfc_feature_list_3000",
+            "feature_col": "GENEID",
+            "imputation": "plus_one",
+        }
     t = Transformer(
         dct["transform"], impute_fn=Imputer(dct["imputation"]), inplace=False
     )
