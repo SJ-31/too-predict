@@ -433,11 +433,34 @@ def cell_markers_internal(
 
 
 def training_data_internal(
-    label: str = "tumor_type", backed=None, as_dask: bool = False
+    label: str = "tumor_type",
+    subset: bool = True,
+    backed=None,
+    as_dask: bool = False,
+    subset_p: float = 0.4,  # Subset this proportion from every tumor type (excluding organoid samples)
 ) -> ad.AnnData:
     root: Path = res.files(too_predict)
-    public_data = root.parent.parent.joinpath("remote").joinpath("public_data")
-    combined_file = public_data.joinpath("all_tumors_rnaseq.h5ad")
+    dir = (
+        root.parent.parent.joinpath("remote")
+        .joinpath("repos")
+        .joinpath("too-predict")
+        .joinpath("training")
+    )
+    combined_file = dir.joinpath("all_tumors_rnaseq.h5ad")
+    subset_converted = str(subset_p).replace(".", "_")
+    subset_file = dir.joinpath(
+        f"all_tumors_rnaseq-{label}_subset-{subset_converted}.h5ad"
+    )
+    if subset:
+        print(f"Subset of {label} at proportion {subset_p}")
+    if subset and subset_file.exists():
+        if as_dask:
+            return adata_as_dask(subset_file)
+        return ad.read_h5ad(subset_file, backed=backed)
+    elif backed and subset and not subset_file.exists():
+        raise ValueError(
+            "`backed` must be set False for the initial creation of the subset file"
+        )
     if not as_dask:
         adata: ad.AnnData = ad.read_h5ad(combined_file, backed=backed)
         # as of [2025-07-17 Thu], loading the whole thing into memory costs ~ 6.83 GB
@@ -483,6 +506,14 @@ def training_data_internal(
         print(f"Final shape after filtering: {adata.shape}")
         print(f"N genes removed: {old_shape[1] - adata.shape[1]}")
         print(f"N obs removed: {old_shape[0] - adata.shape[0]}")
+    if subset and not subset_file.exists():
+        organoids = adata[adata.obs["Sample_Type"] == "organoid", :]
+        adata = adata[adata.obs["Sample_Type"] != "organoid", :]
+        adata = preserving_sample(
+            adata, key=label, fraction=subset_p, with_replacement=subset_p > 1
+        )
+        adata = ad.concat([organoids, adata], axis="obs", merge="same")
+        adata.write_h5ad(subset_file)
     return adata
 
 
