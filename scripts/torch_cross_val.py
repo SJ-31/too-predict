@@ -10,8 +10,10 @@ import too_predict.utils as ut
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+from sklearn.model_selection import KFold
 from too_predict._train_utils import get_model_fn, smk_callbacks
-from too_predict.deep.evaluation import cross_validate
+from too_predict.deep.evaluation import Baseline, cross_validate, multitask_acc
+from torch.utils.data import Subset
 
 try:
     from snakemake.script import snakemake as smk
@@ -23,8 +25,8 @@ torch.set_default_dtype(torch.float32)
 
 LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["defaults"]["dl"]
-N_REPEATS = smk.config["cv_n_repeats"]
 TEST: bool = smk.config["test"]
+N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
@@ -64,7 +66,7 @@ def cross_val(in_file: str):
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
     if TEST:
         trainer_kwargs["log_every_n_steps"] = 1
-        trainer_kwargs["max_epochs"] = 10
+        trainer_kwargs["max_epochs"] = 3
     model_kwargs = {
         "n_classes_per_task": n_classes,
         "in_features": n_features,
@@ -106,11 +108,51 @@ if smk.rule == "preprocess":
             continue
         name = Path(model).stem
         spec = smk.config["models"]["dl"].get(name)
+        cur: ad.AnnData = adata
         if spec.get("filter"):
-            adata = filter.fit_transform(adata)
+            cur = filter.fit_transform(cur)
         if spec.get("transform"):
-            adata = transform.fit_transform(adata)
-        adata.write_h5ad(model)
+            cur = transform.fit_transform(cur)
+        cur.write_h5ad(model)
 if smk.rule == "cross_validate":
     for f in smk.input:
-        cross_val(f)
+        if "baseline.h5ad" not in f:
+            cross_val(f)
+if smk.rule == "baseline":
+    baseline = [x for x in smk.input if "baseline" in str(x)][0]
+    batch_size = DL_CONFIG["cv"]["batch_size"]
+    adata = ad.read_h5ad(baseline, backed=True)
+    adset = d_ut.AnnDataset(adata, to_encode=LABELS)
+    cv = KFold(
+        n_splits=DL_CONFIG["cv"]["n_splits"], shuffle=True, random_state=ut.RANDOM_STATE
+    )
+    results: dict = {"fold": []}
+    for label in LABELS:
+        results[f"{label}_train_acc"] = []
+        results[f"{label}_test_acc"] = []
+    for fold, (train_idx, test_idx) in enumerate(cv.split(adset)):
+        train = Subset(adset, train_idx)
+        test = Subset(adset, test_idx)
+        n_features, n_classes = d_ut.data_spec(train)
+        baseline = Baseline(
+            in_features=n_features, n_classes_per_task=n_classes, max_depth=2
+        )
+        baseline.fit(train)
+        train_acc = multitask_acc(
+            y_true=train[:][1],
+            predictions=baseline.predict_step(train[:][0]),
+            task_names=LABELS,
+            n_classes=n_classes,
+        )
+        test_acc = multitask_acc(
+            y_true=test[:][1],
+            predictions=baseline.predict_step(test[:][0]),
+            task_names=LABELS,
+            n_classes=n_classes,
+        )
+        for group, acc in zip(["train", "test"], [train_acc, test_acc]):
+            for task in LABELS:
+                results[f"{task}_{group}_acc"].append(acc[task])
+        results["fold"].append(fold)
+    df = pd.DataFrame(results)
+    df.to_csv(smk.output)

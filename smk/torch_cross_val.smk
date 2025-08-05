@@ -8,25 +8,41 @@ model_cv_results = expand("{out}/{model}/cv_results.csv", out=outpath, model=mod
 model_logs = [
     directory(d) for d in expand("{out}/{model}/tensorboard", out=outpath, model=models)
 ]
+models = models + ["baseline"]
+baseline_cv = f"{outpath}/baseline_cv.csv"
 
 
 rule all:
     input:
-        model_cv_results,
+        cv=model_cv_results,
+        baseline_cv=baseline_cv,
 
 
 rule preprocess:
     output:
-        expand(
-            "{storage}/adatas/torch_main/{models}.h5ad", storage=REPOS, models=models
+        main=expand(
+            "{storage}/adatas/torch_cv_{date}/{models}.h5ad",
+            storage=REPOS,
+            date=DATE,
+            models=models,
         ),
+        baseline=f"{REPOS}/adatas/torch_cv_{DATE}/baseline.h5ad",
+    script:
+        f"{config['scripts']}/torch_cross_val.py"
+
+
+rule baseline:
+    input:
+        rules.preprocess.output.baseline,
+    output:
+        rules.all.input.baseline_cv,
     script:
         f"{config['scripts']}/torch_cross_val.py"
 
 
 rule cross_validate:
     input:
-        rules.preprocess.output,
+        rules.preprocess.output.main,
     params:
         outdir="{out}/deep/cross_validation/{date}/".format(out=OUT, date=DATE),
         date=DATE,
