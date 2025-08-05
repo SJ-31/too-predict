@@ -20,6 +20,7 @@ import too_predict.model as tm
 import too_predict.recoder as rt
 import too_predict.transformer as trf
 from too_predict.corrector import Corrector
+from too_predict.deep.branchnet import MultiBranch
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.nns import Disyak, HardSharer
 from too_predict.filter import Filter
@@ -862,6 +863,8 @@ def get_model_fn(
         model = HardSharer
     elif "Disyak" in name:
         model = Disyak
+    elif "MultiBranch" in name:
+        model = MultiBranch
 
     if config is None:
         config = {}

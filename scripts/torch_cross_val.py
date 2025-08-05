@@ -155,4 +155,4 @@ if smk.rule == "baseline":
                 results[f"{task}_{group}_acc"].append(acc[task])
         results["fold"].append(fold)
     df = pd.DataFrame(results)
-    df.to_csv(smk.output)
+    df.to_csv(smk.output[0])
