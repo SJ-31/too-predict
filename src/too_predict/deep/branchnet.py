@@ -1,5 +1,7 @@
 #!/usr/bin/env ipython
 
+from __future__ import annotations
+
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import override
@@ -9,6 +11,7 @@ import numpy as np
 import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
+from lightning.pytorch import Callback
 from lightning.pytorch.utilities.types import OptimizerConfig
 from sklearn import ensemble
 from too_predict.deep.torch_utils import MultiModule, iter_cols
@@ -279,19 +282,14 @@ class BranchNet(L.LightningModule):
         del scheduler
 
 
-# TODO: wrap this up with MultiBranch
-# Make two versions: one where the underlying branch nets learn alongside the
-# shared weights
-# and another where the branch nets are fixed and only the shared weights update
-# The default implementation also uses early stopping by monitoring validation loss
-
-
 class MultiBranch(MultiModule):
     def __init__(
         self,
         in_features: int,
         n_classes_per_task: list[int],
         branchnets: Sequence[BranchNet] | None = None,
+        fit_separately: bool = False,
+        fit_separately_kwargs: dict | None = None,
         record_metrics: bool = True,
         task_names: Sequence[str] | None = None,
         task_weights: Tensor | Sequence | None = None,
@@ -304,6 +302,21 @@ class MultiBranch(MultiModule):
         log_norm: bool = False,
         scaler: d_ut.TorchScaler | None = None,
     ) -> None:
+        """Initialize MultiBranch - naive implementation of BranchNet for multitask
+        setting
+
+        Parameters
+        ----------
+        branchnets : Optional sequence of pre-fitted BranchNets with frozen weights
+        fit_separately : bool
+            If pre-fitted BranchNets are not provided, and this is True, this module's
+            BranchNets are each fit independently on the training data and their weights
+            are frozen before the shared layer is learned
+            Otherwise, the BranchNet w1 layers are allowed to learn alongside the shared
+            layer
+        fit_separately_kwargs : Arguments passed to BranchNet.fit
+
+        """
         super().__init__(
             in_features,
             n_classes_per_task,
@@ -319,12 +332,25 @@ class MultiBranch(MultiModule):
             log_norm,
             scaler,
         )
-        self.bn_fitted: bool = False
+        self.bn_fitted: bool = False  # Whether the branchnets are pre-fitted
+        self.trees_fitted: bool = False
+        self.bn_fit_separately: bool = fit_separately
+        self.bn_fit_kwargs: dict = (
+            fit_separately_kwargs
+            if fit_separately_kwargs is not None
+            else {
+                "epochs": 1500,
+                "learning_rate": 0.01,
+                "show_progress": False,
+                "ensemble": None,
+            }
+        )
         if branchnets is not None:
             self.branchnets: nn.ModuleList = nn.ModuleList(branchnets)
             for net in self.branchnets:
                 net.w1.requires_grad = False  # with this
             self.bn_fitted = True
+            self.trees_fitted = True
         else:
             self.branchnets = nn.ModuleList(
                 [BranchNet(y_idx=i) for i, _ in enumerate(self._n_classes)]
@@ -339,6 +365,7 @@ class MultiBranch(MultiModule):
         savedir: Path | str | None = None,
         from_path: bool = False,
     ):
+        print("\nFitting ExtraTrees...")
         if savedir is None and from_path:
             raise ValueError("`from_path` was specified, but no path was given")
         if not from_path and train is not None:
@@ -354,6 +381,8 @@ class MultiBranch(MultiModule):
             for task in self._task_names:
                 trees = load_pickle(savedir.joinpath(task))
                 self.branchnets[i].build_model_from_ensemble(trees)
+        self.trees_fitted = True
+        print("\nFitting ExtraTrees complete")
 
     def fit_branchnets(
         self,
@@ -365,6 +394,7 @@ class MultiBranch(MultiModule):
         show_progress: bool = True,
     ):
         """Fit branchnets separately using authors' original implementation"""
+        print("\nFitting BranchNets...")
         for bn in self.branchnets:
             bn: BranchNet
             bn.fit(
@@ -377,6 +407,8 @@ class MultiBranch(MultiModule):
             if freeze:
                 for param in bn.parameters():
                     param.requires_grad = False
+        self.bn_fitted = True
+        print("\nFitting BranchNets complete")
 
     @override
     def forward(self, X):
@@ -390,6 +422,7 @@ class MultiBranch(MultiModule):
         return {
             "optimizer": adam,
             "lr_scheduler": CosineAnnealingWarmRestarts(optimizer=adam, T_0=180),
+            # Oriignal optimization routine
         }
 
     @override
@@ -398,3 +431,32 @@ class MultiBranch(MultiModule):
         for cur_pred, cur_truth in zip(y_pred, iter_cols(y_true)):
             total_loss += BranchNet.criterion(y_pred=cur_pred, y_true=cur_truth)
         return total_loss
+
+    @override
+    def configure_callbacks(self) -> Sequence[Callback] | Callback:
+        return BranchCallback()
+
+
+class BranchCallback(Callback):
+    @override
+    def on_train_start(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        if pl_module.bn_fitted:
+            return
+        train = trainer.train_dataloader.dataset
+        if trainer.val_dataloaders:
+            val: Dataset | None = (
+                trainer.val_dataloaders.dataset
+                if not isinstance(Sequence, trainer.val_dataloaders)
+                else trainer.val_dataloaders[0].dataset
+            )
+        else:
+            val = None
+        kwargs = pl_module.bn_fit_kwargs.copy()
+        kwargs["train"] = train
+        kwargs["val"] = val
+        if not pl_module.trees_fitted:
+            pl_module.fit_trees(train)
+        if pl_module.bn_fit_separately:
+            pl_module.fit_branchnets(**kwargs)
