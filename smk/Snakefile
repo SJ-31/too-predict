@@ -9,7 +9,7 @@ OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}
 TODAY = date.today().isoformat()
 DATE = config.get("date", TODAY)
 
-if config["test"]:
+if config["test"] and not config.get("no_cpu"):
     config["defaults"]["dl"]["device"] = "cpu"
 
 
