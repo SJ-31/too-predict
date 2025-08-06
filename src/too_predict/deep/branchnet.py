@@ -438,8 +438,7 @@ class MultiBranch(MultiModule):
 
 
 class BranchCallback(Callback):
-    @override
-    def on_train_start(
+    def fit_underlying(
         self, trainer: "L.Trainer", pl_module: "L.LightningModule"
     ) -> None:
         if pl_module.bn_fitted:
@@ -460,3 +459,15 @@ class BranchCallback(Callback):
             pl_module.fit_trees(train)
         if pl_module.bn_fit_separately:
             pl_module.fit_branchnets(**kwargs)
+
+    @override
+    def on_train_start(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        self.fit_underlying(trainer, pl_module)
+
+    @override
+    def on_validation_start(
+        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
+    ) -> None:
+        self.fit_underlying(trainer, pl_module)
