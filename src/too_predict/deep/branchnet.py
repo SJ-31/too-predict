@@ -30,10 +30,10 @@ References
 """
 
 
-class BranchNet(L.LightningModule):
+class BranchNet(nn.Module):
     loss_p: float = 0.4
 
-    def __init__(self, y_idx: int = 0) -> None:
+    def __init__(self, y_idx: int = 0, device="cpu") -> None:
         super().__init__()
         self.hidden_neurons: int = 0
         self.bn0: nn.Module
@@ -46,6 +46,10 @@ class BranchNet(L.LightningModule):
         self.bn2: nn.Module
         self.y_idx: int = 0  # For improved multi-class compatibility
         self.trees_fitted: bool = False
+        if isinstance(device, str):
+            self.device: torch.device = torch.device(device)
+        else:
+            self.device = device
 
     @override
     def forward(self, X: Tensor) -> Tensor:
@@ -143,17 +147,17 @@ class BranchNet(L.LightningModule):
 
         self.bn0 = nn.BatchNorm1d(self.in_features, device=self.device)
         w1 = get_w1((self.hidden_neurons, self.in_features))
-        self.m1 = w1 != 0
-        self.w1 = nn.Parameter(w1)
+        self.m1 = (w1 != 0).to(self.device)
+        self.w1 = nn.Parameter(w1).to(self.device)
         self.bn1 = nn.BatchNorm1d(self.hidden_neurons, device=self.device)
         w2 = get_w2((self.out_features, self.hidden_neurons))
         self.bn2 = nn.BatchNorm1d(self.hidden_neurons, device=self.device)
-        self.w2 = nn.Parameter(w2, requires_grad=False)
+        self.w2 = nn.Parameter(w2, requires_grad=False).to(self.device)
         self.trees_fitted = True
 
     def build_from_dict(self, fn_dict):
         self.w1 = nn.Parameter(fn_dict["w1"])
-        self.m1 = self.w1 != 0
+        self.m1 = (self.w1 != 0).to(self.device)
         self.hidden_neurons = self.w1.shape[0]
         self.w2 = nn.Parameter(fn_dict["w2"], requires_grad=False)
         self.out_features = self.w2.shape[0]
@@ -301,6 +305,7 @@ class MultiBranch(MultiModule):
         cache: str | None | Sequence = None,
         log_norm: bool = False,
         scaler: d_ut.TorchScaler | None = None,
+        **kwargs,
     ) -> None:
         """Initialize MultiBranch - naive implementation of BranchNet for multitask
         setting
@@ -331,6 +336,7 @@ class MultiBranch(MultiModule):
             cache,
             log_norm,
             scaler,
+            **kwargs,
         )
         self.bn_fitted: bool = False  # Whether the branchnets are pre-fitted
         self.trees_fitted: bool = False
@@ -353,7 +359,10 @@ class MultiBranch(MultiModule):
             self.trees_fitted = True
         else:
             self.branchnets = nn.ModuleList(
-                [BranchNet(y_idx=i) for i, _ in enumerate(self._n_classes)]
+                [
+                    BranchNet(y_idx=i, device=self.init_device)
+                    for i, _ in enumerate(self._n_classes)
+                ]
             )
 
         self.shared: nn.Parameter = nn.Parameter(torch.eye(self._in_features))
@@ -370,8 +379,8 @@ class MultiBranch(MultiModule):
             raise ValueError("`from_path` was specified, but no path was given")
         if not from_path and train is not None:
             x, y = train[:]
-            x = x.numpy()
-            y = y.numpy()
+            x = x.cpu().numpy()
+            y = y.cpu().numpy()
             savedir = Path(savedir) if isinstance(savedir, str) else savedir
             for i, (name, y_true) in enumerate(zip(self._task_names, iter_cols(y))):
                 outpath = savedir.joinpath(name) if savedir is not None else None
@@ -447,7 +456,7 @@ class BranchCallback(Callback):
         if trainer.val_dataloaders:
             val: Dataset | None = (
                 trainer.val_dataloaders.dataset
-                if not isinstance(Sequence, trainer.val_dataloaders)
+                if not isinstance(trainer.val_dataloaders, Sequence)
                 else trainer.val_dataloaders[0].dataset
             )
         else:
@@ -462,12 +471,6 @@ class BranchCallback(Callback):
 
     @override
     def on_train_start(
-        self, trainer: "L.Trainer", pl_module: "L.LightningModule"
-    ) -> None:
-        self.fit_underlying(trainer, pl_module)
-
-    @override
-    def on_validation_start(
         self, trainer: "L.Trainer", pl_module: "L.LightningModule"
     ) -> None:
         self.fit_underlying(trainer, pl_module)

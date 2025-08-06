@@ -373,6 +373,7 @@ class MultiModule(L.LightningModule):
         cache: str | None | Sequence = None,
         log_norm: bool = False,
         scaler: TorchScaler | None = None,
+        init_device: str = "cpu",
     ) -> None:
         """__init__.
 
@@ -428,6 +429,7 @@ class MultiModule(L.LightningModule):
         self._scheduler_fn: Callable | None = scheduler_fn
         self._scheduler_config: dict | None = scheduler_config
         self._scaler: TorchScaler | None = None
+        self.init_device: torch.device = torch.device(init_device)
 
         # Cache results after iterations or validation for custom callbacks
         self._cache: dict[str, tuple[bool, list]] = {

@@ -254,6 +254,7 @@ def holdout(
         if scaler is not None:
             scaler.fit(train_l.dataset[:][0])
             model_kwargs["scaler"] = scaler
+        model_kwargs["init_device"] = device
         with trainer.init_module():
             model = model_fn(**model_kwargs)
 
@@ -369,11 +370,12 @@ def cross_validate(
         if callbacks is not None:
             trainer_kwargs["callbacks"] = [c() for c in callbacks]
 
+        model_kwargs["init_device"] = device
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
-        model.to(torch.device(device))
+        model = model.to(torch.device(device))
         acc = multitask_acc(
             y_true=test[:][1],
             predictions=model.predict_step(test[:]),
