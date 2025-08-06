@@ -2,9 +2,9 @@
 
 import os
 import uuid
+from collections.abc import Callable, Sequence
 
 import anndata as ad
-import lightning as L
 import numpy as np
 import pandas as pd
 import scipy.spatial.distance as spd
@@ -24,21 +24,24 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-from lightning.pytorch.callbacks import (
-    DeviceStatsMonitor,
-    GradientAccumulationScheduler,
-)
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.loggers import CometLogger, WandbLogger
 from pyhere import here
-from src.too_predict.deep.callbacks import BatchSizeScaler
 from too_predict._train_utils import get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.evaluation import multitask_acc, train_test_split_torch
 from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
 from too_predict.deep.trainer import Trainer
 from too_predict.imputer import Imputer
+from torch import Tensor
 from torch.utils.data import DataLoader, Subset
+from xgboost import XGBClassifier
+
+import lightning as L
+from lightning.pytorch.callbacks import (
+    DeviceStatsMonitor,
+    GradientAccumulationScheduler,
+)
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
+from lightning.pytorch.loggers import CometLogger, WandbLogger
 
 cache = here("data", ".sklearn")
 # %%
@@ -68,7 +71,8 @@ n_features, n_classes = d_ut.data_spec(train_l)
 
 base = d_ev.Baseline(n_features, n_classes, max_depth=1)
 base.fit(*train_l.dataset[:])
-res = base.predict(test_l.dataset[:][0])
+base.fit(train_l.dataset)
+res = base.predict_step(test_l.dataset[:][0])
 base_acc = d_ev.multitask_acc(
     test_l.dataset[:][1],
     res,
@@ -107,9 +111,7 @@ def test_disyak():
     return model, result
 
 
-# disyak, time = d_ut.timed(lambda: test_disyak())
-
-# GradientAccumulationScheduler(scheduling={})
+# %%
 
 
 def test_lightning():
@@ -120,20 +122,9 @@ def test_lightning():
         max_epochs=EPOCHS,
         log_every_n_steps=1,
         enable_progress_bar=False,
-        enable_checkpointing=False,
+        enable_checkpointing=True,
+        default_root_dir=here("tests", "lightning"),
         logger=None,
-        callbacks=[
-            BatchSizeScaler(
-                total_iters=3,
-                max=1000,
-                scheduler_fn=lambda x: schedule.StepLR(optimizer=x, step_size=5),
-            )
-            # EarlyStopping(
-            #     monitor="train_loss", patience=10, mode="min"
-            # ),  # If "min", lower is better
-            # DeviceStatsMonitor(),
-            # AverageBest(5, "train_acc"),
-        ],
     )
     model.set_cache("train_acc")
     trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=None)
@@ -141,11 +132,12 @@ def test_lightning():
     return model, trainer
 
 
+# test_lightning()
 # %%
 
 
 def test_overfit():
-    model_fn = get_model_fn("Disyak")
+    model_fn = get_model_fn("Parallel")
     set = d_ut.AnnDataset(adata1[:2, :], to_encode=("Sample_Type", "tumor_type"))
     trainer_kwargs = {
         "max_epochs": 3,
@@ -179,7 +171,7 @@ print(test_overfit())
 def test_cross_val():
     model_fn = get_model_fn("Disyak")
     trainer_kwargs = {
-        "max_epochs": 3,
+        "max_epochs": 100,
         "enable_progress_bar": False,
         "enable_checkpointing": False,
         "log_every_n_steps": 1,
@@ -202,4 +194,43 @@ def test_cross_val():
     return cv
 
 
-cv = test_cross_val()
+# cv = test_cross_val()
+
+# %%
+
+
+class RepLearner(d_ut.MultiModule):
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        record_metrics: bool = True,
+        model_fn=lambda: XGBClassifier(),
+        task_names: Sequence[str] | None = None,
+        task_weights: Tensor | Sequence | None = None,
+        l1_pars: dict | None = None,
+        l2_pars: dict | None = None,
+        optimizer_fn: Callable | None = None,
+        scheduler_fn: Callable | None = None,
+        scheduler_config: dict | None = None,
+        cache: str | None | Sequence = None,
+        log_norm: bool = False,
+        scaler: d_ut.TorchScaler | None = None,
+    ) -> None:
+        super().__init__(
+            in_features,
+            n_classes_per_task,
+            record_metrics,
+            task_names,
+            task_weights,
+            l1_pars,
+            l2_pars,
+            optimizer_fn,
+            scheduler_fn,
+            scheduler_config,
+            cache,
+            log_norm,
+            scaler,
+        )
+
+    # def fit(self, dataset: Dataset):

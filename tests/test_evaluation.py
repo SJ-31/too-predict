@@ -2,6 +2,7 @@
 from typing import Callable
 
 import anndata as ad
+import lightning as L
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -10,8 +11,10 @@ import shap
 import too_predict.evaluation as te
 import too_predict.explanation as ee
 import too_predict.utils as ut
+from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import ShuffleSplit
+from too_predict.deep.nns import HardSharer
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import (
@@ -44,10 +47,28 @@ def test_shapley():
     return train_shap, train_v, test_shap, test_v
 
 
-rshap, rv, tshap, tv = test_shapley()
-# #  --- CODE BLOCK ---
-label_col = "tumor_type"
-current = "DLBC"
-vals = rshap.obsm[f"shap_{current}"]
-ff = ee.Explain(rshap, tshap)
-cons, stats = ff.shap_consistency(summary="range")
+robust = te.Robustness(
+    shifted_test=here("data", "tests", "effective_robustness", "shifted_test.h5ad"),
+    standard_test=here("data", "tests", "effective_robustness", "standard_test.h5ad"),
+    train=here("data", "tests", "effective_robustness", "train.h5ad"),
+)
+
+hard_share = HardSharer()
+trainer = L.Trainer(
+    max_epochs=3,
+    log_every_n_steps=1,
+    enable_progress_bar=False,
+    enable_checkpointing=False,
+    logger=None,
+    callbacks=[],
+)
+trainer.fit(
+    model=hard_share, train_dataloaders=
+)
+
+
+hardshare_spec = {
+    "model_fn": lambda x: hard_share,
+    "pretrained": True,
+    "multitask_key": 1,
+}
