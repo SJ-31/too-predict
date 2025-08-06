@@ -202,6 +202,8 @@ def holdout(
     if split_fns is None and split_masks is None:
         raise ValueError("Either split_fns or split_indices must be given!")
     split_is_fn: bool = split_fns is not None
+    if "batch_size" not in kwargs:
+        kwargs["batch_size"] = 32
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
@@ -338,6 +340,8 @@ def cross_validate(
     splits = cv.split(adset)
     metrics: dict = {"fold": []}
     tasks = adset.label_cols
+    if "batch_size" not in kwargs:
+        kwargs["batch_size"] = 32
     for task in tasks:
         metrics[f"{task}_valid_acc"] = []
         if with_train_acc:
@@ -349,7 +353,7 @@ def cross_validate(
             print(f"fold {fold} started")
         train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
         test: Dataset = Subset(adset, test_idx)
-        val_loader = DataLoader(validation)
+        val_loader = DataLoader(validation) if validation is not None else None
 
         if save_path is not None:
             root = save_path.joinpath(f"fold_{fold}")
