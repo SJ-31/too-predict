@@ -3,7 +3,12 @@ include: "Snakefile"
 
 script_path = f"{config['scripts']}/robustness.py"
 model_dict = config["models"]["dl"]
-models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
+
+if only := config.get("run_only", []):
+    models = list(set(model_dict.keys()) & set(only))
+else:
+    models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
+
 model_checkpoints = {m: f"{REPOS}/{DATE}/effective_robustness/{m}.ckpt" for m in models}
 
 outdir = f"{OUT}/{DATE}_effective_robustness"

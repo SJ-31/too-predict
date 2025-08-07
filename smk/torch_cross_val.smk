@@ -8,7 +8,12 @@ outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}{RUN}"
 
 
 model_dict = config["models"]["dl"]
-models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
+
+if only := config.get("run_only", []):
+    models = list(set(model_dict.keys()) & set(only))
+else:
+    models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
+
 model_cv_results = expand("{out}/{model}/cv_results.csv", out=outpath, model=models)
 model_logs = [
     directory(d) for d in expand("{out}/{model}/tensorboard", out=outpath, model=models)
