@@ -1,0 +1,3 @@
+obs_filters:
+  tumor_type: ["PAAD", "UCEC", "SKCM", "COAD-READ", "DLBC"]
+run_only: ["Disyak", "BranchNet", "Parallel_Deep"]
