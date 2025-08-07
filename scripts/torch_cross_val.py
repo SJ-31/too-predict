@@ -25,20 +25,12 @@ torch.set_default_dtype(torch.float32)
 
 
 LABELS = smk.config["multi_labels"]
-DL_CONFIG = smk.config["defaults"]["dl"]
+DL_CONFIG = smk.config["dl"]
 TEST: bool = smk.config["test"]
 N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
-
-if update_conf := smk.config.get("run_conf"):
-    with open(update_conf, "r") as f:
-        overrides = yaml.safe_load(f)
-    print(f"Updating default config with {update_conf}...")
-    DL_CONFIG.update(overrides)
-else:
-    print("Using default configuration...")
 
 
 FILTER, TRANSFORM = tt.default_filter_transform(smk.config)

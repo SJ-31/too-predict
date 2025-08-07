@@ -4,11 +4,7 @@ import yaml
 include: "Snakefile"
 
 
-outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}"
-if run := config.get("run"):
-    outpath = f"{outpath}_{run}"
-else:
-    print("WARNING: No run name provided, pass one with --config run=<name>")
+outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}{RUN}"
 
 
 model_dict = config["models"]["dl"]

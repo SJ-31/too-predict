@@ -10,9 +10,26 @@ TODAY = date.today().isoformat()
 DATE = config.get("date", TODAY)
 
 if config["test"] and not config.get("no_cpu"):
-    config["defaults"]["dl"]["device"] = "cpu"
+    config["dl"]["device"] = "cpu"
 
 
 def dated(file):
     date = config.get("date", "")
     return f"{date}-{file}"
+
+
+if RUN := config.get("run"):
+    pass
+else:
+    RUN = ""
+    print("WARNING: No run name provided, pass one with --config run=<name>")
+
+if ov := config.get("override"):
+    with open(ov, "r") as y:
+        config.update(yaml.safe_load(y))
+    print(f"Overriding config with file {ov}")
+else:
+    print(
+        "WARNING: no overriding config provided, pass one with --config override=<file>"
+    )
+    print("Using default configuration..")

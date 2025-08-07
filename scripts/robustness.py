@@ -34,11 +34,10 @@ torch.set_default_dtype(torch.float32)
 
 CONFIG = smk.config
 
-DEFAULTS = CONFIG["defaults"]
 
 MODEL_SPEC: dict = CONFIG["models"]["dl"]
 DEEP_MODELS = [m for m in MODEL_SPEC.keys() if not MODEL_SPEC[m].get("skip")]
-LOADER_KWARGS = smk.config["defaults"]["dl"]["dataloader"]
+LOADER_KWARGS = smk.config["dl"]["dataloader"]
 
 
 ID_KWARGS = {"y_col": "tumor_type", "y_idx": 1}
@@ -95,7 +94,7 @@ elif smk.rule == "fit_deep":
         kwargs = spec.get("params")
         kwargs.update({"n_classes_per_task": n_classes, "in_features": n_features})
         model = get_model_fn(name)(**kwargs)
-        trainer_kwargs = smk.config["defaults"]["dl"]["trainer"]
+        trainer_kwargs = smk.config["dl"]["trainer"]
         trainer_kwargs["enable_checkpointing"] = False
         if smk.config["test"]:
             trainer_kwargs["max_epochs"] = 1

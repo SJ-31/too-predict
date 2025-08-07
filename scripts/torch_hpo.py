@@ -31,7 +31,7 @@ except ImportError:
 torch.set_default_dtype(torch.float32)
 
 LABELS = smk.config["multi_labels"]
-DL_CONFIG: dict = smk.config["defaults"]["dl"]
+DL_CONFIG: dict = smk.config["dl"]
 N_REPEATS = smk.config["cv_n_repeats"]
 TEST: bool = smk.config["test"]
 
@@ -83,6 +83,8 @@ elif smk.rule == "main":
             "precision": ["32-true", "16-mixed"],
             "matmul_precision": ["high", "medium", "highest"],
         }
+    elif hpo_task == "optimizer":
+        changes = {"optimizer": ["Adam", "SGD"]}
     else:
         raise ValueError("No task specified!")
 
