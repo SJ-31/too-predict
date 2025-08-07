@@ -202,8 +202,6 @@ def holdout(
     if split_fns is None and split_masks is None:
         raise ValueError("Either split_fns or split_indices must be given!")
     split_is_fn: bool = split_fns is not None
-    if "batch_size" not in kwargs:
-        kwargs["batch_size"] = 32
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
@@ -248,8 +246,7 @@ def holdout(
         train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
             x_train, to_encode=to_encode, device=device
         )
-        if kwargs.get("batch_size") == -1:
-            kwargs["batch_size"] = len(train_dset)
+        d_ut.update_batch_strategy(kwargs, train_dset, default_batch_size=32)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
         train_l = DataLoader(train_dset, **kwargs)
         x_test_tensor, y_true = test_dset[:]
@@ -345,8 +342,6 @@ def cross_validate(
     splits = cv.split(adset)
     metrics: dict = {"fold": []}
     tasks = adset.label_cols
-    if "batch_size" not in kwargs:
-        kwargs["batch_size"] = 32
     for task in tasks:
         metrics[f"{task}_valid_acc"] = []
         if with_train_acc:
@@ -357,8 +352,7 @@ def cross_validate(
         if verbose:
             print(f"fold {fold} started")
         train_set = Subset(adset, train_idx)
-        if kwargs.get("batch_size") == -1:
-            kwargs["batch_size"] = len(train_set)
+        d_ut.update_batch_strategy(kwargs, train_set, default_batch_size=32)
         train: DataLoader = DataLoader(train_set, **kwargs)
         test: Dataset = Subset(adset, test_idx)
         val_loader = DataLoader(validation) if validation is not None else None

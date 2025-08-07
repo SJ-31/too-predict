@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import itertools
 import math
 import time
 from collections.abc import Iterable, Sequence
 from datetime import date
 from pathlib import Path
-from typing import Callable, Literal, override
+from typing import Callable, Iterator, Literal, override
 
 import anndata as ad
 import lightning as L
@@ -24,7 +25,14 @@ from lightning.pytorch.loggers import CometLogger, TensorBoardLogger, WandbLogge
 from lightning.pytorch.utilities.types import OptimizerConfig
 from too_predict.utils import if_none
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import (
+    BatchSampler,
+    DataLoader,
+    Dataset,
+    RandomSampler,
+    Sampler,
+    SequentialSampler,
+)
 from torchmetrics.classification import Accuracy
 
 # * Utility functions
@@ -876,3 +884,97 @@ class TorchMinMaxScaler(TorchScaler):
     def transform(self, x: Tensor) -> Tensor:
         x_std = (x - self.min) / self.diff
         return x_std * self.diff + self.min
+
+
+# * Samplers
+
+
+class BootstrapSequential(SequentialSampler):
+    def __init__(self, data_source, n: int) -> None:
+        super().__init__(data_source)
+        self.n: int = n
+
+    @override
+    def __iter__(self) -> Iterator[int]:
+        length = len(self.data_source)
+        indices_iter: Iterator = iter(range(length))
+        if self.n > length:
+            diff = self.n - length
+            extension = []
+            while diff > 0:
+                extension.append(iter(range(0, min(diff, length))))
+                diff -= length
+            indices_iter = itertools.chain(indices_iter, *extension)
+        return indices_iter
+
+    @override
+    def __len__(self) -> int:
+        return self.n
+
+
+class BootstrapSampler(Sampler):
+    def __init__(
+        self,
+        batch_size: int,
+        n_batches: int,
+        data_source=None,
+        shuffle: bool = True,
+        drop_last: bool = False,
+    ) -> None:
+        super().__init__(data_source)
+        """Custom sampler supporting batch sizes larger than training set through
+            bootstrapping
+
+        Parameters
+        ----------
+        batch_size : Batch size.
+        n_batches : Number of batches to produce
+        data_source : Dataset
+            Dataset to get batches from
+        shuffle : bool
+            Whether to shuffle data. If False, data are sampled in the same
+            order for every batch
+        pre_shuffle : bool
+            If True and shuffle is True, then the indices are shuffled once, and subsequent
+            batches use the same ordering
+        generator : Generator
+            Generator object for randomization
+        """
+        if not shuffle:
+            inner = BootstrapSequential(
+                data_source=data_source, n=batch_size * n_batches
+            )
+        else:
+            inner = RandomSampler(
+                data_source=data_source,
+                replacement=True,
+                num_samples=batch_size * n_batches,
+            )
+        self._sampler: BatchSampler = BatchSampler(
+            inner, batch_size=batch_size, drop_last=drop_last
+        )
+
+    @override
+    def __iter__(self):
+        return iter(self._sampler)
+
+
+def update_batch_strategy(
+    config: dict, dataset: Dataset, default_batch_size=256
+) -> None:
+    "Return dictionary defining appropriate params to pass to dataloader"
+    if "batch_size" not in config:
+        config["batch_size"] = default_batch_size
+    elif config.get("batch_size") == -1:
+        config["batch_size"] = len(dataset)
+    elif bs := config["batch_size"] > len(dataset) or (
+        (len(dataset) / config["batch_size"]) <= 1
+    ):
+        del config["batch_size"]
+        config["batch_sampler"] = BootstrapSampler(
+            batch_size=bs,
+            n_batches=config.pop("n_batches", 5),
+            data_source=dataset,
+            shuffle=config.pop("shuffle", True),
+            drop_last=config.pop("drop_last", False),
+        )
