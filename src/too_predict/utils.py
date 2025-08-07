@@ -29,6 +29,7 @@ from rpy2.rinterface_lib.sexp import (
 from scipy import sparse, stats
 from sklearn.model_selection import ShuffleSplit
 from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
 
 import too_predict
 
@@ -1074,3 +1075,37 @@ class SaveOrLoad:
             return value
 
         return wrapped
+
+
+def xgb_complexity(model: XGBClassifier) -> pd.DataFrame:
+    "Produce a dataframe with summary statistics about the properties of an XGBoost model"
+    booster = model.get_booster()
+    stats = {"stat": [], "value": []}
+    for stat, val in zip(
+        ["n_trees", "max_depth"], [booster.num_boosted_rounds(), model.max_depth]
+    ):
+        stats["stat"].append(stat)
+        stats["value"].append(val)
+    tmp = []
+    for itype in ["weight", "gain", "cover", "total_gain", "total_cover"]:
+        vals = booster.get_score(importance_type=itype)
+        tmp.append(pd.DataFrame({itype: vals.values()}, index=vals.keys()))
+    score_df: pd.DataFrame = reduce(
+        lambda x, y: pd.merge(x, y, left_index=True, right_index=True), tmp
+    )
+    tmp = []
+    for stat in ["min", "max", "std", "mean"]:
+        current = score_df.agg(stat)
+        current.name = stat
+        tmp.append(current)
+    stat_df = (
+        reduce(lambda x, y: pd.merge(x, y, left_index=True, right_index=True), tmp)
+        .reset_index(names="tmp")
+        .melt("tmp")
+    )
+    stat_df = (
+        stat_df.assign(stat=stat_df["tmp"] + "_" + stat_df["variable"])
+        .drop(["tmp", "variable"], axis=1)
+        .loc[:, ["stat", "value"]]
+    )
+    return pd.concat([pd.DataFrame(stats), stat_df]).sort_values("stat")
