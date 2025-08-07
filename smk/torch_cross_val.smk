@@ -15,11 +15,13 @@ model_logs = [
 ]
 models = models + ["baseline"]
 baseline_cv = f"{outpath}/baseline_cv.csv"
+all_cv = f"{output}/cv_all.csv"
 
 
 rule all:
     input:
         cv=model_cv_results,
+        all_cv=all_cv,
         baseline_cv=baseline_cv,
 
 
@@ -40,7 +42,8 @@ rule baseline:
     input:
         rules.preprocess.output.baseline,
     output:
-        rules.all.input.baseline_cv,
+        **{m: f"{outpath}/baseline_{m}.csv" for m in smk.config["multi_labels"]},
+        cv=rules.all.input.baseline_cv,
     script:
         f"{config['scripts']}/torch_cross_val.py"
 
@@ -56,6 +59,20 @@ rule cross_validate:
         log=model_logs,
     script:
         f"{config['scripts']}/torch_cross_val.py"
+
+
+rule combine_cvs:
+    input:
+        rules.cross_validate.output.cv,
+    output:
+        all_cv,
+    run:
+        dfs = []
+        for csv in input:
+            name = Path(csv).absolute().parent.stem
+            df = pd.read_csv(csv).assign(model=name)
+            dfs.append(df)
+        pd.concat(dfs).to_csv(output[0])
 
 
 with open(f"{outpath}/config.yaml", "w") as f:
