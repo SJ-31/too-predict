@@ -248,6 +248,8 @@ def holdout(
         train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
             x_train, to_encode=to_encode, device=device
         )
+        if kwargs.get("batch_size") == -1:
+            kwargs["batch_size"] = len(train_dset)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
         train_l = DataLoader(train_dset, **kwargs)
         x_test_tensor, y_true = test_dset[:]
@@ -330,6 +332,8 @@ def cross_validate(
     trainer_kwargs : Keyword arguments passed to Lightning trainer
     logger_fn : Optional function taking in the fold number and returning a Lightning
         logger
+    kwargs : key-word arguments passed to DataLoader. Set batch_size == -1 to use the entire
+        training set in each cross-validation loop
 
     Returns
     -------
@@ -352,7 +356,10 @@ def cross_validate(
     for fold, (train_idx, test_idx) in enumerate(splits):
         if verbose:
             print(f"fold {fold} started")
-        train: DataLoader = DataLoader(Subset(adset, train_idx), **kwargs)
+        train_set = Subset(adset, train_idx)
+        if kwargs.get("batch_size") == -1:
+            kwargs["batch_size"] = len(train_set)
+        train: DataLoader = DataLoader(train_set, **kwargs)
         test: Dataset = Subset(adset, test_idx)
         val_loader = DataLoader(validation) if validation is not None else None
 
