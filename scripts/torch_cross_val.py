@@ -104,6 +104,10 @@ if smk.rule == "preprocess":
     else:
         adata = ut.training_data_internal()
     filter, transform = tt.default_filter_transform(smk.config)
+    for col, allowed in smk.config.get("obs_filters", {}).items():
+        if allowed:
+            print(f"Only allowing {adata}['{col}'] in {allowed}")
+            adata = adata[adata[col].isin(allowed), :]
     for model in smk.output:
         if Path(model).exists():
             continue
@@ -156,4 +160,6 @@ if smk.rule == "baseline":
                 results[f"{task}_{group}_acc"].append(acc[task])
         results["fold"].append(fold)
     df = pd.DataFrame(results)
-    df.to_csv(smk.output[0])
+    df.to_csv(smk.output["cv"])
+    for i, label in enumerate(LABELS):
+        ut.xgb_complexity(baseline.models[i]).to_csv(smk.output[label], index=False)

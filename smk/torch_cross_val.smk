@@ -80,5 +80,5 @@ rule combine_cvs:
         pd.concat(dfs).to_csv(output[0])
 
 
-with open(f"{outpath}/config.yaml", "w") as f:
+with open(f"{outpath}/snakemake_config.yaml", "w") as f:
     yaml.safe_dump(config, f)
