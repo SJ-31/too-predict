@@ -10,6 +10,7 @@ import too_predict.utils as ut
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+import yaml
 from sklearn.model_selection import KFold
 from too_predict._train_utils import get_model_fn, smk_callbacks
 from too_predict.deep.evaluation import Baseline, cross_validate, multitask_acc
@@ -30,6 +31,14 @@ N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
+
+if update_conf := smk.config.get("run_conf"):
+    with open(update_conf, "r") as f:
+        overrides = yaml.safe_load(f)
+    print(f"Updating default config with {update_conf}...")
+    DL_CONFIG.update(overrides)
+else:
+    print("Using default configuration...")
 
 
 FILTER, TRANSFORM = tt.default_filter_transform(smk.config)
