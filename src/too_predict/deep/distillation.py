@@ -16,7 +16,6 @@ class TeacherResponse(torch.utils.data.Dataset):
         self,
         data: AnnDataset,
         teacher: Baseline | MultiModule,
-        device: str | torch.device = "cpu",
         is_fitted: bool = False,
         trainer: L.Trainer | None = None,
         **kwargs,

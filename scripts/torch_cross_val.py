@@ -12,6 +12,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from sklearn.model_selection import KFold
 from too_predict._train_utils import get_model_fn, smk_callbacks
+from too_predict.deep.distillation import TeacherResponse
 from too_predict.deep.evaluation import cross_validate
 from too_predict.deep.metrics import multitask_acc
 from too_predict.deep.nns import Baseline
@@ -29,6 +30,7 @@ LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["dl"]
 TEST: bool = smk.config["test"]
 N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
+BASELINE_KWARGS = {"max_depth": 2}
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
@@ -48,7 +50,7 @@ def get_scheduler(optimizer):
     return schedule.ReduceLROnPlateau(optimizer, **DL_CONFIG["schedule"])
 
 
-def cross_val(in_file: str):
+def cross_val(in_file: str, distillation: bool = False):
     adata = ad.read_h5ad(in_file, backed=True)
     model = Path(in_file).stem
     model_kwargs = MODELS[model].get("params", {})
@@ -63,7 +65,15 @@ def cross_val(in_file: str):
     valid_set = d_ut.AnnDataset(
         valid, to_encode=LABELS, device="cpu" if TEST else DL_CONFIG["device"]
     )
-    outdir = Path(smk.params["outdir"]).joinpath(model)
+    if distillation:
+        baseline = Baseline(
+            in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
+        )
+        train_set = TeacherResponse(data=train_set, teacher=baseline)
+        valid_set = TeacherResponse(data=valid_set, teacher=baseline, is_fitted=True)
+        outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
+    else:
+        outdir = Path(smk.params["outdir"]).joinpath(model)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
     if TEST:
@@ -124,6 +134,10 @@ if smk.rule == "cross_validate":
     for f in smk.input:
         if "baseline.h5ad" not in f:
             cross_val(f)
+if smk.rule == "distillation":
+    for f in smk.input:
+        if "baseline.h5ad" not in f:
+            cross_val(f, distillation=True)
 if smk.rule == "baseline":
     baseline = [x for x in smk.input if "baseline" in str(x)][0]
     batch_size = DL_CONFIG["cv"]["batch_size"]
@@ -141,7 +155,7 @@ if smk.rule == "baseline":
         test = Subset(adset, test_idx)
         n_features, n_classes = d_ut.data_spec(train)
         baseline = Baseline(
-            in_features=n_features, n_classes_per_task=n_classes, max_depth=2
+            in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
         )
         baseline.fit(train)
         train_acc = multitask_acc(
