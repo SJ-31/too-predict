@@ -969,7 +969,7 @@ def update_batch_strategy(
         config["batch_size"] = default_batch_size
     elif config.get("batch_size") == -1:
         config["batch_size"] = len(dataset)
-    elif bs := config["batch_size"] > len(dataset) or (
+    elif (bs := config["batch_size"]) > len(dataset) or (
         (len(dataset) / config["batch_size"]) <= 1
     ):
         del config["batch_size"]
