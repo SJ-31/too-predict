@@ -7,11 +7,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal, override
 
+import numpy as np
 import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
-from too_predict.deep.evaluation import multitask_cross_entropy_loss
+from too_predict.deep.metrics import multitask_cross_entropy_loss
 from torch import Tensor
+from torch.utils.data import Dataset
 from xgboost import XGBClassifier
 
 """
@@ -211,3 +213,95 @@ class Disyak(d_ut.MultiModule):
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
         total_loss += self.l2() + self.l1()
         return total_loss
+
+
+class RepLearner(d_ut.MultiModule):
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        record_metrics: bool = True,
+        model_fn: Callable = lambda: XGBClassifier(),
+        pretrained: Sequence[Path] | None = None,
+        task_names: Sequence[str] | None = None,
+        task_weights: Tensor | Sequence | None = None,
+        l1_pars: dict | None = None,
+        l2_pars: dict | None = None,
+        optimizer_fn: Callable | None = None,
+        scheduler_fn: Callable | None = None,
+        scheduler_config: dict | None = None,
+        cache: str | None | Sequence = None,
+        log_norm: bool = False,
+        scaler: d_ut.TorchScaler | None = None,
+    ) -> None:
+        super().__init__(
+            in_features,
+            n_classes_per_task,
+            record_metrics,
+            task_names,
+            task_weights,
+            l1_pars,
+            l2_pars,
+            optimizer_fn,
+            scheduler_fn,
+            scheduler_config,
+            cache,
+            log_norm,
+            scaler,
+        )
+        self._model_fn: Callable = model_fn
+        self._pretrained: Sequence[Path | None] = (
+            pretrained if pretrained else [None] * len(self._n_classes)
+        )
+        self.models: list = []
+
+    def fit(self, dataset):
+        x, ys = dataset[:]
+        for i, y, pretrained_path in enumerate(
+            zip(d_ut.iter_cols(ys), self.pretrained)
+        ):
+            if not pretrained_path:
+                model = self.model_fn()
+                model.fit(x, y)
+            else:
+                with open(pretrained_path, "rb") as f:
+                    model = pickle.load(f)
+            self.models[i] = model
+
+
+class Baseline:
+    """A baseline class for multitask prediction. Consists of XGBoost models
+    trained independently on each task
+    """
+
+    def __init__(self, in_features: int, n_classes_per_task: list[int], **kwargs):
+        """ """
+        self.models: list = [XGBClassifier(**kwargs) for _ in n_classes_per_task]
+
+    def fit(self, X, y=None):
+        if isinstance(X, Tensor):
+            X = X.numpy()
+        elif isinstance(X, Dataset):
+            x_tensor, y_tensor = X[:]
+            X = x_tensor.numpy()
+            y = y_tensor.numpy()
+        for model, y in zip(self.models, d_ut.iter_cols(y)):
+            model.fit(X, y)
+
+    def predict_step(self, batch):
+        try:
+            x, _ = batch
+        except ValueError:
+            x = batch
+        if isinstance(x, Tensor):
+            x = x.numpy()
+        return torch.tensor(np.column_stack(tuple(m.predict(x) for m in self.models)))
+
+    def predict_proba(self, batch):
+        try:
+            x, _ = batch
+        except ValueError:
+            x = batch
+        if isinstance(x, Tensor):
+            x = x.numpy()
+        return tuple(m.predict_proba(x) for m in self.models)

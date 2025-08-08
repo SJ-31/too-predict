@@ -6,8 +6,8 @@ from typing import override
 import lightning as L
 import torch
 import torch.nn as nn
-from too_predict.deep.evaluation import Baseline
-from too_predict.deep.torch_utils import MultiModule
+from too_predict.deep.nns import Baseline
+from too_predict.deep.torch_utils import AnnDataset, MultiModule
 from torch import Tensor
 from torch.utils.data import Dataset
 
@@ -15,20 +15,19 @@ from torch.utils.data import Dataset
 class TeacherResponse(Dataset):
     def __init__(
         self,
-        data: Dataset,
+        data: AnnDataset,
         teacher: Baseline | MultiModule,
         device: str | torch.device = "cpu",
         is_fitted: bool = False,
     ) -> None:
         super().__init__()
-        self.data: Dataset = data
+        self.data: AnnDataset = data
         self.teacher: Baseline | MultiModule = teacher
         self.input: Tensor = self.data[:][0]
-        self.device: torch.device = (
-            torch.device(device) if isinstance(device, str) else device
-        )
         self.is_fitted: bool = is_fitted
         self.response: Tensor
+        self.device: torch.device = data.device
+        self.label_cols: tuple = self.data.label_cols
 
     def fit(self, trainer: L.Trainer | None = None, **kwargs):
         if isinstance(self.teacher, Baseline):
@@ -46,12 +45,12 @@ class TeacherResponse(Dataset):
             proba = self.teacher(self.input)
         self.response = proba
 
-    def labels(self):
+    def get_targets(self):
         return self.data[:][1]
 
     @override
     def __getitem__(self, index):
-        return (self.input[index, :], tuple([r[index, :] for r in self.response]))
+        return self.input[index, :], tuple([r[index, :] for r in self.response])
 
     def __len__(self) -> int:
         return len(self.data)

@@ -529,11 +529,15 @@ class MultiModule(L.LightningModule):
         return loss
 
     @staticmethod
-    def _to_proba(forward_out: tuple | Tensor) -> tuple | Tensor:
+    def _to_proba(forward_out: tuple | Tensor, log: bool = False) -> tuple | Tensor:
         "Convert logits from ``forward`` into normalized probabilities with softmax"
+        if log:
+            fn: Callable = nn.functional.log_softmax
+        else:
+            fn = nn.functional.softmax
         if isinstance(forward_out, tuple):
-            return tuple([nn.functional.softmax(p) for p in forward_out])
-        return nn.functional.softmax(forward_out)
+            return tuple([fn(p) for p in forward_out])
+        return fn(forward_out)
 
     @override
     def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:

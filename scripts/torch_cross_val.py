@@ -10,10 +10,11 @@ import too_predict.utils as ut
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
-import yaml
 from sklearn.model_selection import KFold
 from too_predict._train_utils import get_model_fn, smk_callbacks
-from too_predict.deep.evaluation import Baseline, cross_validate, multitask_acc
+from too_predict.deep.evaluation import cross_validate
+from too_predict.deep.metrics import multitask_acc
+from too_predict.deep.nns import Baseline
 from torch.utils.data import Subset
 
 try:

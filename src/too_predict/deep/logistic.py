@@ -10,7 +10,7 @@ import numpy as np
 import sklearn.linear_model as sl
 import too_predict.deep.torch_utils as d_ut
 import torch
-from too_predict.deep.evaluation import multitask_cross_entropy_loss
+from too_predict.deep.metrics import multitask_cross_entropy_loss
 from torch import Tensor, nn
 
 """
