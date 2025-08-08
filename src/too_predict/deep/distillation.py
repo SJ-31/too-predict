@@ -9,40 +9,37 @@ import torch.nn as nn
 from too_predict.deep.nns import Baseline
 from too_predict.deep.torch_utils import AnnDataset, MultiModule
 from torch import Tensor
-from torch.utils.data import Dataset
 
 
-class TeacherResponse(Dataset):
+class TeacherResponse(torch.utils.data.Dataset):
     def __init__(
         self,
         data: AnnDataset,
         teacher: Baseline | MultiModule,
         device: str | torch.device = "cpu",
         is_fitted: bool = False,
+        trainer: L.Trainer | None = None,
+        **kwargs,
     ) -> None:
-        super().__init__()
         self.data: AnnDataset = data
         self.teacher: Baseline | MultiModule = teacher
         self.input: Tensor = self.data[:][0]
-        self.is_fitted: bool = is_fitted
         self.response: Tensor
         self.device: torch.device = data.device
         self.label_cols: tuple = self.data.label_cols
-
-    def fit(self, trainer: L.Trainer | None = None, **kwargs):
         if isinstance(self.teacher, Baseline):
-            if not self.is_fitted:
+            if not is_fitted:
                 self.teacher.fit(self.data)
-                self.is_fitted = True
-            proba = [
-                torch.tensor(p).to(self.device)
-                for p in self.teacher.predict_proba(self.input)
-            ]
+            proba = tuple(
+                [
+                    torch.tensor(p).to(self.device)
+                    for p in self.teacher.predict_proba(self.input)
+                ]
+            )
         else:
-            if not self.is_fitted:
+            if not is_fitted:
                 trainer.fit(model=self.teacher, train_dataloaders=self.data, **kwargs)
-                self.is_fitted = True
-            proba = self.teacher(self.input)
+            proba = self.teacher.predict_proba(self.input)
         self.response = proba
 
     def get_targets(self):
@@ -54,6 +51,10 @@ class TeacherResponse(Dataset):
 
     def __len__(self) -> int:
         return len(self.data)
+
+    @property
+    def shape(self) -> tuple:
+        return self.data.X.shape
 
 
 def distillation_loss(self, y_pred: tuple, y_true: tuple, context: str | None = None):

@@ -14,7 +14,7 @@ import too_predict.evaluation as te
 import too_predict.utils as ut
 import torch
 from lightning.pytorch.loggers import CometLogger, Logger
-from too_predict.deep.distillation import TeacherResponse
+from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
 from too_predict.deep.metrics import multitask_acc, multitask_all_metrics
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, random_split
@@ -84,6 +84,7 @@ def train_test_split_torch(
     return tuple(DataLoader(d, **kwargs) for d in random_split(dataset, lengths))
 
 
+# TODO: give this params for working with distillation
 def holdout(
     trainer_kwargs: dict,
     model_kwargs: dict,
@@ -273,9 +274,12 @@ def cross_validate(
             metrics[f"{task}_train_acc"] = []
     if scaler is not None:
         model_kwargs["scaler"] = scaler
-    labels: Tensor | None = (
-        adset.get_targets() if isinstance(adset, TeacherResponse) else None
-    )
+    if isinstance(adset, TeacherResponse):
+        distillation: bool = True
+        labels: Tensor | None = adset.get_targets()
+    else:
+        distillation = False
+        labels = None
     for fold, (train_idx, test_idx) in enumerate(splits):
         if verbose:
             print(f"fold {fold} started")
@@ -303,6 +307,8 @@ def cross_validate(
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_fn(**model_kwargs)
+        if distillation:
+            use_kd_criterion(model)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
         model = model.to(torch.device(device))
 
