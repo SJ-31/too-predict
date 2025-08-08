@@ -432,10 +432,14 @@ class Baseline:
             x = x.numpy()
         return torch.tensor(np.column_stack(tuple(m.predict(x) for m in self.models)))
 
-    def predict_proba(self, X):
-        if isinstance(X, Tensor):
-            X = X.numpy()
-        return tuple(m.predict_proba(X) for m in self.models)
+    def predict_proba(self, batch):
+        try:
+            x, _ = batch
+        except ValueError:
+            x = batch
+        if isinstance(x, Tensor):
+            x = x.numpy()
+        return tuple(m.predict_proba(x) for m in self.models)
 
 
 def multitask_cross_entropy_loss(
