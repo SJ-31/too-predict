@@ -4,7 +4,7 @@ import yaml
 include: "Snakefile"
 
 
-outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}{RUN}"
+outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
 
 
 model_dict = config["models"]["dl"]
@@ -47,7 +47,7 @@ rule baseline:
     input:
         rules.preprocess.output.baseline,
     output:
-        **{m: f"{outpath}/baseline_{m}.csv" for m in smk.config["multi_labels"]},
+        **{m: f"{outpath}/baseline_{m}.csv" for m in config["multi_labels"]},
         cv=rules.all.input.baseline_cv,
     script:
         f"{config['scripts']}/torch_cross_val.py"
@@ -80,5 +80,6 @@ rule combine_cvs:
         pd.concat(dfs).to_csv(output[0])
 
 
-with open(f"{outpath}/snakemake_config.yaml", "w") as f:
-    yaml.safe_dump(config, f)
+onsuccess:
+    with open(f"{outpath}/snakemake_config.yaml", "w") as f:
+        yaml.safe_dump(config, f)
