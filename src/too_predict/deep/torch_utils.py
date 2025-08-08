@@ -96,23 +96,14 @@ def reset_sequential(mod: nn.Module) -> None:
     mod.apply(reset)
 
 
-def iter_cols(x: Tensor | np.ndarray) -> Iterable:
-    """Iterate over columnes of x
-
-    Parameters
-    ----------
-    x : Tensor | np.ndarray
-        x
-
-    Returns
-    -------
-    Iterable
-
-    """
+def iter_cols(x: Tensor | np.ndarray | tuple) -> Iterable:
+    """Iterate over columnes of x"""
     if isinstance(x, Tensor):
         to_iter = torch.unbind(x, dim=1)
-    else:
+    elif isinstance(x, np.ndarray):
         to_iter = [x[:, i] for i in range(x.shape[1])]
+    else:
+        to_iter = iter(x)
     return to_iter
 
 
@@ -456,6 +447,7 @@ class MultiModule(L.LightningModule):
 
     @override
     def forward(self, X):
+        "Should return unnormalized logits. predict_proba returns probabilities"
         raise NotImplementedError()
 
     def set_cache(
@@ -479,6 +471,7 @@ class MultiModule(L.LightningModule):
         y_true: Tensor,
         prefix: str,
     ) -> None:
+        output = self._to_proba(output)
         if isinstance(output, tuple):
             preds: Tensor = torch.hstack(
                 [p.argmax(axis=1).reshape(-1, 1) for p in output]
@@ -503,7 +496,7 @@ class MultiModule(L.LightningModule):
         if isinstance(X, DataLoader):
             X = X.dataset[:][0]
         X = torch.tensor(X) if isinstance(X, np.ndarray) else X
-        proba = self(X)
+        proba = self._to_proba(self(X))
         if isinstance(proba, tuple):
             return tuple(p.detach() for p in proba)
         return proba.detach()
@@ -535,6 +528,13 @@ class MultiModule(L.LightningModule):
             self.log("gradient_norm", norm)
         return loss
 
+    @staticmethod
+    def _to_proba(forward_out: tuple | Tensor) -> tuple | Tensor:
+        "Convert logits from ``forward`` into normalized probabilities with softmax"
+        if isinstance(forward_out, tuple):
+            return tuple([nn.functional.softmax(p) for p in forward_out])
+        return nn.functional.softmax(forward_out)
+
     @override
     def predict_step(self, batch, batch_idx=None, dataloader_idx=0) -> Tensor:
         try:
@@ -546,12 +546,10 @@ class MultiModule(L.LightningModule):
         elif isinstance(x, Dataset):
             x = x[:]
         x = self.maybe_scale(x)
-        proba = self(x)
+        proba = self._to_proba(self(x))
         if isinstance(proba, tuple):
-            return torch.hstack(
-                [nn.functional.softmax(p).argmax(axis=1).reshape(-1, 1) for p in proba]
-            )
-        return nn.functional.softmax(proba).argmax(axis=1)
+            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
+        return proba.argmax(axis=1)
 
     def _log_step(self, log_to, acc_prefix: str, batch, batch_idx):
         x, y = batch
