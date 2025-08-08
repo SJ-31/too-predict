@@ -23,7 +23,9 @@ References
 
 
 def logistic_hook(_m, _input, output) -> Tensor:
-    return nn.functional.softmax(output, dim=1)
+    return nn.functional.softmax(
+        output, dim=1
+    )  # TODO: should you replace this with log_softmax?
 
 
 class DummyLR(d_ut.MultiModule):
@@ -88,7 +90,6 @@ class MtcLr(d_ut.MultiModule):
         for i, n_classes in enumerate(n_classes_per_task):
             # Initialize LR model for each task
             lr = nn.LazyLinear(n_classes)
-            lr.register_forward_hook(logistic_hook)
             self.lrs[str(i)] = lr
         if initial_fit is not None:
             self.init_lr_weights(initial_fit)
@@ -222,7 +223,6 @@ class MultiLevel(d_ut.MultiModule):
                 theta=self.theta,
                 bias=bias,
             )
-            self.lrs[str(i)].register_forward_hook(logistic_hook)
         self.lmbda_1: float = lmbda_1
         self.lmbda_2: float = lmbda_2
         self.reset_parameters()

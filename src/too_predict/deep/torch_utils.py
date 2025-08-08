@@ -548,8 +548,10 @@ class MultiModule(L.LightningModule):
         x = self.maybe_scale(x)
         proba = self(x)
         if isinstance(proba, tuple):
-            return torch.hstack([p.argmax(axis=1).reshape(-1, 1) for p in proba])
-        return proba.argmax(axis=1)
+            return torch.hstack(
+                [nn.functional.softmax(p).argmax(axis=1).reshape(-1, 1) for p in proba]
+            )
+        return nn.functional.softmax(proba).argmax(axis=1)
 
     def _log_step(self, log_to, acc_prefix: str, batch, batch_idx):
         x, y = batch

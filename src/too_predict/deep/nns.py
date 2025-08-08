@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import pickle
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Literal, override
 
 import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
 from too_predict.deep.evaluation import multitask_cross_entropy_loss
-from too_predict.deep.logistic import logistic_hook
 from torch import Tensor
+from xgboost import XGBClassifier
 
 """
 References
@@ -112,7 +114,6 @@ class HardSharer(d_ut.MultiModule):
                     )
                 )
             out = nn.LazyLinear(n_classes)
-            out.register_forward_hook(logistic_hook)
             task_modules.append(out)
             self.task_layers.append(nn.Sequential(*task_modules))
 
@@ -176,7 +177,6 @@ class Disyak(d_ut.MultiModule):
         for n_classes in n_classes_per_task:
             self.hlayers.append(nn.LazyLinear(n_hidden))
             out = nn.LazyLinear(n_classes)
-            out.register_forward_hook(logistic_hook)
             self.olayers.append(out)
 
     def _activate(self, input: Tensor) -> Tensor:
