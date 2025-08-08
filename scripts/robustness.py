@@ -9,7 +9,7 @@ import too_predict.utils as ut
 import torch
 from pyhere import here
 from too_predict._train_utils import MODELS, DummySnake, get_model_fn, read_model_spec
-from too_predict.deep.evaluation import Baseline
+from too_predict.deep.nns import Baseline
 from too_predict.deep.torch_utils import AnnDataset, data_spec
 from too_predict.evaluation import Robustness
 from torch.utils.data import DataLoader

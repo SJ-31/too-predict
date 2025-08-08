@@ -833,7 +833,7 @@ def default_filter_transform(
     smk_config: dict | None = None,
 ) -> tuple[Filter, Transformer]:
     if smk_config:
-        dct = smk_config["defaults"]["shallow"]
+        dct = smk_config["shallow"]
     else:
         dct = {
             "transform": "clr",
