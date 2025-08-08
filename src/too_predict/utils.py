@@ -2,6 +2,7 @@
 
 import importlib.resources as res
 import itertools
+import json
 import pickle
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
@@ -1077,12 +1078,46 @@ class SaveOrLoad:
         return wrapped
 
 
+def xgb_tree_depth(tree: dict) -> int:
+    def recurse(node: dict, depth: int) -> int:
+        if children := node.get("children"):
+            left_depth = recurse(children[0], depth + 1)
+            if len(children) > 1:
+                right_depth = recurse(children[1], depth + 1)
+            return max(left_depth, right_depth)
+        return depth
+
+    return recurse(tree, 0)
+
+
 def xgb_complexity(model: XGBClassifier) -> pd.DataFrame:
     "Produce a dataframe with summary statistics about the properties of an XGBoost model"
     booster = model.get_booster()
     stats = {"stat": [], "value": []}
+    # Actual number of trees = n classes * num_boosted_rounds()
+    trees: list[dict] = [json.loads(j) for j in booster.get_dump(dump_format="json")]
+    depths = np.array([xgb_tree_depth(t) for t in trees])
+    mean_depth = np.mean(depths)
+    std_depth = np.std(depths)
+    median_depth = np.median(depths)
+
     for stat, val in zip(
-        ["n_trees", "max_depth"], [booster.num_boosted_rounds(), model.max_depth]
+        [
+            "n_boosting_rounds",
+            "depth_max",
+            "depth_mean",
+            "depth_std",
+            "depth_median",
+            "n_trees",
+        ],
+        [
+            booster.num_boosted_rounds(),
+            model.max_depth,
+            mean_depth,
+            std_depth,
+            median_depth,
+            len(trees),
+        ],
     ):
         stats["stat"].append(stat)
         stats["value"].append(val)
