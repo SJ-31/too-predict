@@ -144,12 +144,11 @@ def test_callback():
 
 def test_cross_val():
     n_features, n_classes = d_ut.data_spec(adata, y=encode)
-    mkwargs = {"in_features": n_features, "n_classes_per_task": n_classes}
     tkwargs = {"max_epochs": 2, "num_sanity_val_steps": 0}
     d_ev.cross_validate(
-        model_fn=lambda **kwargs: bn.MultiBranch(**kwargs),
-        model_kwargs=mkwargs,
+        model_cls=bn.MultiBranch,
         trainer_kwargs=tkwargs,
+        in_features=n_features,
         n_classes=n_classes,
         device="cuda:0" if torch.cuda.is_available() else "cpu",
         adset=adset,

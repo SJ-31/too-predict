@@ -59,7 +59,7 @@ class TeacherResponse(torch.utils.data.Dataset):
 def distillation_loss(self, y_pred: tuple, y_true: tuple, context: str | None = None):
     total_loss: torch.Tensor = 0
     y_pred = self._to_proba(y_pred, log=True)
-    if self._n_tasks > 1:
+    if self.n_tasks > 1:
         for student_prob, teacher_prob in zip(y_pred, y_true):
             total_loss += nn.functional.kl_div(input=student_prob, target=teacher_prob)
     else:
@@ -71,5 +71,6 @@ def distillation_loss(self, y_pred: tuple, y_true: tuple, context: str | None = 
 def use_kd_criterion(model: MultiModule):
     "Swap ``model``'s criterion method for distillation loss"
     model.criterion = MethodType(distillation_loss, model)
-    model._record = False  #  TODO: can't calculate accuracy while using distillation,
+    model.conf.record = False
+    #  TODO: can't calculate accuracy while using distillation,
     #  but maybe some other metric would work

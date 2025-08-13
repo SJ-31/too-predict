@@ -14,7 +14,7 @@ import torch.nn as nn
 from lightning.pytorch import Callback
 from lightning.pytorch.utilities.types import OptimizerConfig
 from sklearn import ensemble
-from too_predict.deep.torch_utils import MultiModule, iter_cols
+from too_predict.deep.torch_utils import ModuleConfig, MultiModule, iter_cols
 from too_predict.utils import load_pickle, write_pickle
 from torch import Tensor
 from torch.nn import functional as F
@@ -291,20 +291,10 @@ class MultiBranch(MultiModule):
         self,
         in_features: int,
         n_classes_per_task: list[int],
+        conf: ModuleConfig | None = None,
         branchnets: Sequence[BranchNet] | None = None,
         fit_separately: bool = False,
         fit_separately_kwargs: dict | None = None,
-        record_metrics: bool = True,
-        task_names: Sequence[str] | None = None,
-        task_weights: Tensor | Sequence | None = None,
-        l1_pars: dict | None = None,
-        l2_pars: dict | None = None,
-        optimizer_fn: Callable | None = None,
-        scheduler_fn: Callable | None = None,
-        scheduler_config: dict | None = None,
-        cache: str | None | Sequence = None,
-        log_norm: bool = False,
-        scaler: d_ut.TorchScaler | None = None,
         **kwargs,
     ) -> None:
         """Initialize MultiBranch - naive implementation of BranchNet for multitask
@@ -325,17 +315,7 @@ class MultiBranch(MultiModule):
         super().__init__(
             in_features,
             n_classes_per_task,
-            record_metrics,
-            task_names,
-            task_weights,
-            l1_pars,
-            l2_pars,
-            optimizer_fn,
-            scheduler_fn,
-            scheduler_config,
-            cache,
-            log_norm,
-            scaler,
+            conf=conf,
             **kwargs,
         )
         self.bn_fitted: bool = False  # Whether the branchnets are pre-fitted
@@ -360,13 +340,13 @@ class MultiBranch(MultiModule):
         else:
             self.branchnets = nn.ModuleList(
                 [
-                    BranchNet(y_idx=i, device=self.init_device)
-                    for i, _ in enumerate(self._n_classes)
+                    BranchNet(y_idx=i, device=self.conf.init_device)
+                    for i, _ in enumerate(self.n_classes)
                 ]
             )
 
-        self.shared: nn.Parameter = nn.Parameter(torch.eye(self._in_features))
-        self.shared_bias: nn.Parameter = nn.Parameter(torch.zeros(self._in_features))
+        self.shared: nn.Parameter = nn.Parameter(torch.eye(self.in_features))
+        self.shared_bias: nn.Parameter = nn.Parameter(torch.zeros(self.in_features))
 
     def fit_trees(
         self,
@@ -382,12 +362,12 @@ class MultiBranch(MultiModule):
             x = x.cpu().numpy()
             y = y.cpu().numpy()
             savedir = Path(savedir) if isinstance(savedir, str) else savedir
-            for i, (name, y_true) in enumerate(zip(self._task_names, iter_cols(y))):
+            for i, (name, y_true) in enumerate(zip(self.task_names, iter_cols(y))):
                 outpath = savedir.joinpath(name) if savedir is not None else None
                 trees = BranchNet.fit_trees(x=x, y=y_true, save_to=outpath)
                 self.branchnets[i].build_model_from_ensemble(trees)
         else:
-            for task in self._task_names:
+            for task in self.task_names:
                 trees = load_pickle(savedir.joinpath(task))
                 self.branchnets[i].build_model_from_ensemble(trees)
         self.trees_fitted = True

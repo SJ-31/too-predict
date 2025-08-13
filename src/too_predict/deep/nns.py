@@ -68,6 +68,7 @@ class HardSharer(d_ut.MultiModule):
         self,
         in_features: int,
         n_classes_per_task: list[int],
+        conf: d_ut.ModuleConfig | None = None,
         n_hidden: int | None = None,
         n_shared_layers: int = 1,
         n_layers_per_task: Sequence[int] | None = None,
@@ -75,16 +76,12 @@ class HardSharer(d_ut.MultiModule):
         dropout_p: float = 0.2,
         batch_norm: Literal["before", "after", "none"] = "none",
         batch_norm_kwargs: dict | None = None,
-        l1_pars: dict | None = None,
-        l2_pars: dict | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
             in_features=in_features,
             n_classes_per_task=n_classes_per_task,
-            task_weights=task_weights,
-            l1_pars=l1_pars,
-            l2_pars=l2_pars,
+            conf=conf,
             **kwargs,
         )
         if n_hidden is None:
@@ -130,9 +127,13 @@ class HardSharer(d_ut.MultiModule):
     @override
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss: torch.Tensor = 0
-        if self._n_tasks > 1:
+        if self.n_tasks > 1:
             total_loss += multitask_cross_entropy_loss(
-                y_pred, y_true, weights=self._task_weights, model=self, prefix=context
+                y_pred,
+                y_true,
+                weights=self.conf.task_weights,
+                model=self,
+                prefix=context,
             )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
@@ -155,18 +156,13 @@ class Disyak(d_ut.MultiModule):
         in_features: int,
         n_classes_per_task: list[int],
         n_hidden: int | None = 2000,
-        task_weights: Tensor | Sequence | None = None,
-        dropout_p: float = 0.2,
-        l1_pars: dict | None = None,
-        l2_pars: dict | None = None,
+        conf: d_ut.ModuleConfig | None = None,
         **kwargs,
     ) -> None:
         super().__init__(
             in_features=in_features,
             n_classes_per_task=n_classes_per_task,
-            task_weights=task_weights,
-            l1_pars=l1_pars,
-            l2_pars=l2_pars,
+            conf=conf,
             **kwargs,
         )
         if n_hidden is None:
@@ -175,7 +171,7 @@ class Disyak(d_ut.MultiModule):
         self.olayers: nn.ModuleList = nn.ModuleList()
         self.acti: nn.Module = nn.Tanh()
         self.softmax: nn.Softmax = nn.Softmax()
-        self.dropout: nn.Dropout = nn.Dropout(p=dropout_p)
+        self.dropout: nn.Dropout = nn.Dropout(p=self.conf.dropout_p)
         for n_classes in n_classes_per_task:
             self.hlayers.append(nn.LazyLinear(n_hidden))
             out = nn.LazyLinear(n_classes)
@@ -205,9 +201,13 @@ class Disyak(d_ut.MultiModule):
     @override
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss: torch.Tensor = 0
-        if self._n_tasks > 1:
+        if self.n_tasks > 1:
             total_loss += multitask_cross_entropy_loss(
-                y_pred, y_true, weights=self._task_weights, model=self, prefix=context
+                y_pred,
+                y_true,
+                weights=self.conf.task_weights,
+                model=self,
+                prefix=context,
             )
         else:
             total_loss += nn.functional.cross_entropy(y_pred, y_true)
@@ -251,7 +251,7 @@ class RepLearner(d_ut.MultiModule):
         )
         self._model_fn: Callable = model_fn
         self._pretrained: Sequence[Path | None] = (
-            pretrained if pretrained else [None] * len(self._n_classes)
+            pretrained if pretrained else [None] * len(self.n_classes)
         )
         self.models: list = []
 

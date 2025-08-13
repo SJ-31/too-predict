@@ -88,7 +88,6 @@ def train_test_split_torch(
 # TODO: give this params for working with distillation
 def holdout(
     trainer_kwargs: dict,
-    model_config: d_ut.ModuleConfig,
     model_cls: d_ut.MultiModule,
     adata: ad.AnnData,
     to_encode: tuple[str],
@@ -96,6 +95,7 @@ def holdout(
     in_features: int,
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
+    model_config: d_ut.ModuleConfig | None = None,
     model_kwargs: dict | None = None,
     logger_fn: Callable[[str], Logger] | None = None,
     save_split_path: Path | None = None,
@@ -240,12 +240,12 @@ def holdout(
 
 
 def cross_validate(
-    trainer_kwargs: dict,
-    mconf: d_ut.ModuleConfig,
     model_cls: d_ut.MultiModule,
+    trainer_kwargs: dict,
     adset: d_ut.AnnDataset | TeacherResponse,
     n_classes: Sequence[int],
     in_features: int,
+    model_config: d_ut.ModuleConfig | None = None,
     model_kwargs: dict | None = None,
     random_state: int | None = ut.RANDOM_STATE,
     callbacks: list[Callable[[], L.Callback]] | None = None,
@@ -279,6 +279,7 @@ def cross_validate(
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
     splits = cv.split(adset)
     metrics: dict = {"fold": []}
+    model_config = model_config if model_config else d_ut.ModuleConfig()
     tasks = adset.label_cols
     trainer_kwargs["accelerator"] = device
     for task in tasks:
@@ -286,7 +287,7 @@ def cross_validate(
         if with_train_acc:
             metrics[f"{task}_train_acc"] = []
     if scaler is not None:
-        mconf.scaler = scaler
+        model_config.scaler = scaler
     if isinstance(adset, TeacherResponse):
         distillation: bool = True
         labels: Tensor | None = adset.get_targets()
@@ -317,13 +318,13 @@ def cross_validate(
         if callbacks is not None:
             trainer_kwargs["callbacks"] = [c() for c in callbacks]
 
-        mconf.init_device = device
+        model_config.init_device = device
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
             model = model_cls.new(
                 in_features=in_features,
                 n_classes_per_task=n_classes,
-                conf=mconf,
+                conf=model_config,
                 **model_kwargs,
             )
             # if init_bias == "softmax":
