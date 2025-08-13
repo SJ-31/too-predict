@@ -6,6 +6,7 @@ import itertools
 import math
 import time
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Callable, Iterator, Literal, override
@@ -354,13 +355,10 @@ def linear_reset_parameters(weight: Tensor, bias: Tensor | None = None) -> None:
         init.uniform_(bias, -bound, bound)
 
 
-class MultiModule(L.LightningModule):
-    """MultiModule."""
-
+@dataclass
+class ModuleConfig:
     def __init__(
         self,
-        in_features: int,
-        n_classes_per_task: list[int],
         record_metrics: bool = True,
         task_names: Sequence[str] | None = None,
         task_weights: Tensor | Sequence | None = None,
@@ -370,18 +368,16 @@ class MultiModule(L.LightningModule):
         scheduler_fn: Callable | None = None,
         scheduler_config: dict | None = None,
         cache: str | None | Sequence = None,
-        log_norm: bool = False,
+        record_norm: bool = False,
+        dropout_p: float = 0.2,
         scaler: TorchScaler | None = None,
         init_device: str = "cpu",
+        targets: Sequence | None = None,
+        **kwargs,
     ) -> None:
-        """__init__.
-
+        """
         Parameters
         ----------
-        in_features : int
-            in_features
-        n_classes_per_task : list[int]
-            n_classes_per_task
         task_weights : Tensor | Sequence | None
             task_weights
         l1_pars : dict
@@ -396,42 +392,72 @@ class MultiModule(L.LightningModule):
             Fitted (ideally on entire train set) scaler that will apply transformation
             to each batch prior to training
 
-        Returns
-        -------
-        None
+        kwargs : Model-specific kwargs, stored in a dict
+        """
+        self.l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self.l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
+        self.record_norm: bool = record_norm
+        self.record: bool = record_metrics
+        self._init_device: torch.device = torch.device(init_device)
+        self.task_weights: Tensor = None
+        if task_weights is not None and not isinstance(task_weights, Tensor):
+            self.task_weights = torch.tensor(task_weights).to(self._init_device)
+        self.optimizer_fn: Callable | None = optimizer_fn
+        self.scheduler_fn: Callable | None = scheduler_fn
+        self.scheduler_config: dict | None = scheduler_config
+        self.dropout_p: float = dropout_p
+        self.cache: str | Sequence | None = cache
+        self.scaler: TorchScaler | None = scaler
+        self.kwargs: dict = kwargs
+
+    @property
+    def init_device(self) -> torch.device:
+        return self._init_device
+
+    @init_device.setter
+    def init_device(self, value: str | torch.device):
+        if isinstance(value, str):
+            self._init_device = torch.device(value)
+        else:
+            self._init_device = value
+
+
+class MultiModule(L.LightningModule):
+    """MultiModule."""
+
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        conf: ModuleConfig | None = None,
+        task_names: Sequence | None = None,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        in_features : int
+            number of incoming features
+        n_classes_per_task : list[int]
+            n_classes_per_task
 
         """
         super().__init__()
-        self._in_features: int = in_features
-        self._n_tasks: int = len(n_classes_per_task)
-        self._record: bool = record_metrics
-        self._l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
-        self._l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
-        self._log_norm: bool = log_norm
-        self._n_classes: Sequence[int] = n_classes_per_task
-        self._task_weights: Tensor = None
-        if task_weights is not None and not isinstance(task_weights, Tensor):
-            self._task_weights = torch.tensor(task_weights).to(self.device)
-        elif task_weights is not None:
-            self._task_weights = task_weights
+        self.in_features: int = in_features
+        self.n_tasks: int = len(n_classes_per_task)
+        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
+        self.n_classes: Sequence[int] = n_classes_per_task
         self._accs: nn.ModuleList | None = None
-        if self._record:
+        if self.conf.record:
             self._accs = nn.ModuleList(
                 [Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task]
             )
         if task_names is None:
-            self._task_names: Sequence[str] = [str(i) for i in range(self._n_tasks)]
+            self.task_names: Sequence[str] = [str(i) for i in range(self.n_tasks)]
         else:
-            self._task_names = task_names
-
-        self._optimizer_fn: Callable | None = optimizer_fn
-        self._scheduler_fn: Callable | None = scheduler_fn
-        self._scheduler_config: dict | None = scheduler_config
-        self._scaler: TorchScaler | None = None
-        self.init_device: torch.device = torch.device(init_device)
+            self.task_names = task_names
 
         # Cache results after iterations or validation for custom callbacks
-        self._cache: dict[str, tuple[bool, list]] = {
+        self.cache: dict[str, tuple[bool, list]] = {
             "train_loss": (False, []),
             "train_acc": (False, []),
             "val_acc": (False, []),
@@ -439,11 +465,21 @@ class MultiModule(L.LightningModule):
             "test_loss": (False, []),
             "test_acc": (False, []),
         }
-        if isinstance(cache, str):
-            self.set_cache(cache)
-        elif cache is not None:
-            for c in cache:
+        if isinstance(self.conf.cache, str):
+            self.set_cache(self.conf.cache)
+        elif self.conf.cache is not None:
+            for c in self.conf.cache:
                 self.set_cache(c)
+
+    @classmethod
+    def new(
+        cls,
+        in_features: int,
+        n_classes_per_task: list[int],
+        conf: ModuleConfig | None = None,
+        **kwargs,
+    ):
+        return cls(in_features, n_classes_per_task, conf=conf, **kwargs)
 
     @override
     def forward(self, X):
@@ -453,17 +489,17 @@ class MultiModule(L.LightningModule):
     def set_cache(
         self, value: Literal["train_loss", "val_acc", "val_loss", "train_acc"]
     ):
-        if value not in self._cache:
-            raise ValueError(f"Value to cache must be one of {self._cache.keys()}")
-        self._cache[value] = (True, [])
+        if value not in self.cache:
+            raise ValueError(f"Value to cache must be one of {self.cache.keys()}")
+        self.cache[value] = (True, [])
 
     def _try_cache_to(self, target: str, value: Tensor) -> None:
         """Record ``value`` to the cache if it has been set for recording"""
-        if self._cache[target][0]:
-            self._cache[target][1].append(value.detach())
+        if self.cache[target][0]:
+            self.cache[target][1].append(value.detach())
 
     def cache_clear(self, target) -> None:
-        self._cache[target][1].clear()
+        self.cache[target][1].clear()
 
     def _calc_accuracy(
         self,
@@ -481,7 +517,7 @@ class MultiModule(L.LightningModule):
         if isinstance(output, tuple):
             accs = []
             for i, (name, y_true, pred) in enumerate(
-                zip(self._task_names, iter_cols(y_true), iter_cols(preds))
+                zip(self.task_names, iter_cols(y_true), iter_cols(preds))
             ):
                 acc = self._accs[i](pred, y_true)
                 accs.append(acc)
@@ -502,8 +538,8 @@ class MultiModule(L.LightningModule):
         return proba.detach()
 
     def maybe_scale(self, x):
-        if self._scaler is not None:
-            return self._scaler.transform(x)
+        if self.conf.scaler is not None:
+            return self.conf.scaler.transform(x)
         return x
 
     @override
@@ -513,10 +549,10 @@ class MultiModule(L.LightningModule):
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, context="train")
         self.log("train_loss", loss)
-        if self._record:
+        if self.conf.record:
             self._calc_accuracy(output=output, y_true=y, prefix="train")
         self._try_cache_to("train_loss", loss)
-        if self._log_norm:
+        if self.conf.record_norm:
             norm = (
                 sum(
                     p.grad.norm(2).item() ** 2
@@ -562,7 +598,7 @@ class MultiModule(L.LightningModule):
         loss = self.criterion(y_pred=output, y_true=y, context=acc_prefix)
         self.log(log_to, loss)
         self._try_cache_to(log_to, loss)
-        if self._record:
+        if self.conf.record:
             self._calc_accuracy(output=output, y_true=y, prefix=acc_prefix)
         return output
 
@@ -585,7 +621,7 @@ class MultiModule(L.LightningModule):
         opt_fn : Callable
             returns a Pytorch-compatible optimizer when called with named_parameters()
         """
-        self._optimizer_fn = opt_fn
+        self.conf.optimizer_fn = opt_fn
 
     def register_schedulers(
         self,
@@ -602,26 +638,26 @@ class MultiModule(L.LightningModule):
         lr_scheduler_config : dict
             lr_scheduler_config as defined by Pytorch lightning
         """
-        self._scheduler_fn = scheduler_fn
-        self._scheduler_config = lr_scheduler_config
+        self.conf.scheduler_fn = scheduler_fn
+        self.conf.scheduler_config = lr_scheduler_config
 
     @override
     def configure_optimizers(self) -> OptimizerConfig:
-        if self._optimizer_fn is not None:
-            optimizer = self._optimizer_fn(self.named_parameters())
+        if self.conf.optimizer_fn is not None:
+            optimizer = self.conf.optimizer_fn(self.named_parameters())
         else:
             optimizer = optim.Adam(self.named_parameters(), lr=0.001)
         lr_scheduler_config = (
-            self._scheduler_config.copy()
-            if self._scheduler_config is not None
+            self.conf.scheduler_config.copy()
+            if self.conf.scheduler_config is not None
             else {"monitor": "train_loss"}
         )
-        if self._scheduler_fn is None:
+        if self.conf.scheduler_fn is None:
             lr_scheduler_config["scheduler"] = schedule.ReduceLROnPlateau(
                 optimizer=optimizer, patience=40
             )
         else:
-            lr_scheduler_config["scheduler"] = self._scheduler_fn(optimizer)
+            lr_scheduler_config["scheduler"] = self.conf.scheduler_fn(optimizer)
         return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
 
     def criterion(self, y_pred, y_true, context: str | None = None):
@@ -636,13 +672,13 @@ class MultiModule(L.LightningModule):
         raise NotImplementedError()
 
     def l1(self) -> Tensor | Literal[0]:
-        if self._l1_pars["lambda"] > 0:
-            return l1(self, self._l1_pars["exclude"])
+        if self.conf.l1_pars["lambda"] > 0:
+            return l1(self, self.conf.l1_pars["exclude"])
         return 0
 
     def l2(self) -> Tensor | Literal[0]:
-        if self._l2_pars["lambda"] > 0:
-            return l2(self, self._l2_pars["exclude"])
+        if self.conf.l2_pars["lambda"] > 0:
+            return l2(self, self.conf.l2_pars["exclude"])
         return 0
 
 

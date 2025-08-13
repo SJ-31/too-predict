@@ -3,6 +3,7 @@
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Literal
 
 import anndata as ad
 import lightning as L
@@ -87,13 +88,15 @@ def train_test_split_torch(
 # TODO: give this params for working with distillation
 def holdout(
     trainer_kwargs: dict,
-    model_kwargs: dict,
-    model_fn: Callable[[], L.LightningModule],
+    model_config: d_ut.ModuleConfig,
+    model_cls: d_ut.MultiModule,
     adata: ad.AnnData,
     to_encode: tuple[str],
     n_classes: Sequence[int],
+    in_features: int,
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
+    model_kwargs: dict | None = None,
     logger_fn: Callable[[str], Logger] | None = None,
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
@@ -128,6 +131,7 @@ def holdout(
     if split_fns is None and split_masks is None:
         raise ValueError("Either split_fns or split_indices must be given!")
     split_is_fn: bool = split_fns is not None
+    model_kwargs = ut.if_none(model_kwargs, {})
 
     def helper(set_label, splitter, cur_adata):
         cur_adata = cur_adata.copy()
@@ -178,10 +182,15 @@ def holdout(
         x_test_tensor, y_true = test_dset[:]
         if scaler is not None:
             scaler.fit(train_l.dataset[:][0])
-            model_kwargs["scaler"] = scaler
-        model_kwargs["init_device"] = device
+            model_config.scaler = scaler
+        model_config.init_device = device
         with trainer.init_module():
-            model = model_fn(**model_kwargs)
+            model = model_cls.new(
+                in_features=in_features,
+                n_classes_per_task=n_classes,
+                conf=model_config,
+                **model_kwargs,
+            )
 
         trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
         model.to(device)
@@ -232,10 +241,12 @@ def holdout(
 
 def cross_validate(
     trainer_kwargs: dict,
-    model_kwargs: dict,
-    model_fn: Callable[[], L.LightningModule],
+    mconf: d_ut.ModuleConfig,
+    model_cls: d_ut.MultiModule,
     adset: d_ut.AnnDataset | TeacherResponse,
     n_classes: Sequence[int],
+    in_features: int,
+    model_kwargs: dict | None = None,
     random_state: int | None = ut.RANDOM_STATE,
     callbacks: list[Callable[[], L.Callback]] | None = None,
     n_splits: int = 5,
@@ -246,6 +257,7 @@ def cross_validate(
     scaler: d_ut.TorchScaler | None = None,
     with_train_acc: bool = True,
     device: str = "cpu",
+    init_bias: Literal["softmax", "regression", "none"] = "softmax",
     **kwargs,
 ) -> pd.DataFrame:
     """Run cross-validation
@@ -268,18 +280,20 @@ def cross_validate(
     splits = cv.split(adset)
     metrics: dict = {"fold": []}
     tasks = adset.label_cols
+    trainer_kwargs["accelerator"] = device
     for task in tasks:
         metrics[f"{task}_valid_acc"] = []
         if with_train_acc:
             metrics[f"{task}_train_acc"] = []
     if scaler is not None:
-        model_kwargs["scaler"] = scaler
+        mconf.scaler = scaler
     if isinstance(adset, TeacherResponse):
         distillation: bool = True
         labels: Tensor | None = adset.get_targets()
     else:
         distillation = False
         labels = None
+    model_kwargs = ut.if_none(model_kwargs, {})
     for fold, (train_idx, test_idx) in enumerate(splits):
         if verbose:
             print(f"fold {fold} started")
@@ -303,10 +317,18 @@ def cross_validate(
         if callbacks is not None:
             trainer_kwargs["callbacks"] = [c() for c in callbacks]
 
-        model_kwargs["init_device"] = device
+        mconf.init_device = device
         trainer = L.Trainer(**trainer_kwargs)
         with trainer.init_module():
-            model = model_fn(**model_kwargs)
+            model = model_cls.new(
+                in_features=in_features,
+                n_classes_per_task=n_classes,
+                conf=mconf,
+                **model_kwargs,
+            )
+            # if init_bias == "softmax":
+            #     d_ut.init_lazy(model, train)
+            # d_ut.softmax_init()
         if distillation:
             use_kd_criterion(model)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
