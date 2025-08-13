@@ -372,7 +372,8 @@ class ModuleConfig:
         dropout_p: float = 0.2,
         scaler: TorchScaler | None = None,
         init_device: str = "cpu",
-        targets: Sequence | None = None,
+        targets: tuple[Tensor] | None = None,
+        outlayer_type: Literal["softmax", "regression"] = "softmax",
         **kwargs,
     ) -> None:
         """
@@ -391,8 +392,8 @@ class ModuleConfig:
         scaler : TorchScaler
             Fitted (ideally on entire train set) scaler that will apply transformation
             to each batch prior to training
-
         kwargs : Model-specific kwargs, stored in a dict
+        targets : Tensor of targets that the model will observe during training
         """
         self.l1_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
         self.l2_pars: dict = if_none(l1_pars, {"lambda": 0, "exclude": set()})
@@ -408,7 +409,23 @@ class ModuleConfig:
         self.dropout_p: float = dropout_p
         self.cache: str | Sequence | None = cache
         self.scaler: TorchScaler | None = scaler
+        self.outlayer_type: str = outlayer_type
+        if targets is not None:
+            self.out_bias: tuple[Tensor, ...] | None = self.get_out_bias(
+                self.outlayer_type, targets
+            )
+        else:
+            self.out_bias = None
         self.kwargs: dict = kwargs
+
+    @staticmethod
+    def get_out_bias(
+        mode: Literal["softmax", "regression"], targets: tuple[Tensor, ...]
+    ) -> tuple[Tensor, ...]:
+        if mode == "softmax":
+            return tuple([t / t.sum() for t in targets])
+        elif mode == "regression":
+            return tuple([t.mean() for t in targets])
 
     @property
     def init_device(self) -> torch.device:
@@ -470,6 +487,24 @@ class MultiModule(L.LightningModule):
         elif self.conf.cache is not None:
             for c in self.conf.cache:
                 self.set_cache(c)
+
+    def init_out_bias(self, targets: tuple[Tensor] | None = None) -> None:
+        """Initialize biases of output layers based on training data"""
+        biases = (
+            self.conf.out_bias
+            if self.conf.out_bias is not None
+            else ModuleConfig.get_out_bias(self.conf.outlayer_type, targets)
+        )
+        for i, bias in enumerate(biases):
+            layer = self.get_outlayer(i)
+            print(self.conf.outlayer_type)
+            print(layer.bias.shape)
+            print("new_shape", nn.Parameter(bias).shape)
+            layer.bias = nn.Parameter(bias).to(self.device)
+
+    def get_outlayer(self, i: int) -> nn.Module:
+        """Return the module's ith outlayer"""
+        raise NotImplementedError()
 
     @classmethod
     def new(
@@ -1018,3 +1053,11 @@ def update_batch_strategy(
             shuffle=config.pop("shuffle", True),
             drop_last=config.pop("drop_last", False),
         )
+
+
+# * Initialization
+
+
+def init_lazy(model: L.LightningModule, loader: DataLoader) -> None:
+    x, _ = next(iter(loader))
+    model(x)

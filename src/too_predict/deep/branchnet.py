@@ -400,6 +400,10 @@ class MultiBranch(MultiModule):
         print("\nFitting BranchNets complete")
 
     @override
+    def init_out_bias(self, targets: tuple[Tensor] | None = None) -> None:
+        pass
+
+    @override
     def forward(self, X):
         x = nn.functional.relu(F.linear(X, self.shared, bias=self.shared_bias))
         result = [bn(x) for bn in self.branchnets]

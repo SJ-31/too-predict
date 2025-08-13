@@ -3,7 +3,6 @@
 import math
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal
 
 import anndata as ad
 import lightning as L
@@ -14,11 +13,12 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.utils as ut
 import torch
+import torch.nn as nn
 from lightning.pytorch.loggers import CometLogger, Logger
 from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
 from too_predict.deep.metrics import multitask_acc, multitask_all_metrics
 from torch import Tensor
-from torch.utils.data import DataLoader, Dataset, Subset, random_split
+from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset, random_split
 
 
 def train_test_split_torch(
@@ -257,7 +257,7 @@ def cross_validate(
     scaler: d_ut.TorchScaler | None = None,
     with_train_acc: bool = True,
     device: str = "cpu",
-    init_bias: Literal["softmax", "regression", "none"] = "softmax",
+    init_bias: bool = True,
     **kwargs,
 ) -> pd.DataFrame:
     """Run cross-validation
@@ -327,11 +327,11 @@ def cross_validate(
                 conf=model_config,
                 **model_kwargs,
             )
-            # if init_bias == "softmax":
-            #     d_ut.init_lazy(model, train)
-            # d_ut.softmax_init()
-        if distillation:
-            use_kd_criterion(model)
+            if distillation:
+                use_kd_criterion(model)
+            if init_bias:
+                d_ut.init_lazy(model, loader=train)
+                model.init_out_bias(targets=train.dataset[:][1])
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
         model = model.to(torch.device(device))
 

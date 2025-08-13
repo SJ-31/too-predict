@@ -72,5 +72,6 @@ def use_kd_criterion(model: MultiModule):
     "Swap ``model``'s criterion method for distillation loss"
     model.criterion = MethodType(distillation_loss, model)
     model.conf.record = False
+    model.conf.outlayer_type = "regression"
     #  TODO: can't calculate accuracy while using distillation,
     #  but maybe some other metric would work

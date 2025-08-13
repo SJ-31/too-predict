@@ -117,6 +117,11 @@ class HardSharer(d_ut.MultiModule):
             self.task_layers.append(nn.Sequential(*task_modules))
 
     @override
+    def get_outlayer(self, i: int) -> nn.Module:
+        cur_seq = self.task_layers[i]
+        return list(cur_seq.modules())[-1]
+
+    @override
     def forward(self, X):
         result = []
         hidden: torch.Tensor = self.hidden_shared(X)
@@ -176,6 +181,11 @@ class Disyak(d_ut.MultiModule):
             self.hlayers.append(nn.LazyLinear(n_hidden))
             out = nn.LazyLinear(n_classes)
             self.olayers.append(out)
+
+    @override
+    def get_outlayer(self, i: int) -> nn.LazyLinear | nn.Linear:
+        layer: nn.LazyLinear | nn.Linear = self.olayers[i]
+        return layer
 
     def _activate(self, input: Tensor) -> Tensor:
         return self.dropout(self.acti(input))
