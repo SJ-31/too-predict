@@ -126,7 +126,7 @@ class MtcLr(d_ut.MultiModule):
     @override
     def forward(self, X) -> tuple[Tensor]:
         results = []
-        for i in range(self._n_tasks):
+        for i in range(self.n_tasks):
             results.append(self.lrs[str(i)](X))
         return tuple(results)
 
@@ -236,7 +236,7 @@ class MultiLevel(d_ut.MultiModule):
     @override
     def forward(self, X) -> tuple[Tensor]:
         results = []
-        for i in range(self._n_tasks):
+        for i in range(self.n_tasks):
             results.append(self.lrs[str(i)](X))
         return tuple(results)
 
@@ -246,7 +246,7 @@ class MultiLevel(d_ut.MultiModule):
     ) -> Tensor:
         total_loss: Tensor = torch.tensor(0.0).to(self.device)
         n_samples: int = y_true.shape[0]
-        if self._n_tasks > 1:
+        if self.n_tasks > 1:
             total_loss += (
                 multitask_cross_entropy_loss(y_pred, y_true, weights=self._task_weights)
                 / 2

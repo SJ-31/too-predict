@@ -18,7 +18,7 @@ import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.loggers import Logger
 from too_predict.deep.callbacks import BatchSizeScaler
 from too_predict.deep.evaluation import cross_validate, holdout
-from too_predict.deep.nns import HardSharer
+from too_predict.deep.nns import Disyak, HardSharer
 from too_predict.utils import train_test_split_ad
 
 # * HPO
@@ -80,25 +80,25 @@ class DlTrialSetup(topt.TrialSetup):
         else:
             raise ValueError(f"{name} not implemented!")
 
-    def _suggest_module(self) -> tuple[Callable, dict]:
-        module = self._suggest_param_or_default("module")
-        if isinstance(module, Callable):  # No need to adjust module parameters
-            return module, {}
-        elif isinstance(module, str):
-            if module == "Disyak":
-                dropout = self._suggest_param_or_default("dropout")
-                l1_pars = self._suggest_param_or_default("l1_pars")
-                l2_pars = self._suggest_param_or_default("l2_pars")
-                task_weights = self._suggest_param_or_default("task_weights")
+    def _suggest_module(
+        self,
+    ) -> tuple[d_ut.MultiModule, dict, d_ut.ModuleConfig | None]:
+        model = self._suggest_param_or_default("module")
+        if isinstance(model, d_ut.MultiModule):  # No need to adjust module parameters
+            return model, {}, None
+        elif isinstance(model, str):
+            conf = d_ut.ModuleConfig(
+                dropout=self._suggest_param_or_default("dropout"),
+                l1_pars=self._suggest_param_or_default("l1_pars"),
+                l2_pars=self._suggest_param_or_default("l2_pars"),
+                task_weights=self._suggest_param_or_default("task_weights"),
+            )
+            if model == "Disyak":
                 n_hidden = self._suggest_param_or_default("n_hidden")
                 kwargs = dict(
-                    dropout_p=dropout,
-                    l1_pars=l1_pars,
-                    l2_pars=l2_pars,
-                    task_weights=task_weights,
                     n_hidden=n_hidden,
                 )
-                return lambda **kwargs: HardSharer(**kwargs), kwargs
+                return Disyak, kwargs, conf
             else:
                 raise ValueError("Module name not recognized!")
         else:
@@ -107,18 +107,18 @@ class DlTrialSetup(topt.TrialSetup):
     @override
     def __call__(self, opts: dict | None = None) -> tuple:
         self.user_opts: dict = opts
-        module_fn, module_kwargs = self._suggest_module()
-        module_kwargs["scaler"] = self._suggest_param_or_default("scaler")
+        model_cls, model_kwargs, model_config = self._suggest_module()
+        model_kwargs["scaler"] = self._suggest_param_or_default("scaler")
         optimizer_fn: Callable = self._suggest_optimizer()
         is_callback, scheduler_fn = self._suggest_scheduler()
-        module_kwargs["optimizer_fn"] = optimizer_fn
+        model_kwargs["optimizer_fn"] = optimizer_fn
         if not is_callback:
-            module_kwargs["scheduler_fn"] = scheduler_fn
+            model_config.scheduler_fn = scheduler_fn
         else:
             self.user_opts["callbacks"].append(scheduler_fn)
         transformer: tt.Transformer = self._suggest_param_or_default("transformer")
         filter: fil.Filter = self._suggest_param_or_default("filter")
-        return module_fn, module_kwargs, transformer, filter
+        return model_cls, model_kwargs, model_config, transformer, filter
 
 
 class DlOptimizer(topt.BaseOptimizer):
@@ -181,17 +181,15 @@ class DlOptimizer(topt.BaseOptimizer):
         setup = DlTrialSetup(trial=trial, **kwargs)
         n_features, n_classes = d_ut.data_spec(adata, y=self.label_col)
         opts["n_classes"] = n_classes
-        module_fn, module_kwargs, transformer, filter = setup(opts=opts)
+        model_cls, model_kwargs, model_config, transformer, filter = setup(opts=opts)
+        model_config: d_ut.ModuleConfig
         n_epochs = setup._suggest_param_or_default("n_epochs")
         matmul_precision: float | None = setup._suggest_param_or_default(
             "matmul_precision"
         )
         if matmul_precision:
             torch.set_float32_matmul_precision(matmul_precision)
-        module_kwargs["cache"] = kwargs.get("set_cache")
-        module_kwargs.update(
-            {"in_features": n_features, "n_classes_per_task": n_classes}
-        )
+        model_config.cache = kwargs.get("set_cache")
         log_root: Path | str | None = kwargs.get("intermediate_out", None)
         if log_root is not None:
             if isinstance(log_root, str):
@@ -213,10 +211,11 @@ class DlOptimizer(topt.BaseOptimizer):
         }
         if do_splits:
             result: dict = holdout(
-                model_fn=module_fn,
-                model_kwargs=module_kwargs,
+                model_cls=model_cls,
+                model_config=model_kwargs,
                 trainer_kwargs=trainer_params,
                 adata=train,
+                in_features=n_features,
                 n_classes=n_classes,
                 logger_fn=lambda x: self.log_fn(f"{trial.number}-holdout_{x}"),
                 to_encode=self.label_col,
@@ -242,8 +241,9 @@ class DlOptimizer(topt.BaseOptimizer):
             else:
                 cv_out = None
             cv_results = cross_validate(
-                model_fn=module_fn,
-                model_kwargs=module_kwargs,
+                model_cls=model_cls,
+                model_kwargs=model_kwargs,
+                model_config=model_config,
                 trainer_kwargs=trainer_params,
                 callbacks=callbacks,
                 save_path=cv_out,
@@ -251,6 +251,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 logger_fn=lambda x: self.log_fn(f"{trial.number}-cv_fold_{x}"),
                 validation=valid_set,
                 device=device,
+                in_features=n_features,
                 n_classes=n_classes,
                 n_splits=cv_splits,
                 verbose=kwargs.get("verbose", False),
