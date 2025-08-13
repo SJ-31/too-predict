@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 import math
 import time
+import traceback
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -24,6 +25,7 @@ import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from lightning.pytorch.loggers import CometLogger, TensorBoardLogger, WandbLogger
 from lightning.pytorch.utilities.types import OptimizerConfig
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 from too_predict.utils import if_none
 from torch import Tensor
 from torch.utils.data import (
@@ -906,6 +908,29 @@ def lightning_logger(
         kwargs.update({"version": exp_name})
         logger = TensorBoardLogger(**kwargs)
     return logger
+
+
+def tflog2pandas(path: Path | str) -> pd.DataFrame:
+    """Extract metrics from tensorboard logdir as a df"""
+    runlog_data = pd.DataFrame({"metric": [], "value": [], "step": []})
+    if isinstance(path, Path):
+        path = str(path)
+    try:
+        event_acc = EventAccumulator(path)
+        event_acc.Reload()
+        tags: Sequence = event_acc.Tags()["scalars"]
+        for tag in tags:
+            event_list = event_acc.Scalars(tag)
+            values = list(map(lambda x: x.value, event_list))
+            step = list(map(lambda x: x.step, event_list))
+            r = {"metric": [tag] * len(step), "value": values, "step": step}
+            r = pd.DataFrame(r)
+            runlog_data = pd.concat([runlog_data, r])
+    # Dirty catch of DataLossError
+    except Exception:
+        print("Event file possibly corrupt: {}".format(path))
+        traceback.print_exc()
+    return runlog_data.pivot(columns="metric", values="value")
 
 
 # * Normalization and scaling
