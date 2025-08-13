@@ -54,7 +54,7 @@ def cross_val(in_file: str, distillation: bool = False):
     adata = ad.read_h5ad(in_file, backed=True)
     model = Path(in_file).stem
     model_kwargs = MODELS[model].get("params", {})
-    model_fn = get_model_fn(model, model_kwargs)
+    model_cls = get_model_fn(model)
     n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
     train, valid = ut.train_test_split_ad(
         adata, test_size=0.1, random_state=ut.RANDOM_STATE
@@ -79,18 +79,19 @@ def cross_val(in_file: str, distillation: bool = False):
     if TEST:
         trainer_kwargs["log_every_n_steps"] = 1
         trainer_kwargs["max_epochs"] = 3
-    model_kwargs = {
-        "n_classes_per_task": n_classes,
-        "in_features": n_features,
-        "cache": "val_acc",
-        "scheduler_fn": get_scheduler,
-        "optimizer_fn": opt_fn,
-    }
+    mconfig = d_ut.ModuleConfig(
+        cache="val_acc",
+        scheduler_fn=get_scheduler,
+        optimizer_fn=opt_fn,
+        record_norm=smk.config.get("record_norm", True),
+        **MODELS[model].get("s_params", {}),
+    )
     dfs = []
     for i in range(N_REPEATS):
         cv: pd.DataFrame = cross_validate(
-            model_fn=model_fn,
+            model_cls=model_cls,
             model_kwargs=model_kwargs,
+            model_config=mconfig,
             callbacks=smk_callbacks(DL_CONFIG),
             logger_fn=lambda x: d_ut.lightning_logger(
                 f"fold_{x}_repeat_{i}",
@@ -99,6 +100,7 @@ def cross_val(in_file: str, distillation: bool = False):
             ),
             trainer_kwargs=trainer_kwargs,
             adset=train_set,
+            in_features=n_features,
             n_classes=n_classes,
             validation=valid_set,
             device=DL_CONFIG["device"],

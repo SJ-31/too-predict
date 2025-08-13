@@ -23,6 +23,7 @@ from too_predict.corrector import Corrector
 from too_predict.deep.branchnet import MultiBranch
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.nns import Disyak, HardSharer
+from too_predict.deep.torch_utils import MultiModule
 from too_predict.filter import Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
@@ -852,9 +853,7 @@ def default_filter_transform(
     return f, t
 
 
-def get_model_fn(
-    name: str, config: dict | None = None, return_module: bool = False
-) -> Callable | L.LightningModule:
+def get_model_fn(name: str) -> MultiModule:
     if name == "MultiLevel":
         model = d_log.MultiLevel
     elif name == "MtcLR":
@@ -866,16 +865,7 @@ def get_model_fn(
     elif "MultiBranch" in name:
         model = MultiBranch
 
-    if config is None:
-        config = {}
-
-    if return_module:
-        return model
-
-    def make_model(**kwargs):
-        return model(**kwargs, **config)
-
-    return make_model
+    return model
 
 
 def get_callback_fn(name: str, config: dict | None = None) -> Callable:

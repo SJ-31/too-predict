@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-from collections.abc import Callable
 
 import anndata as ad
 import lightning as L
@@ -10,7 +9,7 @@ import torch
 from pyhere import here
 from too_predict._train_utils import MODELS, DummySnake, get_model_fn, read_model_spec
 from too_predict.deep.nns import Baseline
-from too_predict.deep.torch_utils import AnnDataset, data_spec
+from too_predict.deep.torch_utils import AnnDataset, ModuleConfig, data_spec
 from too_predict.evaluation import Robustness
 from torch.utils.data import DataLoader
 
@@ -92,8 +91,13 @@ elif smk.rule == "fit_deep":
             continue
         spec = MODEL_SPEC[name]
         kwargs = spec.get("params")
-        kwargs.update({"n_classes_per_task": n_classes, "in_features": n_features})
-        model = get_model_fn(name)(**kwargs)
+        conf = ModuleConfig(spec.get("s_params", {}))
+        model = get_model_fn(name).new(
+            n_classes_per_task=n_classes,
+            in_features=n_features,
+            conf=conf,
+            **kwargs,
+        )
         trainer_kwargs = smk.config["dl"]["trainer"]
         trainer_kwargs["enable_checkpointing"] = False
         if smk.config["test"]:
