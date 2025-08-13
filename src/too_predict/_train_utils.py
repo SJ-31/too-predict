@@ -835,21 +835,17 @@ def default_filter_transform(
 ) -> tuple[Filter, Transformer]:
     if smk_config:
         dct = smk_config["shallow"]
+        t_dct = dct["transformer"]
+        f_dct = dct["filter"]
     else:
-        dct = {
-            "transform": "clr",
+        t_dct = {"method": "clr", "imputation": "plus_one"}
+        f_dct = {
             "feature_set": "edgeR_median_lfc_feature_list_3000",
             "feature_col": "GENEID",
-            "imputation": "plus_one",
         }
-    t = Transformer(
-        dct["transform"], impute_fn=Imputer(dct["imputation"]), inplace=False
-    )
-    f = Filter(
-        features=FEATURE_LISTS[dct["feature_set"]],
-        feature_col=dct["feature_col"],
-        inplace=False,
-    )
+    t = Transformer(**t_dct, inplace=False)
+    f_dct["features"] = FEATURE_LISTS[f_dct["feature_set"]]
+    f = Filter(**f_dct, inplace=False)
     return f, t
 
 
