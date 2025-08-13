@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Sequence
+from typing import Literal, Sequence
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -14,6 +14,7 @@ import scanpy as sc
 import scipy.cluster.hierarchy as sch
 import scipy.spatial.distance as spd
 import seaborn as sns
+import sklearn.feature_selection as fs
 import sklearn.neighbors as sn
 from matplotlib.figure import Figure
 from scipy import sparse
@@ -33,8 +34,25 @@ class Filter:
     """
 
     def __init__(
-        self, features, feature_col="GENENAME", inplace=False, blacklist=None
+        self,
+        features,
+        method: Literal["edgeR", "mutual_information", "variance_threshold"]
+        | None = None,
+        feature_col="GENENAME",
+        inplace=False,
+        blacklist=None,
+        top: int = 500,
     ) -> None:
+        """Filter genes from adata object
+
+        Parameters
+        ----------
+        top : int
+            Number of features to keep in feature selection
+        features : Sequence of pre-selected features to use
+            Recommended to specify a method and call `fit` to perform automatic
+            feature selection with an adata object
+        """
         self.features: list = list(set(features))
         # Requested features to subset data by
         if blacklist is not None:
@@ -45,6 +63,7 @@ class Filter:
         )
         self.inplace: bool = inplace
         self.missing_features: list = []
+        self.top: int = top
 
     def copy(self) -> Filter:
         return Filter(
@@ -119,6 +138,33 @@ class Filter:
         if len(missing) > 0:
             print(f"--- WARNING: {len(missing)} missing features!")
         return transformed
+
+    def variance_threshold(self, threshold=0) -> list:
+        vt = fs.VarianceThreshold(threshold=threshold)
+        counts = ut.xarray_if_sparse(self.adata)
+        vt.fit(counts)
+        support = vt.get_support(indices=True)
+        variance = np.nanvar(counts, axis=0)[support]
+        kept = list(self.adata.var[self.feature_col][support])
+        if len(kept) <= self.top:
+            return kept
+        df = pd.DataFrame({"feature": kept, "variance": variance}).sort_values(
+            "variance",
+            ascending=False,
+        )
+        return list(df["feature"])[: self.top]
+
+    def mutual_information(self, label_col, **kwargs) -> list:
+        counts = ut.xarray_if_sparse(self.adata)
+        y = self.adata.obs[label_col]
+        minfo = fs.mutual_info_classif(counts, y, **kwargs)
+        info_df = pd.DataFrame(
+            {"feature": self.adata.var[self.feature_col], "mutual_info": minfo}
+        ).sort_values("mutual_info", ascending=False)
+        return list(info_df["feature"][: self.top])
+
+    def edgeR(self, labels, n_per: int | None = None) -> list:
+        n_classes = self
 
 
 def count_tomek_links(
@@ -455,3 +501,7 @@ class CompareSplits:
         else:
             mask = grouped["passed"].any()
         return mask.index[mask].to_list()
+
+
+# * Feature selection functions
+#
