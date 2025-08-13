@@ -10,6 +10,7 @@ from rpy2.robjects import default_converter, numpy2ri
 from scipy import sparse, stats
 from sklearn.preprocessing import StandardScaler
 
+from too_predict.imputer import Imputer
 from too_predict.r_utils import counts_into_r, np_from_r, np_to_r, r_cleanup
 from too_predict.simulation import IMPLEMENTED_SIMULATION, Simulator
 from too_predict.utils import add_gc_content, xarray_if_sparse
@@ -55,7 +56,7 @@ class Transformer:
     def __init__(
         self,
         method: str | None,
-        impute_fn=None,
+        impute_fn: str | Callable | None = None,
         inplace=False,
         make_sparse=True,
         supported_methods=IMPLEMENTED_TRANSFORMATION,
@@ -76,7 +77,9 @@ class Transformer:
         if method is not None and method.lower() not in supported_methods:
             raise ValueError(f"Method {method} not implemented!")
         self.kwargs: dict = kwargs
-        self.impute: Callable[[np.ndarray], np.ndarray] | None = impute_fn
+        self.impute: Callable[[np.ndarray], np.ndarray] | None = (
+            Imputer(impute_fn) if isinstance(impute_fn, str) else impute_fn
+        )
 
     def alr(
         self,
