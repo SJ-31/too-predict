@@ -331,7 +331,7 @@ def cross_validate(
                 use_kd_criterion(model)
             if init_bias:
                 d_ut.init_lazy(model, loader=train)
-                model.init_out_bias(targets=train.dataset[:][1])
+                model.init_out_bias(targets=train)
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
         model = model.to(torch.device(device))
 
@@ -366,3 +366,36 @@ def cross_validate(
     if isinstance(trainer.logger, CometLogger):
         trainer.logger.experiment.log_table("cv_summary.csv", df, True)
     return df
+
+
+# * Test functions
+
+
+def init_test(model: d_ut.MultiModule, loader: DataLoader) -> Tensor | tuple:
+    d_ut.init_lazy(model, loader)
+    biases = d_ut.get_initial_out_bias(model.conf.outlayer_type, loader)
+    model.conf.out_bias = biases
+    model.init_out_bias()
+    return model.predict_proba(loader), biases
+
+
+def random_softmax_loss(
+    model: d_ut.MultiModule,
+    trainer: L.Trainer,
+    train: DataLoader,
+    test: DataLoader,
+):
+    x, y = train.dataset[:]
+    rand_indices = torch.randperm(y.shape[0])
+    y = y[rand_indices]
+    shuffled_train = TensorDataset(x, y)
+    if train.batch_size:
+        new_loader = DataLoader(shuffled_train, batch_size=train.batch_size)
+    elif train.batch_sampler:
+        new_loader = DataLoader(shuffled_train, batch_sampler=train.batch_sampler)
+    else:
+        new_loader = DataLoader(shuffled_train)
+    trainer.fit(model, train_dataloaders=new_loader)
+    train_result = trainer.test(model, dataloaders=train)
+    test_result = trainer.test(model, dataloaders=test)
+    return train_result, test_result
