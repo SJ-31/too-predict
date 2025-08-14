@@ -43,15 +43,10 @@ class Transformer:
     """
 
     def fit(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
-        if isinstance(data, ad.AnnData):
-            self.counts_only = False
-            self.adata = data if self.inplace else data.copy()
-            self.adata.layers["counts"] = data.X.copy()
-            self.counts = xarray_if_sparse(data)  # A sample x feature ndarray
-        else:
-            self.adata = None
-            self.counts_only = True
-            self.counts = data.toarray() if sparse.issparse(data) else data
+        "Learn parameters from the input data. Does nothing when not applicable to chosen method"
+        if self.method == "scale":
+            ...
+        return
 
     def __init__(
         self,
@@ -65,7 +60,6 @@ class Transformer:
     ) -> None:
         self.counts: np.ndarray | pd.DataFrame
         self.adata: ad.AnnData | None
-        self.counts_only: bool
         self.inplace: bool = inplace
         self.method: str | None = method
         self.post_process: list[Callable] | None | Callable = post_process
@@ -80,102 +74,6 @@ class Transformer:
         self.impute: Callable[[np.ndarray], np.ndarray] | None = (
             Imputer(impute_fn) if isinstance(impute_fn, str) else impute_fn
         )
-
-    def alr(
-        self,
-        by: int | str,
-        var_col: str = None,
-        condition_col: str = "",
-        scales: dict | list = None,
-        gamma: float = 0,
-    ) -> np.ndarray:
-        """Normalize counts in adata using ALR, with the counts of a specific
-        gene `by` as the reference.
-
-        :param: by name of gene to normalize by, or the index of the gene in adata.var
-            if the name is provided, the index is looked up automatically.
-        :param: var_col column in adata.var containing the gene name.
-        """
-        index: int | np.ndarray
-        if isinstance(by, str) and self.counts_only:
-            query = np.where(self.counts.columns == by)
-            index = query[0][0]
-        elif isinstance(by, str) and var_col:
-            query = np.where(self.adata.var[var_col] == by)
-            index = query[0][0]
-            if len(query) > 1:
-                raise ValueError("Key `by` is not unique!")
-        elif isinstance(by, str):
-            index = self.adata.var.index.get_loc(by)
-            if not isinstance(index, int):
-                raise ValueError("Key `by` is not unique!")
-        else:
-            index = by
-        if not self.counts_only:
-            self.adata = ad.concat(
-                [self.adata[:, :index], self.adata[:, index + 1 :]],
-                axis="var",
-                merge="same",
-                uns_merge="same",
-            )
-        if gamma and condition_col and scales:
-            return self._alr_scale(index, gamma, scales, condition_col)
-        return comp.alr(self.counts, index)
-
-    def _alr_scale(
-        self,
-        by: int,
-        gamma,
-        scales: dict | list,
-        condition_col: str = "",
-        conditions: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """ALR with informed scale adjustment, adapted from [2]
-
-        Parameters
-        ----------
-        scales : a dictionary mapping condition names to custom scale values for
-           those conditions
-
-        Returns
-        -------
-
-
-        Notes
-        -----
-
-        """
-        gamma = max(gamma, 0.1)
-        rng = np.random.default_rng(1)
-        indices = np.arange(self.counts.shape[0])
-
-        if not self.counts_only:
-            uniques = self.adata.obs[condition_col].unique()
-        elif conditions is not None and len(conditions) == self.counts.shape[0]:
-            uniques = set(conditions)
-        else:
-            raise ValueError(
-                "Conditions for each sample must be provided if passing only counts!"
-            )
-
-        if not isinstance(scales, dict):
-            lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
-        else:
-            lookup: dict = scales
-        alr_adjusted = np.empty((self.counts.shape[0], self.counts.shape[1] - 1))
-        ref_vals = self.counts[:, by]
-        self.counts = np.delete(self.counts, (by), axis=1)
-        for u in uniques:
-            scale_factor = np.log2(lookup.get(u, 1))
-            if not self.counts_only:
-                locs = indices[self.adata.obs[condition_col] == u]
-            else:
-                locs = indices[conditions == u]
-            draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
-            ref_adj = np.log2(ref_vals) - draws
-            adj = np.log2(self.counts[locs, :]) - ref_adj
-            alr_adjusted[locs, :] = adj
-        return alr_adjusted
 
     @r_cleanup
     def cqn(
@@ -210,19 +108,6 @@ class Transformer:
         return np.transpose(np_from_r(ro.globalenv["norm"]))
 
     @r_cleanup
-    def tmm(self, log=True) -> np.ndarray:
-        np_cv_rules = default_converter + numpy2ri.converter
-        with np_cv_rules.context():
-            ro.globalenv["mat"] = np.transpose(self.counts)
-        ro.r("dge <- edgeR::DGEList(mat)")
-        ro.r("edgeR::normLibSizes(dge)")
-        if log:
-            ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
-        else:
-            ro.r("counts <- edgeR::cpm(dge, log = FALSE)")
-        return np.transpose(np.asarray(ro.r("counts")))
-
-    @r_cleanup
     def qsmooth(self) -> np.ndarray:
         # TODO: Very slow, if it works well try own implementation
         np_to_r(np.transpose(self.counts), "matrix")
@@ -231,114 +116,6 @@ class Transformer:
         ro.r("normed <- qsmooth(object = matrix, group_factor = labels)")
         ro.r("data <- qsmoothData(normed)")
         return np.transpose(np_from_r(ro.globalenv["data"]))
-
-    def tpm(
-        self,
-        length_col: str = "SEQLENGTH",
-        avg_fragment_size: float = 0,
-        gene_lengths: Iterable | None = None,
-    ) -> np.ndarray:
-        """Transcripts per million
-
-        Notes
-        -----
-        Calculation adapted from [1], but using gene length instead of effective length
-        if average fragment size isn't given
-        """
-        lengths: np.ndarray
-        if not self.counts_only:
-            lengths = self.adata.var[length_col]
-        elif not isinstance(gene_lengths, np.ndarray) and gene_lengths is not None:
-            lengths = np.array(gene_lengths)
-        elif gene_lengths is not None:
-            lengths = gene_lengths
-        else:
-            raise ValueError("Gene lengths not provided")
-        if avg_fragment_size:
-            lengths = lengths - avg_fragment_size + 1  # Get effective length
-        numer = np.log(self.counts) - np.reshape(np.log(lengths), (1, -1))
-        denom = np.log(np.nansum(np.exp(numer), axis=1)).reshape(-1, 1)
-        tpm = np.exp(numer - denom + np.log(1e6))
-        return np.nan_to_num(tpm, neginf=0)
-
-    def fpkm(
-        self,
-        length_col: str = "SEQLENGTH",
-        avg_fragment_size: float = 0,
-        gene_lengths: Iterable | None = None,
-    ) -> np.ndarray:
-        """Fragments/reads per kilobase million
-
-        Notes
-        -----
-        Calculation adapted from [1], but using gene length instead of effective length
-        if average fragment size isn't given
-        """
-        if not self.counts_only:
-            lengths = self.adata.var[length_col]
-        elif not isinstance(gene_lengths, np.ndarray) and gene_lengths is not None:
-            lengths = np.array(gene_lengths)
-        elif gene_lengths is not None:
-            lengths = gene_lengths
-        else:
-            raise ValueError("Gene lengths not provided")
-        if avg_fragment_size:
-            lengths = lengths - avg_fragment_size + 1
-        numer = np.log(self.counts) - np.log(lengths).values.reshape(1, -1)
-        denom = np.log(np.nansum(self.counts, axis=1).reshape(-1, 1))
-        fpkm = np.exp(numer - denom + np.log(1e9))
-        return np.nan_to_num(fpkm, neginf=0)
-
-    def _clr_scale(
-        self,
-        gamma,
-        scales: dict | list,
-        condition_col: str,
-        conditions: np.ndarray | None = None,
-    ) -> np.ndarray:
-        """CLR with informed scale model, adapted from [2]
-
-        Parameters
-        ----------
-        scales : a dictionary mapping condition names to custom scale values for
-            those conditions
-
-        Returns
-        -------
-
-
-        Notes
-        -----
-
-        """
-        gamma = max(gamma, 0.1)
-        rng = np.random.default_rng(1)
-        indices = np.arange(self.counts.shape[0])
-
-        if not self.counts_only:
-            uniques = self.adata.obs[condition_col].unique()
-        elif conditions is not None and len(conditions) == self.counts.shape[0]:
-            uniques = set(conditions)
-        else:
-            raise ValueError(
-                "Conditions for each sample must be provided if passing only counts!"
-            )
-        clr_adjusted = np.empty_like(self.counts)
-
-        if not isinstance(scales, dict):
-            lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
-        else:
-            lookup: dict = scales
-        for u in uniques:
-            scale_factor = np.log2(lookup.get(u, 1))
-            if not self.counts_only:
-                locs = indices[self.adata.obs[condition_col] == u]
-            else:
-                locs = indices[conditions == u]
-            draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
-            adj = np.log2(self.counts[locs, :]) + draws
-            clr_adjusted[locs, :] = adj
-        return clr_adjusted
 
     def log_clr(self, features=None, feature_col="gene_id") -> np.ndarray:
         """Implementation of logCLR [3]
@@ -378,83 +155,40 @@ class Transformer:
 
         return normalized
 
-    def clr(
-        self,
-        features=None,
-        gamma=None,
-        scales=None,
-        feature_col: str = "GENEID",
-        robust: bool = False,
-    ) -> np.ndarray:
-        if gamma and scales and not robust:
-            return self._clr_scale(gamma=gamma, scales=scales)
-        elif features is None and not robust:
-            return comp.clr(self.counts)
-
-        if not self.counts_only and features is not None:
-            subset = self.adata.var[feature_col].isin(features)
-        elif features is not None:
-            subset = self.counts.columns.isin(features)
-        else:
-            subset = np.ones(self.counts.shape[1]).astype(bool)
-
-        if robust:
-            gmean = [
-                stats.gmean(self.counts[i, self.counts[i, :] != 0 & subset])
-                for i in range(self.counts.shape[0])
-            ]
-            gmean = np.array(gmean)
-        else:
-            gmean = stats.gmean(self.counts[:, subset], axis=1, nan_policy="omit")
-        clr = np.log(self.counts) - np.log(gmean.reshape(-1, 1))
-        if robust:
-            clr[clr == -np.inf] = 0
-        return clr
-
     # * Transform
-    def transform(self, _=None) -> ad.AnnData | None | np.ndarray:
-        # WARNING: this really isn't how you should implement transform, but
-        # most of the transformations below are sample-independent
+    def transform(self, adata: ad.AnnData) -> ad.AnnData | None | np.ndarray:
+        adata = adata.copy()
+        adata.X = xarray_if_sparse(adata)
         if self.impute and self.method != "robust_clr":
-            self.counts = self.impute(self.counts)
-        if self.method in IMPLEMENTED_SIMULATION:
-            sim = Simulator(self.method, self.counts, **self.kwargs)
-            normalized = sim()
-            if not self.counts_only:
-                self.adata.uns["mc_instances"] = normalized
+            adata.X = self.impute(adata.X)
+        # TODO: verify if the simulations result in data leakage
+        # if self.method in IMPLEMENTED_SIMULATION:
+        #     sim = Simulator(self.method, self.counts, **self.kwargs)
+        #     normalized = sim()
+        #     if not self.counts_only:
+        #         self.adata.uns["mc_instances"] = normalized
+        # TODO: add in tmm and methods that learn params
+        if self.method == "none":
+            return adata
+        elif self.method == "tmm":
+            transformed = tmm(adata, **self.kwargs)
+        # Transformations that don't require learnable params
+        elif self.method == "robust_clr":
+            self.kwargs.update({"robust": True})
+            transformed = clr(adata, **self.kwargs)
+        elif self.method == "clr":
+            transformed = clr(adata, **self.kwargs)
+        elif self.method == "alr":
+            transformed = alr(adata, **self.kwargs)
+        elif self.method == "tpm":
+            transformed = tpm(adata, **self.kwargs)
+        elif self.method == "fpkm":
+            transformed = fpkm(adata, **self.kwargs)
         else:
-            match self.method:
-                case "robust_clr":
-                    self.kwargs.update({"robust": True})
-                    normalized = self.clr(**self.kwargs)
-                case "cqn":
-                    normalized = self.cqn(**self.kwargs)
-                case "clr":
-                    normalized = self.clr(**self.kwargs)
-                case "tmm":
-                    normalized = self.tmm()
-                case "alr":
-                    normalized = self.alr(**self.kwargs)
-                case "tpm":
-                    normalized = self.tpm(**self.kwargs)
-                case "qsmooth":
-                    normalized = self.qsmooth(**self.kwargs)
-                case "fpkm":
-                    normalized = self.fpkm(**self.kwargs)
-                case "log_clr":
-                    normalized = self.log_clr(**self.kwargs)
-                case "none" | _:
-                    normalized = self.counts
-        if not self.counts_only:
-            self.adata = self._maybe_post_process(self.adata)
-            if self.method not in IMPLEMENTED_SIMULATION:
-                self.adata.X = (
-                    sparse.csc_matrix(normalized) if self.make_sparse else normalized
-                )
-            if not self.inplace:
-                return self.adata
-        else:
-            return self._maybe_post_process(normalized)
+            raise ValueError("Transformation not recognized!")
+        adata.X = sparse.csc_matrix(transformed) if self.make_sparse else transformed
+        adata = self._maybe_post_process(adata)
+        return adata
 
     def _maybe_post_process(
         self, x: np.ndarray | ad.AnnData
@@ -471,17 +205,251 @@ class Transformer:
         self, data: ad.AnnData | np.ndarray | pd.DataFrame, _=None
     ) -> ad.AnnData | None | np.ndarray:
         self.fit(data)
-        return self.transform()
+        return self.transform(data)
 
 
-# * Misc transformations
+# * Transformation functions
 #
 def into_ranks(x: ad.AnnData, standardize: bool = False) -> ad.AnnData:
     new_x = np.zeros(x.shape)
-    expr = xarray_if_sparse(x)
+    expr = x.X
     for i in range(x.shape[0]):
         new_x[i, :] = stats.rankdata(expr[i, :], method="average")
     if standardize:
         scaler = StandardScaler()
         new_x = scaler.fit_transform(new_x)
     return ad.AnnData(X=new_x, obs=x.obs, var=x.var, uns=x.uns.copy())
+
+    # ** CoDA
+
+
+def _alr_scale(
+    data: ad.AnnData | pd.DataFrame,
+    by: int,
+    gamma,
+    scales: dict | list,
+    condition_col: str = "",
+    conditions: np.ndarray | None = None,
+) -> np.ndarray:
+    """ALR with informed scale adjustment, adapted from [2]
+
+    Parameters
+    ----------
+    scales : a dictionary mapping condition names to custom scale values for
+       those conditions
+    """
+    gamma = max(gamma, 0.1)
+    rng = np.random.default_rng(1)
+    counts = data.X if isinstance(data, ad.AnnData) else data
+    indices = np.arange(counts.shape[0])
+
+    is_df = isinstance(data, pd.DataFrame)
+
+    if not is_df:
+        uniques = data.obs[condition_col].unique()
+    elif conditions is not None and len(conditions) == counts.shape[0]:
+        uniques = set(conditions)
+    else:
+        raise ValueError(
+            "Conditions for each sample must be provided if passing only counts!"
+        )
+
+    if not isinstance(scales, dict):
+        lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
+    else:
+        lookup: dict = scales
+    alr_adjusted = np.empty((counts.shape[0], counts.shape[1] - 1))
+    ref_vals = counts[:, by]
+    counts = np.delete(counts, (by), axis=1)
+    for u in uniques:
+        scale_factor = np.log2(lookup.get(u, 1))
+        if not is_df:
+            locs = indices[data.obs[condition_col] == u]
+        else:
+            locs = indices[conditions == u]
+        draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
+        ref_adj = np.log2(ref_vals) - draws
+        adj = np.log2(counts[locs, :]) - ref_adj
+        alr_adjusted[locs, :] = adj
+    return alr_adjusted
+
+
+def alr(
+    data: ad.AnnData | pd.DataFrame,
+    by: int | str,
+    var_col: str = None,
+    condition_col: str = "",
+    scales: dict | list = None,
+    gamma: float = 0,
+) -> np.ndarray:
+    """Normalize counts in adata using ALR, with the counts of a specific
+    gene `by` as the reference.
+
+    :param: by name of gene to normalize by, or the index of the gene in adata.var
+        if the name is provided, the index is looked up automatically.
+    :param: var_col column in adata.var containing the gene name.
+    """
+    index: int | np.ndarray
+    counts = data.X if isinstance(data, ad.AnnData) else data
+    is_df = isinstance(counts, pd.DataFrame)
+    if isinstance(by, str) and is_df:
+        query = np.where(counts.columns == by)
+        index = query[0][0]
+    elif isinstance(by, str) and var_col:
+        query = np.where(data.var[var_col] == by)
+        index = query[0][0]
+        if len(query) > 1:
+            raise ValueError("Key `by` is not unique!")
+    elif isinstance(by, str):
+        index = data.var.index.get_loc(by)
+        if not isinstance(index, int):
+            raise ValueError("Key `by` is not unique!")
+    else:
+        index = by
+    if not is_df:
+        data = ad.concat(
+            [data[:, :index], data[:, index + 1 :]],
+            axis="var",
+            merge="same",
+            uns_merge="same",
+        )
+    if gamma and condition_col and scales:
+        return _alr_scale(index, gamma, scales, condition_col)
+    return comp.alr(counts, index)
+
+
+def _clr_scale(
+    adata: ad.AnnData,
+    gamma,
+    scales: dict | list,
+    condition_col: str,
+) -> np.ndarray:
+    """CLR with informed scale model, adapted from [2]
+
+    Parameters
+    ----------
+    scales : a dictionary mapping condition names to custom scale values for
+        those conditions
+
+    Returns
+    -------
+
+
+    Notes
+    -----
+
+    """
+    counts = adata.X
+    gamma = max(gamma, 0.1)
+    rng = np.random.default_rng(1)
+    indices = np.arange(counts.shape[0])
+
+    uniques = adata.obs[condition_col].unique()
+    clr_adjusted = np.empty_like(counts)
+
+    if not isinstance(scales, dict):
+        lookup: dict = {u: scales[i] for i, u in enumerate(uniques)}
+    else:
+        lookup: dict = scales
+    for u in uniques:
+        scale_factor = np.log2(lookup.get(u, 1))
+        locs = indices[adata.obs[condition_col] == u]
+        draws = rng.normal(scale_factor, gamma, len(locs)).reshape((-1, 1))
+        adj = np.log2(counts[locs, :]) + draws
+        clr_adjusted[locs, :] = adj
+    return clr_adjusted
+
+
+def clr(
+    x: ad.AnnData,
+    features=None,
+    gamma=None,
+    scales=None,
+    feature_col: str = "GENEID",
+    robust: bool = False,
+) -> np.ndarray:
+    counts: np.ndarray = x.X
+    if gamma and scales and not robust:
+        return _clr_scale(gamma=gamma, scales=scales)
+    elif features is None and not robust:
+        return comp.clr(counts)
+
+    if features is not None:
+        subset = x.var[feature_col].isin(features)
+    else:
+        subset = np.ones(counts.shape[1]).astype(bool)
+
+    if robust:
+        gmean = [
+            stats.gmean(counts[i, counts[i, :] != 0 & subset])
+            for i in range(counts.shape[0])
+        ]
+        gmean = np.array(gmean)
+    else:
+        gmean = stats.gmean(counts[:, subset], axis=1, nan_policy="omit")
+    clr = np.log(counts) - np.log(gmean.reshape(-1, 1))
+    if robust:
+        clr[clr == -np.inf] = 0
+    return clr
+
+
+# ** RNAseq
+
+
+def fpkm(
+    adata: ad.AnnData,
+    length_col: str = "SEQLENGTH",
+    avg_fragment_size: float = 0,
+) -> np.ndarray:
+    """Fragments/reads per kilobase million
+
+    Notes
+    -----
+    Calculation adapted from [1], but using gene length instead of effective length
+    if average fragment size isn't given
+    """
+    lengths = adata.var[length_col]
+    counts = adata.X
+    if avg_fragment_size:
+        lengths = lengths - avg_fragment_size + 1
+    numer = np.log(counts) - np.log(lengths).values.reshape(1, -1)
+    denom = np.log(np.nansum(counts, axis=1).reshape(-1, 1))
+    fpkm = np.exp(numer - denom + np.log(1e9))
+    return np.nan_to_num(fpkm, neginf=0)
+
+
+def tpm(
+    adata: ad.AnnData,
+    length_col: str = "SEQLENGTH",
+    avg_fragment_size: float = 0,
+) -> np.ndarray:
+    """Transcripts per million
+
+    Notes
+    -----
+    Calculation adapted from [1], but using gene length instead of effective length
+    if average fragment size isn't given
+    """
+    counts = adata.X
+    lengths = adata.var[length_col]
+    if avg_fragment_size:
+        lengths = lengths - avg_fragment_size + 1  # Get effective length
+    numer = np.log(counts) - np.reshape(np.log(lengths), (1, -1))
+    denom = np.log(np.nansum(np.exp(numer), axis=1)).reshape(-1, 1)
+    tpm = np.exp(numer - denom + np.log(1e6))
+    return np.nan_to_num(tpm, neginf=0)
+
+
+@r_cleanup
+def tmm(x: ad.AnnData | np.ndarray, log=True) -> np.ndarray:
+    np_cv_rules = default_converter + numpy2ri.converter
+    counts = x.X if isinstance(x, ad.AnnData) else x
+    with np_cv_rules.context():
+        ro.globalenv["mat"] = np.transpose(counts)
+    ro.r("dge <- edgeR::DGEList(mat)")
+    ro.r("edgeR::normLibSizes(dge)")
+    if log:
+        ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
+    else:
+        ro.r("counts <- edgeR::cpm(dge, log = FALSE)")
+    return np.transpose(np.asarray(ro.r("counts")))
