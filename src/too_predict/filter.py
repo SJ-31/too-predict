@@ -35,13 +35,15 @@ class Filter:
 
     def __init__(
         self,
-        features,
+        features: Sequence | None = None,
         method: Literal["edgeR", "mutual_information", "variance_threshold"]
         | None = None,
         feature_col="GENENAME",
         inplace=False,
         blacklist=None,
         top: int = 500,
+        label_col="tumor_type",
+        **kwargs,
     ) -> None:
         """Filter genes from adata object
 
@@ -53,10 +55,13 @@ class Filter:
             Recommended to specify a method and call `fit` to perform automatic
             feature selection with an adata object
         """
-        self.features: list = list(set(features))
+        if features is None and method is None:
+            raise ValueError("One of `features` or `method` must be given!")
+
         # Requested features to subset data by
-        if blacklist is not None:
-            self.features = [f for f in features if f not in blacklist]
+        self._features: list | None = None
+        self.blacklist: Sequence | None = blacklist
+        self.features = features
         self.feature_col: str = feature_col
         self.discarded_features: Sequence | None = (
             None  # Any features discarded during preprocessing e.g.  # due to not being in enough samples
@@ -64,14 +69,29 @@ class Filter:
         self.inplace: bool = inplace
         self.missing_features: list = []
         self.top: int = top
+        self.method: str = method
+        self.label_col: str = label_col
+        self.kwargs: dict = kwargs
+        self.feat_metrics: pd.DataFrame | None = None  # Feature metrics computed during
+        # `fit`, if available
 
     def copy(self) -> Filter:
         return Filter(
             features=self.features, feature_col=self.feature_col, inplace=self.inplace
         )
 
-    def blacklist(self, blacklist):
-        self.features = [f for f in self.features if f not in blacklist]
+    @property
+    def features(self) -> list | None:
+        return self._features
+
+    @features.setter
+    def features(self, value):
+        if self.blacklist is not None:
+            self._features = [
+                f for f in value if list(set(value)) not in self.blacklist
+            ]
+        else:
+            self._features = list(set(value))
 
     def from_feature_importance(self, model: PredBase) -> None:
         underlying = model.get_model()
