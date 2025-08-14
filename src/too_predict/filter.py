@@ -57,6 +57,10 @@ class Filter:
             Recommended to specify a method and call `fit` to perform automatic
             feature selection with an adata object
         """
+        if not isinstance(features, Sequence) and features is not None:
+            raise ValueError(
+                "Features must be a sequence object! Did you mean to pass to `method` instead?"
+            )
         if features is None and method is None:
             raise ValueError("One of `features` or `method` must be given!")
 

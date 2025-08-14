@@ -752,17 +752,32 @@ class PredWithCorrection(PredBase):
 
 
 class Pipeline:
-    def __init__(self, steps: Sequence) -> None:
-        self.preprocessing: Sequence = steps[:-1]
-        self.predictor: PredBase = steps[-1]
-        pass
+    def __init__(self, steps: Sequence, predictor: PredBase | None = None) -> None:
+        self.preprocessing: Sequence = steps
+        self.predictor: PredBase | None = predictor
 
     def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
         for step in self.preprocessing:
             x = step.fit_transform(x)
         self.predictor.fit(x, y)
 
-    def predict(self, x) -> np.ndarray:
+    def transform(self, x: ad.AnnData) -> ad.AnnData:
         for step in self.preprocessing:
-            x = step.fit_transform(x)  # BUG: this really should be transform
+            x = step.transform(x)
+        return x
+
+    def fit_transform(self, x: ad.AnnData) -> ad.AnnData:
+        for step in self.preprocessing:
+            x = step.fit_transform(x)
+        return x
+
+    def fit_predict(self, x: ad.AnnData, y: str = "tumor_type") -> np.ndarray:
+        self.fit(x, y)
+        return self.predict(x)
+
+    def predict(self, x) -> np.ndarray:
+        if self.predictor is None:
+            raise ValueError("predictor object not passed during init!")
+        for step in self.preprocessing:
+            x = step.transform(x)
         return self.predictor.predict(x)

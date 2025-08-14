@@ -291,7 +291,7 @@ def cross_validate(
 
         if transformer is not None:
             x_train = transformer.fit_transform(x_train)
-            x_test = transformer.fit_transform(x_test)
+            x_test = transformer.transform(x_test)
 
         model.fit(x_train, y=label_col)
 
