@@ -20,6 +20,7 @@ IMPLEMENTED_TRANSFORMATION = {
     "tmm",
     "alr",
     "tpm",
+    "scaler",
     "fpkm",
     "cqn",
     "robust_clr",
@@ -44,8 +45,8 @@ class Transformer:
 
     def fit(self, data: ad.AnnData | np.ndarray | pd.DataFrame) -> None:
         "Learn parameters from the input data. Does nothing when not applicable to chosen method"
-        if self.method == "scale":
-            ...
+        if self.method == "scaler":
+            self.scaler: StandardScaler = StandardScaler.fit(xarray_if_sparse(data))
         return
 
     def __init__(
@@ -172,6 +173,8 @@ class Transformer:
             return adata
         elif self.method == "tmm":
             transformed = tmm(adata, **self.kwargs)
+        elif self.method == "scaler":
+            transformed = self.scaler.transform(adata.X)
         # Transformations that don't require learnable params
         elif self.method == "robust_clr":
             self.kwargs.update({"robust": True})

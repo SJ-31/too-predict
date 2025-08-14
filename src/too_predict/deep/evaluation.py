@@ -281,7 +281,6 @@ def cross_validate(
     metrics: dict = {"fold": []}
     model_config = model_config if model_config else d_ut.ModuleConfig()
     tasks = adset.label_cols
-    trainer_kwargs["accelerator"] = device
     for task in tasks:
         metrics[f"{task}_valid_acc"] = []
         if with_train_acc:

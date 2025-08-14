@@ -411,7 +411,7 @@ class MultiBranch(MultiModule):
             return tuple(result)
         except AttributeError:
             print("WARNING: branchnets haven't been initialized!")
-            return tuple(0, 0)
+            return tuple([0, 0])
 
     @override
     def configure_optimizers(self) -> OptimizerConfig:
