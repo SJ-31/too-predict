@@ -1051,8 +1051,9 @@ class BootstrapSampler(Sampler):
 
 def update_batch_strategy(
     config: dict, dataset: Dataset, default_batch_size=256
-) -> None:
+) -> dict:
     "Return dictionary defining appropriate params to pass to dataloader"
+    config = config.copy()
     if "batch_size" not in config:
         config["batch_size"] = default_batch_size
     elif config.get("batch_size") == -1:
@@ -1068,6 +1069,7 @@ def update_batch_strategy(
             shuffle=config.pop("shuffle", True),
             drop_last=config.pop("drop_last", False),
         )
+    return config
 
 
 # * Initialization

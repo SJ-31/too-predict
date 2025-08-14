@@ -176,9 +176,9 @@ def holdout(
         train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
             x_train, to_encode=to_encode, device=device
         )
-        d_ut.update_batch_strategy(kwargs, train_dset, default_batch_size=32)
+        updated = d_ut.update_batch_strategy(kwargs, train_dset, default_batch_size=32)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
-        train_l = DataLoader(train_dset, **kwargs)
+        train_l = DataLoader(train_dset, **updated)
         x_test_tensor, y_true = test_dset[:]
         if scaler is not None:
             scaler.fit(train_l.dataset[:][0])
@@ -299,8 +299,8 @@ def cross_validate(
         if verbose:
             print(f"fold {fold} started")
         train_set = Subset(adset, train_idx)
-        d_ut.update_batch_strategy(kwargs, train_set, default_batch_size=32)
-        train: DataLoader = DataLoader(train_set, **kwargs)
+        updated = d_ut.update_batch_strategy(kwargs, train_set, default_batch_size=32)
+        train: DataLoader = DataLoader(train_set, **updated)
         test: Dataset = Subset(adset, test_idx)
         val_loader = DataLoader(validation) if validation is not None else None
 
