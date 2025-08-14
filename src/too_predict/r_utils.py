@@ -64,7 +64,7 @@ def sclr(expr):
 def df_from_r(robj) -> pd.DataFrame:
     with (ro.default_converter + pandas2ri.converter).context():
         ro.globalenv["df_from_r_tmp"] = robj
-        if ro.r("class(df_from_r_tmp)")[0] not in {"data.frame"}:
+        if "data.frame" not in set(ro.r("class(df_from_r_tmp)")):
             raise ValueError("The given object is not a data.frame")
         ro.r("rm(df_from_r_tmp)")
         converted = ro.conversion.get_conversion().rpy2py(robj)
