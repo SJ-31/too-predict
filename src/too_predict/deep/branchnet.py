@@ -400,14 +400,18 @@ class MultiBranch(MultiModule):
         print("\nFitting BranchNets complete")
 
     @override
-    def init_out_bias(self, targets: tuple[Tensor] | None = None) -> None:
+    def init_out_bias(self, targets) -> None:
         pass
 
     @override
     def forward(self, X):
         x = nn.functional.relu(F.linear(X, self.shared, bias=self.shared_bias))
-        result = [bn(x) for bn in self.branchnets]
-        return tuple(result)
+        try:
+            result = [bn(x) for bn in self.branchnets]
+            return tuple(result)
+        except AttributeError:
+            print("WARNING: branchnets haven't been initialized!")
+            return tuple(0, 0)
 
     @override
     def configure_optimizers(self) -> OptimizerConfig:
