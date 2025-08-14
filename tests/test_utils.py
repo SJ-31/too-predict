@@ -94,4 +94,4 @@ def get_labs(adata) -> np.ndarray:
     return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
 
 
-transformer = Transformer("clr", Imputer("plus_one"), post_process=)
+len(F.variance_threshold(5))

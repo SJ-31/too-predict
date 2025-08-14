@@ -32,7 +32,12 @@ from pyhere import here
 from too_predict._train_utils import get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
-from too_predict.deep.evaluation import multitask_acc, train_test_split_torch
+from too_predict.deep.evaluation import (
+    init_test,
+    multitask_acc,
+    random_softmax_loss,
+    train_test_split_torch,
+)
 from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
 from too_predict.deep.trainer import Trainer
 from too_predict.imputer import Imputer
@@ -134,6 +139,8 @@ def test_lightning():
 
 
 model, trainer = test_lightning()
+
+
 # %%
 
 
@@ -199,12 +206,11 @@ def test_distillation():
         n_classes=n_classes,
     )
     print(acc)
-    print(cv_kwargs)
     cv = d_ev.cross_validate(
         model_cls=d_nn.Disyak,
         adset=response,
         model_config=d_ut.ModuleConfig(record_metrics=False),
-        **dict(cv_kwargs, **{"validation": None}),
+        **dict(cv_kwargs, **{"validation": None, "init_bias": True}),
     )
     print(cv)
 
@@ -212,8 +218,6 @@ def test_distillation():
 test_distillation()
 
 # %%
-
-foo = nn.LazyLinear(8)
 
 
 def test_cross_val():
@@ -237,3 +241,25 @@ def test_cross_val():
 cv = test_cross_val()
 
 # %%
+
+
+def test_random():
+    return random_softmax_loss(
+        model=d_nn.Disyak(in_features=n_features, n_classes_per_task=n_classes),
+        trainer=L.Trainer(
+            max_epochs=100,
+            log_every_n_steps=1,
+            enable_progress_bar=False,
+            enable_checkpointing=False,
+        ),
+        train=train_l,
+        test=test_l,
+    )
+
+
+def test_init():
+    model = d_nn.Disyak(in_features=n_features, n_classes_per_task=n_classes)
+    return init_test(model, train_l)
+
+
+pred, bias = test_init()

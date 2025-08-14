@@ -18,9 +18,7 @@ scrna <- here(tdir, "scr_ref")
 ut <- import("too_predict.utils")
 ad <- import("anndata")
 
+adata <- ut$training_data_internal_test(minimal = TRUE)
 
-## adata <- ut$training_data_internal_test()
-## adata <- adata[, 1:200]
-
-## stype <- adata$obs$Sample_Type
-## stype <- replace(stype, is.na(stype), "organoid")
+dge <- DGEList(t(as.matrix(adata$X)), samples = adata$obs, genes = adata$var)
+ovr <- edgeR_ovr(dge, "tumor_type", fc_cutoff = 1.2, treat = FALSE)
