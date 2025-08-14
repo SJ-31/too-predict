@@ -10,15 +10,19 @@ get_obs <- function() {
   read_csv(here("data", "training_data_obs.csv"))
 }
 
-aldex_glm_wrapper <- function(data, group, technical_factors = c(),
-                              clr_args = list(
-                                mc.samples = 16, denom = "all",
-                                verbose = TRUE
-                              ),
-                              glm_args = list(fdr.method = "holm"),
-                              gene_col = "gene_id",
-                              count_slot = "X",
-                              use_parallel = FALSE) {
+aldex_glm_wrapper <- function(
+    data,
+    group,
+    technical_factors = c(),
+    clr_args = list(
+      mc.samples = 16,
+      denom = "all",
+      verbose = TRUE
+    ),
+    glm_args = list(fdr.method = "holm"),
+    gene_col = "gene_id",
+    count_slot = "X",
+    use_parallel = FALSE) {
   library(ALDEx2)
   library(glue)
 
@@ -27,7 +31,9 @@ aldex_glm_wrapper <- function(data, group, technical_factors = c(),
     vars <- NA
   }
   if (!is.null(rowData(data)) && !(gene_col %in% colnames(rowData(data)))) {
-    warning(glue("Column for gene ids {gene_col} not found! Taking first column"))
+    warning(glue(
+      "Column for gene ids {gene_col} not found! Taking first column"
+    ))
     vars <- rowData(data)[, 1]
   } else {
     vars <- rowData(data)[, gene_col]
@@ -45,11 +51,15 @@ aldex_glm_wrapper <- function(data, group, technical_factors = c(),
     df[[var_col]] <- rownames(df)
     df$contrast <- x
     df
-  }) |> dplyr::bind_rows()
+  }) |>
+    dplyr::bind_rows()
   test[[var_col]] <- rownames(test)
   rownames(test) <- NULL
   rownames(combined_effect) <- NULL
-  return(list(effect = as.data.frame(combined_effect), test = as.data.frame(test)))
+  return(list(
+    effect = as.data.frame(combined_effect),
+    test = as.data.frame(test)
+  ))
 }
 
 make_mm <- function(group, other_factors = c(), data) {
@@ -77,7 +87,11 @@ basename_no_ext <- function(file) {
 #' In addition to the original test statistic Friedman's chi-square,
 #' also calculates an alternative, less conservative statistic provided by [1]
 #' and its p-value
-friedman_test_wrapper <- function(tb, metric_col, with_class = TRUE, var = "fold") {
+friedman_test_wrapper <- function(
+    tb,
+    metric_col,
+    with_class = TRUE,
+    var = "fold") {
   j <- length(unique(tb[[var]]))
   k <- length(unique(tb$model))
   test <- friedman.test(tb[[metric_col]], groups = tb$model, blocks = tb[[var]])
@@ -89,7 +103,8 @@ friedman_test_wrapper <- function(tb, metric_col, with_class = TRUE, var = "fold
   df2 <- (k - 1) * (j - 1)
   test$statistic_alt <- f_alt
   # Two-sided p-value
-  test$p_value_alt <- pf(f_alt, df1, df2, lower.tail = FALSE) + pf(-f_alt, df1, df2) |> `names<-`(NULL)
+  test$p_value_alt <- pf(f_alt, df1, df2, lower.tail = FALSE) +
+    pf(-f_alt, df1, df2) |> `names<-`(NULL)
   test
 }
 
@@ -135,7 +150,8 @@ tidy_pairwise <- function(groups, values, test_fn, adjust_fn) {
 distinct_orderings <- function(tb, cols) {
   lists <- apply(tb, 1, \(x) {
     sort(sapply(cols, \(c) x[c]))
-  }) |> t()
+  }) |>
+    t()
   tb[["tmp"]] <- lists
   tb |>
     distinct(tmp, .keep_all = TRUE) |>
@@ -147,9 +163,17 @@ adata2seurat <- function(adata, layer = NULL, assay = "RNA") {
     adata <- ad$read_h5ad(adata)
   }
   if (is.null(layer)) {
-    obj <- SeuratObject::CreateSeuratObject(counts = t(adata$X), assay = assay, meta.data = adata$obs)
+    obj <- SeuratObject::CreateSeuratObject(
+      counts = t(adata$X),
+      assay = assay,
+      meta.data = adata$obs
+    )
   } else {
-    obj <- SeuratObject::CreateSeuratObject(counts = t(adata$layers[[layer]]), assay = assay, meta.data = adata$obs)
+    obj <- SeuratObject::CreateSeuratObject(
+      counts = t(adata$layers[[layer]]),
+      assay = assay,
+      meta.data = adata$obs
+    )
   }
   rownames(obj) <- rownames(adata$var)
   colnames(obj) <- rownames(adata$obs)
@@ -172,7 +196,11 @@ adata2eset <- function(adata, layer = NULL, convert_na = FALSE) {
   colnames(counts) <- rownames(adata$obs)
   pdata <- Biobase::AnnotatedDataFrame(adata$obs)
   fdata <- Biobase::AnnotatedDataFrame(adata$var)
-  Biobase::ExpressionSet(assayData = counts, phenoData = pdata, featureData = fdata)
+  Biobase::ExpressionSet(
+    assayData = counts,
+    phenoData = pdata,
+    featureData = fdata
+  )
 }
 
 
@@ -228,8 +256,11 @@ rank_by_metrics <- function(group_col, var_col = NULL, tb, metric_defs) {
         sorted <- arrange(current)
       }
       winner <- head(sorted, n = 1) |> pluck(group_col)
-      score_tracker <<- add_row(score_tracker,
-        winner = winner, metric = m, !!as.symbol(var_col) := f
+      score_tracker <<- add_row(
+        score_tracker,
+        winner = winner,
+        metric = m,
+        !!as.symbol(var_col) := f
       )
       make_score_tb(winner)
     }) |>
@@ -243,7 +274,9 @@ rank_by_metrics <- function(group_col, var_col = NULL, tb, metric_defs) {
   list(top = rank_scores, table = score_tracker_table)
 }
 
-split_path <- function(x) if (dirname(x) == x) x else c(basename(x), split_path(dirname(x)))
+split_path <- function(x) {
+  if (dirname(x) == x) x else c(basename(x), split_path(dirname(x)))
+}
 
 #' Transpose a dataframe or tibble while explicitly specifying column names
 #'
@@ -289,7 +322,10 @@ edgeR_lfc_train_test <- function(counts, obs_meta, var_meta, label) {
   library(edgeR)
   dge <- DGEList(counts = counts, samples = obs_meta, genes = var_meta)
   dge$samples[[label]] <- as.factor(dge$samples[[label]])
-  mm <- model.matrix(as.formula(paste("~0+", label, "+usage")), data = dge$samples)
+  mm <- model.matrix(
+    as.formula(paste("~0+", label, "+usage")),
+    data = dge$samples
+  )
   dge <- normLibSizes(dge)
   dge <- estimateDisp(dge, design = mm)
   fit <- glmQLFit(dge, design = mm)
@@ -307,70 +343,135 @@ get_hallmark_set <- function() {
   eh <- ExperimentHub()
   msigdb_hs <- getMsigdb(org = "hs", id = "SYM", version = "7.4")
   hallmark_symbol <- subsetCollection(msigdb_hs, "h")
-  mapping <- read_tsv(as.character(ut$get_data("ensembl_113_id_mapping.tsv"))) |>
+  mapping <- read_tsv(as.character(ut$get_data(
+    "ensembl_113_id_mapping.tsv"
+  ))) |>
     filter(!is.na(symbol))
 
   symbol2ensembl <- setNames(mapping$ensembl, mapping$symbol)
 
-  hallmark <- sapply(names(hallmark_symbol), \(n) {
-    gene_set <- hallmark_symbol[[n]]
-    map_chr(gene_set, \(symbol) {
-      symbol2ensembl[symbol]
-    }) |> discard(is.na)
-  }, USE.NAMES = TRUE, simplify = FALSE)
+  hallmark <- sapply(
+    names(hallmark_symbol),
+    \(n) {
+      gene_set <- hallmark_symbol[[n]]
+      map_chr(gene_set, \(symbol) {
+        symbol2ensembl[symbol]
+      }) |>
+        discard(is.na)
+    },
+    USE.NAMES = TRUE,
+    simplify = FALSE
+  )
   saveRDS(hallmark, file)
   hallmark
 }
 
+#' Create a contrast matrix for one-vs-rest comparisons
+#'
+#' @description
+#' @return A contrast matrix of where each column is a testing contrast
+#' The ith column of the matrix performs the comparison where the ith level of `objs` is
+#' tested against the mean of all other levels
+ovr_contrasts <- function(objs, design, prefix = "", intercept = FALSE) {
+  if (!is.factor(objs)) {
+    objs <- as.factor(objs)
+  }
+  n_levels <- nlevels(objs)
+  contr <- rbind(
+    matrix(1 / (1 - n_levels), n_levels, n_levels), # Average of all
+    matrix(0, ncol(design) - n_levels, n_levels)
+  )
+  diag(contr) <- 1
+  if (intercept || colnames(design)[1] == "(Intercept)") {
+    contr[1, ] <- 0
+  }
+  rownames(contr) <- colnames(design)
+  colnames(contr) <- paste0(prefix, levels(objs))
+  contr
+}
 
 #' Helper function to run DE with edgeR
 #'
 #' @description
 #' The form of the analysis is to compare a given level
 #' of factor `group` against the mean expression of all other levels in `group`
-edgeR_mean_all <- function(dge, group, id_col = "GENEID") {
+edgeR_ovr <- function(
+    dge,
+    group,
+    id_col = "GENEID",
+    fc_cutoff = 1.5,
+    p_value = 0.05,
+    treat = TRUE,
+    intercept = FALSE) {
   normLibSizes(dge)
   var_ids <- dge$genes[[id_col]]
   var_cols <- colnames(dge$genes)
-  mm <- model.matrix(as.formula(paste("~0+", group)), data = dge$samples)
+  if (intercept) {
+    f <- paste("~", group)
+  } else {
+    f <- paste("~0+", group)
+  }
+  mm <- model.matrix(as.formula(f), data = dge$samples)
   dge <- estimateDisp(dge, design = mm, robust = TRUE)
   fit <- glmQLFit(dge, mm, robust = TRUE)
-  group_vec <- colnames(mm) |> keep(\(x) str_detect(x, group))
-  group_levels <- unique(dge$samples[[group]])
 
-  mean_val <- 1 / (length(group_vec) - 1)
-  contrast_str <- map_chr(group_vec, \(x) {
-    mean_others <- paste(mean_val, "*", group_vec[group_vec != x], collapse = "+")
-    paste0(x, "-", "(", mean_others, ")")
-  })
-  ccs <- makeContrasts(contrasts = contrast_str, levels = mm)
+  ccs <- ovr_contrasts(dge$samples[[group]], mm)
+  to_remove <- colnames(dge$genes) |> keep(\(x) x != id_col)
 
-  lapply(seq_along(contrast_str), \(i) {
-    test <- glmQLFTest(fit, contrast = ccs[i, ])
-    g <- group_vec[i]
-    top <- topTags(test, n = nrow(dge), sort.by = "PValue") |>
+  # Compute each contrast separately, as shown in the edgeR user's guide
+  tests <- list()
+  top <- list()
+  for (i in seq_len(ncol(ccs))) {
+    name <- colnames(ccs)[i]
+    cur_contrast <- ccs[, i]
+    if (treat) {
+      tests[[i]] <- glmTreat(
+        fit,
+        contrast = cur_contrast,
+        lfc = log2(fc_cutoff)
+      )
+    } else {
+      tests[[i]] <- glmQLFTest(fit, contrast = cur_contrast)
+    }
+    tests[[i]]$comparison <- name
+    top[[name]] <- topTags(tests[[i]], sort.by = "PValue", p.value = p_value) |>
       as.data.frame() |>
       as_tibble() |>
-      select(-all_of(var_cols)) |>
-      mutate(id = var_ids) |>
-      relocate(id, .before = everything())
-    top
-    ## rename(!!as.symbol(glue("logFC_{g}")) := contrast_str[i])
-  }) |>
-    `names<-`(group_levels)
+      select(-any_of(to_remove))
+  }
+  num_de <- do.call(
+    "cbind",
+    lapply(
+      lapply(tests, \(x) {
+        decideTests(
+          x,
+          p.value = p_value,
+          lfc = ifelse(treat, log2(fc_cutoff), 0)
+        )
+      }),
+      summary
+    )
+  )
+  list(num_de = num_de, top = top)
 }
 
 #' Return a named list mapping items in `name_col` to list of items in `elem_col`
 #'
 #' @description
 #' @param name_col column to group on that will become the keys
-group_by_into_list <- function(tb, name_col, elem_col, min_size = NULL,
-                               with_counts = FALSE, count_col = "size",
-                               keep_first = NULL,
-                               unique = TRUE) {
+group_by_into_list <- function(
+    tb,
+    name_col,
+    elem_col,
+    min_size = NULL,
+    with_counts = FALSE,
+    count_col = "size",
+    keep_first = NULL,
+    unique = TRUE) {
   grouped <- group_by(tb, !!as.symbol(name_col)) |>
     summarize(
-      items = list(!!as.symbol(elem_col)), !!as.symbol(count_col) := n(),
+      items = list(!!as.symbol(elem_col)),
+      !!as.symbol(count_col) := n(),
       across(any_of(keep_first), dplyr::first)
     )
   if (unique) {
@@ -390,9 +491,7 @@ group_by_into_list <- function(tb, name_col, elem_col, min_size = NULL,
 
 get_hpa_query <- function(query, ...) {
   base_url <- "www.proteinatlas.org/api/search_download.php?"
-  string <- url_query_build(list(search = query, ...),
-    .multi = "comma"
-  )
+  string <- url_query_build(list(search = query, ...), .multi = "comma")
   paste0(base_url, string)
 }
 
@@ -402,7 +501,14 @@ show_reticulate_error <- function(expr) {
     expr = eval(captured, envir = parent.frame()),
     error = \(cnd) {
       last_error <- reticulate::py_last_error()
-      message("Python error: ", last_error$type, "\n", last_error$value, "\n", last_error$traceback)
+      message(
+        "Python error: ",
+        last_error$type,
+        "\n",
+        last_error$value,
+        "\n",
+        last_error$traceback
+      )
     }
   )
   result
@@ -417,20 +523,25 @@ lget <- function(lst, key, default = NULL) {
   }
 }
 
-plage_wrapper <- function(counts, gene_sets, contrasts = NULL,
-                          fc_cutoff = 1.5,
-                          fit_method = "treat",
-                          max_genes = NULL,
-                          model_matrix = NULL) {
+plage_wrapper <- function(
+    counts,
+    gene_sets,
+    contrasts = NULL,
+    fc_cutoff = 1.5,
+    fit_method = "treat",
+    max_genes = NULL,
+    model_matrix = NULL) {
   library(GSVA)
   library(limma)
   dupes <- duplicated(rownames(counts))
   if (any(dupes)) {
     ndupes <- sum(dupes)
-    warning(glue("{ndupes} duplicated features in counts detected! Keeping only first...\n
+    warning(glue(
+      "{ndupes} duplicated features in counts detected! Keeping only first...\n
 nrow before: {nrow(counts)}\n
 nrow after: {nrow(counts) - ndupes}
-"))
+"
+    ))
     counts <- counts[!duplicated(rownames(counts)), ]
   }
   params <- plageParam(exprData = counts, geneSets = gene_sets)
@@ -452,7 +563,8 @@ nrow after: {nrow(counts) - ndupes}
         contrast_fit <- treat(fit_gs, fc = fc_cutoff, robust = TRUE)
         tables[[name]] <<- topTreat(contrast_fit)
       }
-      result <- decideTests(contrast_fit,
+      result <- decideTests(
+        contrast_fit,
         lfc = log2(fc_cutoff)
         # Judge significant when abs(log2-fc) is at least this large
       )
@@ -472,11 +584,9 @@ nrow after: {nrow(counts) - ndupes}
 
 markers_internal <- function() {
   path <- "reference/cell_markers_custom.yaml"
-  tryCatch(yaml::read_yaml(as.character(ut$get_data(path))),
-    error = \(cnd) {
-      yaml::read_yaml(here("data", path))
-    }
-  )
+  tryCatch(yaml::read_yaml(as.character(ut$get_data(path))), error = \(cnd) {
+    yaml::read_yaml(here("data", path))
+  })
 }
 
 markers_meta_internal <- function(grouped = TRUE) {
@@ -491,7 +601,10 @@ markers_meta_internal <- function(grouped = TRUE) {
     tb |>
       mutate(
         set_name = paste0(tissue, "-", cell_type),
-        set_name = case_when(from_tme ~ paste0(set_name, "-tme"), .default = set_name)
+        set_name = case_when(
+          from_tme ~ paste0(set_name, "-tme"),
+          .default = set_name
+        )
       ) |>
       select(-all_of(c("tissue", "cell_type", "ensembl", "from_tme"))) |>
       group_by(set_name) |>
@@ -501,38 +614,65 @@ markers_meta_internal <- function(grouped = TRUE) {
   }
 }
 
-gs_meta_internal <- function() as.character(ut$get_data("reference/gene_sets_custom_meta.tsv", FALSE))
+gs_meta_internal <- function() {
+  as.character(ut$get_data("reference/gene_sets_custom_meta.tsv", FALSE))
+}
 
-gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"),
-                        min_size = NULL,
-                        max_size = 500) {
+gs_internal <- function(
+    from_file = FALSE,
+    sets = c("go", "reactome", "hallmark"),
+    min_size = NULL,
+    max_size = 500) {
   ut <<- import("too_predict.utils")
   outfile <- as.character(ut$get_data("reference/gene_sets_custom.yaml", FALSE))
-  meta_out <- as.character(ut$get_data("reference/gene_sets_custom_meta.tsv", FALSE))
+  meta_out <- as.character(ut$get_data(
+    "reference/gene_sets_custom_meta.tsv",
+    FALSE
+  ))
   if (from_file) {
     result <- yaml::read_yaml(outfile)
     meta <- read_tsv(meta_out)
   } else {
     sets <- str_to_lower(sets)
     result <- c()
-    meta <- empty_tibble(headers = c("id", "name", "source", "category", "size"))
+    meta <- empty_tibble(
+      headers = c("id", "name", "source", "category", "size")
+    )
     mode(meta$size) <- "double"
     if ("go" %in% sets) {
-      not_allowed_evidence <- c( # Exclude evidence that isn't manually reviewed
-        "IEA", "ND", "NAS", "ISS", "ISO", "ISA", "ISM", "IGC"
+      not_allowed_evidence <- c(
+        # Exclude evidence that isn't manually reviewed
+        "IEA",
+        "ND",
+        "NAS",
+        "ISS",
+        "ISO",
+        "ISA",
+        "ISM",
+        "IGC"
       )
-      go_data <- as.character(ut$get_data("mappings/ensembl_go_map_2025-3-20.tsv")) |> read_tsv()
-      go_top_level <- as.character(ut$get_data("mappings/go_term2to_level_3.csv")) |>
+      go_data <- as.character(ut$get_data(
+        "mappings/ensembl_go_map_2025-3-20.tsv"
+      )) |>
+        read_tsv()
+      go_top_level <- as.character(ut$get_data(
+        "mappings/go_term2to_level_3.csv"
+      )) |>
         read_csv() |>
         filter(!is.na(accession))
-      go_tb <- go_data |> filter(`GO domain` == "biological_process" &
-        !is.na(`GO term name`) &
-        (!`GO term evidence code` %in% not_allowed_evidence) &
-        (`GO term accession` %in% go_top_level$accession))
+      go_tb <- go_data |>
+        filter(
+          `GO domain` == "biological_process" &
+            !is.na(`GO term name`) &
+            (!`GO term evidence code` %in% not_allowed_evidence) &
+            (`GO term accession` %in% go_top_level$accession)
+        )
 
       bp_grouped <- go_tb |>
         mutate(set_name = paste0("GO_BP:", `GO term name`)) |>
-        group_by_into_list("set_name", "Gene stable ID",
+        group_by_into_list(
+          "set_name",
+          "Gene stable ID",
           with_counts = TRUE,
           keep_first = c("GO term accession", "GO term name")
         )
@@ -541,7 +681,8 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
         dplyr::rename(id = `GO term accession`, name = `GO term name`) |>
         select(id, name, size) |>
         mutate(source = "GO_BP") |>
-        left_join(select(go_top_level, accession, top_level_name),
+        left_join(
+          select(go_top_level, accession, top_level_name),
           by = join_by(x$id == y$accession)
         ) |>
         dplyr::rename(category = top_level_name)
@@ -550,16 +691,22 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
       result <- c(result, bp_grouped$lst)
     }
     if ("reactome" %in% sets) {
-      ensembl2reactome <- as.character(ut$get_data("mappings/ensembl2reactome_2025-4-11.tsv")) |> read_tsv()
+      ensembl2reactome <- as.character(ut$get_data(
+        "mappings/ensembl2reactome_2025-4-11.tsv"
+      )) |>
+        read_tsv()
 
       reactome <- as.character(ut$get_data("ReactomePathways_2025-4-11.txt")) |>
         read_tsv(col_names = c("Reactome ID", "name", "species")) |>
         filter(species == "Homo sapiens") |>
         inner_join(ensembl2reactome, by = join_by(`Reactome ID`))
 
-      hierarchy <- as.character(ut$get_data("Reactome_Complex_2_Pathway_human-2025-4-23.txt")) |>
+      hierarchy <- as.character(ut$get_data(
+        "Reactome_Complex_2_Pathway_human-2025-4-23.txt"
+      )) |>
         read_tsv() |>
-        inner_join(distinct(reactome, `Reactome ID`, .keep_all = TRUE),
+        inner_join(
+          distinct(reactome, `Reactome ID`, .keep_all = TRUE),
           by = join_by(x$top_level_pathway == y$`Reactome ID`)
         ) |>
         dplyr::rename(category = name) |>
@@ -567,7 +714,9 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
 
       reactome_grouped <- reactome |>
         mutate(set_name = paste0("Reactome:", name)) |>
-        group_by_into_list("set_name", "Gene stable ID",
+        group_by_into_list(
+          "set_name",
+          "Gene stable ID",
           with_counts = TRUE,
           keep_first = c("name", "Reactome ID")
         )
@@ -575,7 +724,10 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
       reactome_meta <- reactome_grouped$counts |>
         dplyr::rename(id = `Reactome ID`) |>
         select(size, name, id) |>
-        left_join(select(hierarchy, pathway, category), by = join_by(x$id == y$pathway)) |>
+        left_join(
+          select(hierarchy, pathway, category),
+          by = join_by(x$id == y$pathway)
+        ) |>
         mutate(source = "Reactome")
 
       meta <- bind_rows(meta, reactome_meta)
@@ -591,7 +743,8 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
       names(hallmark) <- str_replace(names(hallmark), "^HALLMARK_", "Hallmark:")
 
       h_meta <- tibble(
-        id = NA, name = str_remove(names(hallmark), "Hallmark:"),
+        id = NA,
+        name = str_remove(names(hallmark), "Hallmark:"),
         size = map_dbl(hallmark, length),
         category = NA,
         source = "Hallmark"
@@ -650,7 +803,6 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
         "PANCREAS_BETA_CELLS" ~ "Metabolism"
       )
 
-
       meta <- bind_rows(meta, h_meta)
       result <- c(result, hallmark)
     }
@@ -676,8 +828,12 @@ gs_internal <- function(from_file = FALSE, sets = c("go", "reactome", "hallmark"
 #' in >= `min_sample_percent` of samples
 #' if stats_only, returns a sample x gene_set dataframe containing the fraction
 #'    of nonzero genes in that gene set for that sample
-filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
-                             min_sample_percent = 70, stats_only = FALSE) {
+filter_gene_sets <- function(
+    gene_sets,
+    counts,
+    min_nonzero_percent = 50,
+    min_sample_percent = 70,
+    stats_only = FALSE) {
   set_tb <- tibble(name = names(gene_sets), id = gene_sets) |>
     unnest(cols = c(id)) |>
     mutate(val = 1) |>
@@ -699,7 +855,8 @@ filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
     t() %>%
     replace(is.na(.), 0)
   pass_nonzero_thresh <- set_percent >= min_nonzero_percent
-  pass_sample_thresh <- (colSums(pass_nonzero_thresh) / nrow(set_percent)) >= min_sample_percent
+  pass_sample_thresh <- (colSums(pass_nonzero_thresh) / nrow(set_percent)) >=
+    min_sample_percent
   stopifnot("This shouldn't exceed 1!" = max(set_percent) <= 1)
   print(glue("N sets before: {length(gene_sets)}"))
   print(glue("N sets passed: {sum(pass_sample_thresh)}"))
@@ -720,8 +877,12 @@ filter_gene_sets <- function(gene_sets, counts, min_nonzero_percent = 50,
 #' returns a gene_set x agg_cols dataframe. The columns are all the unique elements
 #'    in each of agg_cols
 #' @param agg_cols Columns of metadata with which to aggregate the samples by
-agg_gene_set_fractions <- function(set_stats, metadata, agg_cols, join_on = "sample",
-                                   agg_fn = mean) {
+agg_gene_set_fractions <- function(
+    set_stats,
+    metadata,
+    agg_cols,
+    join_on = "sample",
+    agg_fn = mean) {
   w_meta <- inner_join(set_stats, metadata, by = join_by(!!as.symbol(join_on)))
   lapply(agg_cols, \(col) {
     other_cols <- colnames(metadata)
@@ -754,10 +915,14 @@ bisque_marker_wrapper <- function(counts, markers) {
   res <- BisqueRNA::MarkerBasedDecomposition(eset, marker_spec)
 }
 
-bisque_reference_wrapper <- function(counts, reference, ref_obs, markers = NULL,
-                                     cell_type_col = "cell_type",
-                                     subject_col = "subject",
-                                     use_overlap = FALSE) {
+bisque_reference_wrapper <- function(
+    counts,
+    reference,
+    ref_obs,
+    markers = NULL,
+    cell_type_col = "cell_type",
+    subject_col = "subject",
+    use_overlap = FALSE) {
   mode(counts) <- "integer"
   mode(reference) <- "integer"
   shared_genes <- intersect(rownames(counts), rownames(ref))
@@ -774,8 +939,11 @@ bisque_reference_wrapper <- function(counts, reference, ref_obs, markers = NULL,
     phenoData = Biobase::AnnotatedDataFrame(ref_obs)
   )
   BisqueRNA::ReferenceBasedDecomposition(
-    bulk.eset = eset, sc.eset = ref, cell.types = cell_type_col,
-    subject.names = subject_col, use.overlap = use_overlap
+    bulk.eset = eset,
+    sc.eset = ref,
+    cell.types = cell_type_col,
+    subject.names = subject_col,
+    use.overlap = use_overlap
   )
 }
 
@@ -784,11 +952,13 @@ bisque_reference_wrapper <- function(counts, reference, ref_obs, markers = NULL,
 #'
 #' @param enrichment_results a list mapping enrichment analyses to their results
 #'    each value of this list must have `join_by` and `p_value_col`
-enrichment_summary <- function(metadata, enrichment_results,
-                               cutoff = 0.05,
-                               p_value_col = "padj",
-                               category_col = "category",
-                               join_by = "set_name") {
+enrichment_summary <- function(
+    metadata,
+    enrichment_results,
+    cutoff = 0.05,
+    p_value_col = "padj",
+    category_col = "category",
+    join_by = "set_name") {
   final <- lmap(enrichment_results, \(x) {
     tb <- left_join(x[[1]], metadata, by = join_by(!!as.symbol(join_by))) |>
       filter(!!as.symbol(p_value_col) <= cutoff) |>
@@ -796,7 +966,9 @@ enrichment_summary <- function(metadata, enrichment_results,
       summarise(!!as.symbol(names(x)) := n())
     tb
   }) |>
-    purrr::reduce(\(x, y) full_join(x, y, by = join_by(!!as.symbol(category_col)))) |>
+    purrr::reduce(
+      \(x, y) full_join(x, y, by = join_by(!!as.symbol(category_col)))
+    ) |>
     mutate(across(where(is.numeric), \(x) replace(x, is.na(x), 0)))
   sorted_cols <- sort(colnames(final))
   final |>
@@ -808,12 +980,19 @@ enrichment_summary <- function(metadata, enrichment_results,
 #'
 fgsea_result2gseGO <- function(fgsea, id_col = NULL, delim = "-") {
   if (!is.null(id_col)) {
-    expanded <- fgsea |> rename(ID := !!as.symbol(id_col), Description = pathway)
+    expanded <- fgsea |>
+      rename(ID := !!as.symbol(id_col), Description = pathway)
   } else {
     expanded <- fgsea |>
-      tidyr::separate_wider_delim(pathway, delim = delim, names = c("ID", "Description"), too_many = "merge")
+      tidyr::separate_wider_delim(
+        pathway,
+        delim = delim,
+        names = c("ID", "Description"),
+        too_many = "merge"
+      )
   }
-  expanded <- rowwise(expanded) |> mutate(leadingEdge = paste0(unlist(leadingEdge), collapse = "/"))
+  expanded <- rowwise(expanded) |>
+    mutate(leadingEdge = paste0(unlist(leadingEdge), collapse = "/"))
   enrich_df <- data.frame(
     ID = expanded$ID,
     Description = expanded$Description,
@@ -832,16 +1011,28 @@ fgsea_result2gseGO <- function(fgsea, id_col = NULL, delim = "-") {
 #'
 #' The average is taken with respect to the genes present in `reference`
 #' @param reference a tibble/dataframe with a column containing the gene information
-gene_set_average <- function(gene_sets, reference, ref_gene_col = "GENEID", ref_val_col = "logFC") {
-  eff_sizes <- map_dbl(gene_sets, \(x) length(intersect(x, reference[[ref_gene_col]])))
+gene_set_average <- function(
+    gene_sets,
+    reference,
+    ref_gene_col = "GENEID",
+    ref_val_col = "logFC") {
+  eff_sizes <- map_dbl(
+    gene_sets,
+    \(x) length(intersect(x, reference[[ref_gene_col]]))
+  )
   df <- tibble(set = names(gene_sets), gene = gene_sets, value = 1) |>
     unnest(cols = c(gene)) |>
     pivot_wider(id_cols = set, names_from = gene, values_from = value) |>
     column_to_rownames(var = "set")
   df[is.na(df)] <- 0
-  reference <- left_join(tibble(!!ref_gene_col := colnames(df)), reference, by = join_by(!!ref_gene_col)) |>
+  reference <- left_join(
+    tibble(!!ref_gene_col := colnames(df)),
+    reference,
+    by = join_by(!!ref_gene_col)
+  ) |>
     mutate(across(where(is.numeric), \(x) replace(x, is.na(x), 0)))
-  as.matrix(df) %*% reference[[ref_val_col]] |>
+  as.matrix(df) %*%
+    reference[[ref_val_col]] |>
     as.data.frame() |>
     rownames_to_column(var = "set_name") |>
     rename(average = V1) |>
@@ -862,7 +1053,8 @@ mapping_replace <- function(obj, what, mapping, drop_missing = TRUE) {
   } else if (what == "colnames" && !is.null(colnames(obj)) && drop_missing) {
     query <- mapping[colnames(obj)]
     mask_on <- "columns"
-  } else { # `what` is a column name
+  } else {
+    # `what` is a column name
     query <- mapping[obj[[what]]]
   }
   nas <- is.na(query)
@@ -892,7 +1084,9 @@ counts2tpm <- function(data, lengths = NULL) {
   if (is.character(lengths) && "DGEList" %in% class(data)) {
     lengths <- data$genes[[lengths]]
     counts <- data$counts
-  } else if (is.character(lengths) && "anndata._core.anndata.AnnData" %in% class(data)) {
+  } else if (
+    is.character(lengths) && "anndata._core.anndata.AnnData" %in% class(data)
+  ) {
     lengths <- data$var[[lengths]]
     counts <- t(data$X)
   }
@@ -922,7 +1116,12 @@ rename_seurat_features <- function(obj, new_names, mapping = FALSE) {
   colnames(new) <- colnames(obj)
   if (length(layers) > 1) {
     for (l in layers[2:length(layers)]) {
-      SeuratObject::LayerData(new, assay = assays[1], layer = l) <- SeuratObject::LayerData(obj, assay = assays[1], layer = l) |> `rownames<-`(NULL)
+      SeuratObject::LayerData(
+        new,
+        assay = assays[1],
+        layer = l
+      ) <- SeuratObject::LayerData(obj, assay = assays[1], layer = l) |>
+        `rownames<-`(NULL)
     }
   }
   if (length(assays) > 1) {
@@ -935,32 +1134,44 @@ rename_seurat_features <- function(obj, new_names, mapping = FALSE) {
 }
 
 
-
 #' Subcluster cells
 #'
 #' @description
 #' Partition the seurat object by cell type, then cluster independently for each
 #' obj is assumed to have undergone normalization and is ready for `FindClusters`
-seurat_subcluster_cells <- function(obj, cell_col, subcluster_col = "cell_subclusters") {
+seurat_subcluster_cells <- function(
+    obj,
+    cell_col,
+    subcluster_col = "cell_subclusters") {
   sub_clustered <- lapply(unique(obj[[]][[cell_col]]), \(type) {
     mask <- obj[[]][[cell_col]] == type
     cur <- obj[, mask]
     cur <- FindClusters(cur)
-    cur[[]][[subcluster_col]] <- paste0(cur[[]][[cell_col]], ".", cur[[]]$seurat_clusters)
+    cur[[]][[subcluster_col]] <- paste0(
+      cur[[]][[cell_col]],
+      ".",
+      cur[[]]$seurat_clusters
+    )
     cur
   })
   final <- merge(
-    x = sub_clustered[[1]], y = sub_clustered[2:length(sub_clustered)],
-    merge.data = TRUE, merge.dr = TRUE
+    x = sub_clustered[[1]],
+    y = sub_clustered[2:length(sub_clustered)],
+    merge.data = TRUE,
+    merge.dr = TRUE
   )
   final[[]]$seurat_clusters <- NULL
   final
 }
 
 
-gene_set_analysis <- function(method = c("fgsea"), data,
-                              gene_sets,
-                              partition_col = "direction", p_threshold = 0.05, ...) {
+gene_set_analysis <- function(
+    method = c("fgsea"),
+    data,
+    gene_sets,
+    partition_col = "direction",
+    p_threshold = 0.05,
+    ...) {
   # TODO: write more methods for this
   if (class(data) == "list" || class(data) == "numeric") preranked <- TRUE
   dnames <- c("pos", "neg")
@@ -983,14 +1194,21 @@ gene_set_analysis <- function(method = c("fgsea"), data,
     if (class(data) == "list") {
       all_results <- lapply(dnames, \(n) {
         sorted <- sort(data[[n]], decreasing = FALSE)
-        cur <- fgsea::fgsea(pathways = gene_sets, stats = sorted, scoreType = n, ...)
+        cur <- fgsea::fgsea(
+          pathways = gene_sets,
+          stats = sorted,
+          scoreType = n,
+          ...
+        )
         cur[cur$padj <= p_threshold, ]
-      }) |> `names<-`(dnames)
+      }) |>
+        `names<-`(dnames)
       together <- lapply(dnames, \(n) {
         tib <- as_tibble(all_results[[n]])
         tib[[partition_col]] <- n
         tib
-      }) |> bind_rows()
+      }) |>
+        bind_rows()
       result$tb <- together
       result$raw <- all_results
     } else {
