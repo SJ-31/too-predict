@@ -844,7 +844,7 @@ def default_filter_transform(
             "feature_col": "GENEID",
         }
     t = Transformer(**t_dct, inplace=False)
-    f_dct["features"] = FEATURE_LISTS[f_dct["feature_set"]]
+    f_dct["features"] = FEATURE_LISTS[f_dct.pop("feature_set")]
     f = Filter(**f_dct, inplace=False)
     return f, t
 

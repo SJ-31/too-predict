@@ -36,7 +36,6 @@ if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
 
 
-FILTER, TRANSFORM = tt.default_filter_transform(smk.config)
 # TODO: the transformation NEEDS to be a hyperparameter that you optimize for
 
 MODELS = smk.config["models"]["dl"]
