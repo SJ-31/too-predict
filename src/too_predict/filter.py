@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Literal, Sequence
+from collections.abc import Iterable, Sequence
+from typing import Literal
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -25,6 +25,8 @@ import too_predict.plotting as plotting
 import too_predict.r_utils as ru
 import too_predict.utils as ut
 from too_predict.model import PredBase
+
+# * Filter class
 
 
 class Filter:
@@ -75,11 +77,6 @@ class Filter:
         self.feat_metrics: pd.DataFrame | None = None  # Feature metrics computed during
         # `fit`, if available
 
-    def copy(self) -> Filter:
-        return Filter(
-            features=self.features, feature_col=self.feature_col, inplace=self.inplace
-        )
-
     @property
     def features(self) -> list | None:
         return self._features
@@ -90,8 +87,15 @@ class Filter:
             self._features = [
                 f for f in value if list(set(value)) not in self.blacklist
             ]
-        else:
+        elif value is not None:
             self._features = list(set(value))
+        else:
+            self._features = None
+
+    def copy(self) -> Filter:
+        return Filter(
+            features=self.features, feature_col=self.feature_col, inplace=self.inplace
+        )
 
     def from_feature_importance(self, model: PredBase) -> None:
         underlying = model.get_model()
@@ -115,33 +119,42 @@ class Filter:
             print("ignoring...")
 
     def fit(self, adata: ad.AnnData) -> None:
-        self.adata = adata.copy() if not self.inplace else adata
+        if self.method == "edgeR":
+            self.features = self.edgeR(adata, **self.kwargs)
+        elif self.method == "mutual_information":
+            self.features = self.mutual_information(adata, **self.kwargs)
+        elif self.method == "variance_threshold":
+            self.features = self.variance_threshold(adata, **self.kwargs)
 
     def fit_transform(self, adata: ad.AnnData, _=None) -> ad.AnnData:
         self.fit(adata)
-        return self.transform()
+        return self.transform(adata)
 
-    def transform(self, _=None) -> ad.AnnData:
-        new_shape = (self.adata.shape[0], len(self.features))
+    def transform(self, adata: ad.AnnData) -> ad.AnnData:
+        if self.features is None:
+            raise ValueError(
+                "No features! Either pass a list of features during init or call fit to find features with the chosen method"
+            )
+        new_shape = (adata.shape[0], len(self.features))
         new_var = pd.DataFrame(index=self.features).merge(
-            self.adata.var, how="left", left_index=True, right_on=self.feature_col
+            adata.var, how="left", left_index=True, right_on=self.feature_col
         )
         new_var.index = self.features
-        lookup: pd.Index = pd.Index(self.adata.var[self.feature_col])
+        lookup: pd.Index = pd.Index(adata.var[self.feature_col])
         missing = []
-        is_array = isinstance(self.adata.X, np.ndarray)
-        counts: np.ndarray = self.adata.X.toarray() if not is_array else self.adata.X
+        is_array = isinstance(adata.X, np.ndarray)
+        counts: np.ndarray = adata.X.toarray() if not is_array else adata.X
         transformed = ad.AnnData(
             X=np.zeros(new_shape),
             var=new_var,
-            obs=self.adata.obs,
-            uns=self.adata.uns,
-            obsm=self.adata.obsm,
+            obs=adata.obs,
+            uns=adata.uns,
+            obsm=adata.obsm,
         )
         converted_layers = {}
-        for n in self.adata.layers:
+        for n in adata.layers:
             transformed.layers[n] = np.zeros(new_shape)
-            cur = self.adata.layers[n]
+            cur = adata.layers[n]
             converted_layers[n] = cur if not sparse.issparse(cur) else cur.toarray()
         for i, f in enumerate(self.features):
             try:
@@ -157,34 +170,101 @@ class Filter:
         self.missing_features = missing
         if len(missing) > 0:
             print(f"--- WARNING: {len(missing)} missing features!")
+        if self.feat_metrics is not None:
+            transformed.var = pd.merge(
+                transformed.var, self.feat_metrics, how="left", on=self.feature_col
+            )
         return transformed
 
-    def variance_threshold(self, threshold=0) -> list:
+    # ** Selection functions
+
+    def variance_threshold(self, adata, threshold=0) -> list:
         vt = fs.VarianceThreshold(threshold=threshold)
-        counts = ut.xarray_if_sparse(self.adata)
+        counts = ut.xarray_if_sparse(adata)
         vt.fit(counts)
         support = vt.get_support(indices=True)
         variance = np.nanvar(counts, axis=0)[support]
-        kept = list(self.adata.var[self.feature_col][support])
+        kept = list(adata.var[self.feature_col][support])
         if len(kept) <= self.top:
             return kept
-        df = pd.DataFrame({"feature": kept, "variance": variance}).sort_values(
+        df = pd.DataFrame({self.feature_col: kept, "variance": variance}).sort_values(
             "variance",
             ascending=False,
         )
-        return list(df["feature"])[: self.top]
+        df = df.iloc[: self.top, :]
+        self.feat_metrics = df
+        return list(df[self.feature_col])
 
-    def mutual_information(self, label_col, **kwargs) -> list:
-        counts = ut.xarray_if_sparse(self.adata)
-        y = self.adata.obs[label_col]
+    def mutual_information(self, adata, **kwargs) -> list:
+        counts = ut.xarray_if_sparse(adata)
+        y = adata.obs[self.label_col]
         minfo = fs.mutual_info_classif(counts, y, **kwargs)
-        info_df = pd.DataFrame(
-            {"feature": self.adata.var[self.feature_col], "mutual_info": minfo}
-        ).sort_values("mutual_info", ascending=False)
-        return list(info_df["feature"][: self.top])
+        info_df = (
+            pd.DataFrame(
+                {self.feature_col: adata.var[self.feature_col], "mutual_info": minfo}
+            )
+            .sort_values("mutual_info", ascending=False)
+            .iloc[: self.top, :]
+        )
+        self.feat_metrics = info_df
+        return list(info_df[self.feature_col][: self.top])
 
-    def edgeR(self, labels, n_per: int | None = None) -> list:
-        n_classes = self
+    @ru.r_cleanup
+    def edgeR(
+        self,
+        adata: ad.AnnData,
+        n_per: int | None = None,
+        fc_cutoff: float = 1.5,
+        treat: bool = True,
+        intercept: bool = False,
+    ) -> list:
+        ro.r("library(edgeR)")
+        ro.r("library(tidyverse)")
+        ru.np_to_r(np.transpose(ut.xarray_if_sparse(adata)), "mat")
+        ru.df_to_r(adata.obs, "obs")
+        ru.df_to_r(adata.var, "var")
+        ru.source("utils.R", in_r=True)
+        ro.r("dge <- DGEList(mat, samples = obs, genes = var)")
+        args = {
+            "group": self.label_col,
+            "fc_cutoff": fc_cutoff,
+            "id_col": self.feature_col,
+            "intercept": intercept,
+            "treat": treat,
+        }
+        ro.globalenv["args"] = ro.ListVector(args)
+        ro.r("args$dge <- dge")
+        ro.r("result <- do.call(edgeR_ovr, args)")
+        # print(ro.r("result$num_de"))
+        # print(ro.r("class(as.data.frame(result$num_de))"))
+        sig_results = ru.df_from_r(ro.r("as.data.frame(result$num_de)"))
+        print(sig_results)
+        kept = set()
+        if n_per is None:
+            n_per = self.top // len(adata.obs[self.label_col].unique())
+        dfs = []
+        for i in list(ro.r("names(result$top)")):
+            current = ru.df_from_r(ro.r(f"result$top${i}"))
+            current.loc[:, "absLFC"] = current["logFC"].abs()
+            current.sort_values(by="absLFC", ascending=False, inplace=True)
+            current = current.iloc[:n_per, :].assign(ovr_comparison=i)
+            current[self.feature_col] = current[self.feature_col].astype(str)
+            dfs.append(current)
+            kept |= set(current[self.feature_col])
+        if len(dfs) > 0:
+            colnames = dfs[0].columns
+            to_agg = {
+                c: "first"
+                for c in colnames
+                if c not in {self.feature_col, "ovr_comparison"}
+            }
+            to_agg["ovr_comparison"] = lambda x: ";".join(list(x))
+            grouped = pd.concat(dfs).groupby(self.feature_col).agg(to_agg).reset_index()
+            self.feat_metrics = grouped
+        return list(kept)
+
+
+# * Others
 
 
 def count_tomek_links(
@@ -521,7 +601,3 @@ class CompareSplits:
         else:
             mask = grouped["passed"].any()
         return mask.index[mask].to_list()
-
-
-# * Feature selection functions
-#
