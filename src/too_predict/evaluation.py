@@ -18,6 +18,7 @@ from torchmetrics.functional.classification import accuracy
 
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
+from too_predict.model import Pipeline
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE
 
@@ -355,15 +356,89 @@ def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.Data
     return copy.loc[true != pred, :]
 
 
+def train_test_wrapper(
+    pipeline: Pipeline,
+    maybe_split: Callable | Sequence,
+    set_label: str,
+    label_col: str,
+    adata: ad.AnnData | None = None,
+    pre_split: bool = True,
+    verbose: bool = False,
+    minimal: bool = True,
+    save_split_path: Path | None = None,
+):
+    """Wrapper function for fitting PredBase model, testing it, and returning evaluation
+    metrics
+
+    Parameters
+    ----------
+    set_label : argument
+    maybe_split : Either a callable that generates train, test splits or a tuple of
+        train, test indices. If `pre_split`, then train and test adata objects
+
+    Returns
+    -------
+    Dictionary with evaluation metrics
+    """
+    if not pre_split and adata is None:
+        raise ValueError("`adata` must be provided if not pre_split!")
+    if not pre_split:
+        adata = adata.copy()
+        n = len(adata)
+        if isinstance(maybe_split, Sequence):
+            x_train = adata[maybe_split[0], :]
+            x_test = adata[maybe_split[1], :]
+        else:
+            x_train, x_test = maybe_split(adata)
+    elif isinstance(maybe_split, Sequence):
+        x_train, x_test = maybe_split
+    if verbose:
+        print(
+            f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
+        )
+    if save_split_path is not None:
+        x_train.obs.to_csv(
+            save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
+        )
+        x_test.obs.to_csv(
+            save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
+        )
+    split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
+    split_prop = pd.DataFrame(
+        {
+            "train_prop": split_prop_tmp[0],
+            "test_prop": split_prop_tmp[1],
+            "train_size": len(x_train),
+            "test_size": len(x_test),
+        },
+        index=[0],
+    )
+    pipeline.fit(x_train, y=label_col)
+    y_true = x_test.obs[label_col]
+    if not minimal:
+        proba = pipeline.predict_proba(x_test)
+        y_uniques = y_true.unique()
+        res: dict = get_all_metrics(
+            true=y_true, score=proba, classes=pipeline.predictor.classes_
+        )
+        for k, v in res.items():
+            if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
+                if k == "cm":
+                    continue
+                res[k] = v.loc[v["class"].isin(y_uniques), :]
+
+        res["misses"] = get_misses(x_test, y_true, res["pred"])
+        res["split_prop"] = split_prop
+        return res
+    pred = pipeline.predict(x_test)
+    return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}
+
+
 def holdout(
-    model,
-    adata: ad.AnnData,
+    pipeline: Pipeline,
+    data: ad.AnnData | dict[str, tuple[ad.AnnData, ad.AnnData]],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
-    balancer: Balancer | None = None,
-    transformer: Transformer | None = None,
-    corrector: Corrector | None = None,
-    apply_correction_to: Literal["train", "test", "both"] = "train",
     label_col="tumor_type",
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
@@ -388,68 +463,12 @@ def holdout(
         when the group category to be evaluated is
         confounded with the target labels
     """
-    if split_fns is None and split_masks is None:
+    if (split_fns is None and split_masks is None) and isinstance(data, ad.AnnData):
         raise ValueError("Either split_fns or split_indices must be given!")
-
-    split_is_fn: bool = split_fns is not None
-
-    def helper(set_label, splitter, cur_adata):
-        cur_adata = cur_adata.copy()
-        n = len(cur_adata)
-        if split_is_fn:
-            x_train, x_test = splitter(cur_adata)
-        else:
-            x_train = cur_adata[splitter[0], :]
-            x_test = cur_adata[splitter[1], :]
-        if verbose:
-            print(
-                f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
-            )
-        if save_split_path is not None:
-            x_train.obs.to_csv(
-                save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
-            )
-            x_test.obs.to_csv(
-                save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
-            )
-        split_prop_tmp = np.array([len(x_train), len(x_test)]) / n
-        split_prop = pd.DataFrame(
-            {
-                "train_prop": split_prop_tmp[0],
-                "test_prop": split_prop_tmp[1],
-                "train_size": len(x_train),
-                "test_size": len(x_test),
-            },
-            index=[0],
-        )
-        if corrector is not None and apply_correction_to in {"both", "train"}:
-            x_train = corrector.fit_transform(x_train)
-        if corrector is not None and apply_correction_to in {"both", "test"}:
-            x_test = corrector.fit_transform(x_test)
-        if balancer is not None:
-            x_train = balancer.fit_transform(x_train, y=label_col)
-        if transformer is not None:
-            x_train = transformer.fit_transform(x_train)
-            x_test = transformer.fit_transform(x_test)
-        model.fit(x_train, y=label_col)
-        y_true = x_test.obs[label_col]
-        if not minimal:
-            proba = model.predict_proba(x_test)
-            y_uniques = y_true.unique()
-            res: dict = get_all_metrics(
-                true=y_true, score=proba, classes=model.classes_
-            )
-            for k, v in res.items():
-                if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
-                    if k == "cm":
-                        continue
-                    res[k] = v.loc[v["class"].isin(y_uniques), :]
-
-            res["misses"] = get_misses(x_test, y_true, res["pred"])
-            res["split_prop"] = split_prop
-            return res
-        pred = model.predict(x_test)
-        return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}
+    elif (split_fns is None and split_masks is None) and isinstance(data, dict):
+        pre_split: bool = True
+    else:
+        pre_split = False
 
     dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": [], "misses": []}
     misc_tmp = {
@@ -463,10 +482,24 @@ def holdout(
     }
     cms = {}
     minimal_accs = {}
-    splitters: dict = split_fns if split_fns is not None else split_masks
-    for set_label, splitter in splitters.items():
+    if split_fns is None and split_masks is None:
+        iter_over = data
+    else:
+        splitters: dict = split_fns if split_fns is not None else split_masks
+        iter_over = splitters
+    for set_label, val in iter_over.items():
         try:
-            cur = helper(set_label, splitter, adata)
+            cur = train_test_wrapper(
+                pipeline=pipeline,
+                label_col=label_col,
+                maybe_split=val,
+                set_label=set_label,
+                adata=data if not pre_split else None,
+                pre_split=pre_split,
+                verbose=verbose,
+                minimal=minimal,
+                save_split_path=save_split_path,
+            )
             if minimal:
                 minimal_accs[set_label] = cur
         except RRuntimeError as e:
@@ -482,7 +515,7 @@ def holdout(
         for d in dfs.keys():
             df = cur[d]
             if df is not None:
-                df["test_set"] = set_label
+                df.loc[:, "test_set"] = set_label
                 dfs[d].append(df)
     if not minimal:
         concat = {
