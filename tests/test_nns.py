@@ -315,7 +315,7 @@ def test_holdout():
     return result
 
 
-test_holdout()
+result = test_holdout()
 
 
 def test_cross_val():

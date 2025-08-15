@@ -2,7 +2,6 @@
 from typing import Callable
 
 import anndata as ad
-import lightning as L
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -14,14 +13,18 @@ import too_predict.utils as ut
 from pyhere import here
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import ShuffleSplit
+from too_predict._train_utils import default_filter_transform, get_model_fn
 from too_predict.deep.nns import HardSharer
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
 from too_predict.model import (
+    Pipeline,
     PredBase,
 )
 from too_predict.plotting import plot_diagonal_matrix
 from too_predict.transformer import Transformer
+
+import lightning as L
 
 # #  --- CODE BLOCK ---
 ADATA = ut.training_data_internal_test()
@@ -47,28 +50,15 @@ def test_shapley():
     return train_shap, train_v, test_shap, test_v
 
 
-robust = te.Robustness(
-    shifted_test=here("data", "tests", "effective_robustness", "shifted_test.h5ad"),
-    standard_test=here("data", "tests", "effective_robustness", "standard_test.h5ad"),
-    train=here("data", "tests", "effective_robustness", "train.h5ad"),
-)
-
-hard_share = HardSharer()
-trainer = L.Trainer(
-    max_epochs=3,
-    log_every_n_steps=1,
-    enable_progress_bar=False,
-    enable_checkpointing=False,
-    logger=None,
-    callbacks=[],
-)
-trainer.fit(
-    model=hard_share, train_dataloaders=
-)
+def test_holdout():
+    result = te.holdout(
+        pipeline_fn=lambda: Pipeline(
+            [*default_filter_transform()], predictor=PredBase(RandomForestClassifier())
+        ),
+        data={"foo": ut.train_test_split_ad(ADATA)},
+        label_col="tumor_type",
+    )
+    return result
 
 
-hardshare_spec = {
-    "model_fn": lambda x: hard_share,
-    "pretrained": True,
-    "multitask_key": 1,
-}
+result = test_holdout()

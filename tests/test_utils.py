@@ -92,6 +92,3 @@ train, test = ut.train_test_split_ad(adata[:, :50])
 
 def get_labs(adata) -> np.ndarray:
     return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
-
-
-len(F.variance_threshold(5))
