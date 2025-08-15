@@ -485,11 +485,10 @@ class MultiModule(L.LightningModule):
         self, targets: tuple[Tensor] | Dataset | DataLoader | None = None
     ) -> None:
         """Initialize biases of output layers based on training data"""
-        biases = (
-            self.conf.out_bias
-            if self.conf.out_bias is not None
-            else get_initial_out_bias(self.conf.outlayer_type, targets)
-        )
+        if self.conf.out_bias is not None:
+            biases = [b.clone() for b in self.conf.out_bias]
+        else:
+            biases = get_initial_out_bias(self.conf.outlayer_type, targets)
         for i, bias in enumerate(biases):
             layer = self.get_outlayer(i)
             layer.bias = nn.Parameter(bias).to(self.device)

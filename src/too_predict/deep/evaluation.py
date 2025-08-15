@@ -281,6 +281,10 @@ def cross_validate(
     metrics: dict = {"fold": []}
     model_config = model_config if model_config else d_ut.ModuleConfig()
     tasks = adset.label_cols
+    if init_bias:
+        model_config.out_bias = d_ut.get_initial_out_bias(
+            model_config.outlayer_type, adset
+        )
     for task in tasks:
         metrics[f"{task}_valid_acc"] = []
         if with_train_acc:
@@ -330,7 +334,7 @@ def cross_validate(
                 use_kd_criterion(model)
             if init_bias:
                 d_ut.init_lazy(model, loader=train)
-                model.init_out_bias(targets=train)
+                model.init_out_bias()  # Targets provided with whole dataset above
         trainer.fit(model=model, train_dataloaders=train, val_dataloaders=val_loader)
         model = model.to(torch.device(device))
 
