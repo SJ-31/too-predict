@@ -85,29 +85,125 @@ def train_test_split_torch(
     return tuple(DataLoader(d, **kwargs) for d in random_split(dataset, lengths))
 
 
-# TODO: give this params for working with distillation
-def holdout(
-    trainer_kwargs: dict,
+def train_test_wrapper_torch(
     model_cls: d_ut.MultiModule,
-    adata: ad.AnnData,
-    to_encode: tuple[str],
+    maybe_split: Callable | Sequence,
+    to_encode: Sequence[str] | str,
+    set_label: str,
     n_classes: Sequence[int],
     in_features: int,
-    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
-    | None = None,
-    model_config: d_ut.ModuleConfig | None = None,
     model_kwargs: dict | None = None,
-    logger_fn: Callable[[str], Logger] | None = None,
+    trainer_kwargs: dict | None = None,
+    cur_adata: ad.AnnData | None = None,
+    logger_fn: None | Callable = None,
+    validation: ad.AnnData | None = None,
+    model_config: d_ut.ModuleConfig | None = None,
     save_split_path: Path | None = None,
-    split_masks: dict[str, tuple] | None = None,
-    verbose: bool = False,
-    minimal: bool = False,
-    device: str = "cpu",
-    outdir: Path | None = None,
     scaler: d_ut.TorchScaler | None = None,
-    validation: float | None = None,
+    device: str = "cpu",
+    pre_split: bool = True,
+    loader_kwargs: dict | None = None,
+    minimal: bool = False,
     grad_accumulation: bool = False,
     grad_accumulation_batch_size: int = 256,
+):
+    loader_kwargs = ut.if_none(loader_kwargs)
+    cur_adata = cur_adata.copy()
+    if save_split_path is not None:
+        root = save_split_path.joinpath(set_label)
+        root.mkdir(exist_ok=True)
+        trainer_kwargs["default_root_dir"] = root
+    if logger_fn is not None:
+        trainer_kwargs["logger"] = logger_fn(set_label)
+    if not pre_split:
+        if isinstance(maybe_split, Callable):
+            x_train, x_test = maybe_split(cur_adata)
+        elif isinstance(maybe_split, Sequence):
+            x_train = cur_adata[maybe_split[0], :]
+            x_test = cur_adata[maybe_split[1], :]
+
+    elif isinstance(maybe_split, Sequence):
+        x_train, x_test = maybe_split
+    v_adata: ad.AnnData | None
+    if validation is not None:
+        x_test, v_adata = ut.train_test_split_ad(x_test, test_size=validation)
+    else:
+        v_adata = None
+    v_loader = (
+        DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode, device=device))
+        if isinstance(v_adata, ad.AnnData)
+        else None
+    )
+    if save_split_path is not None:
+        x_train.obs.to_csv(
+            save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
+        )
+        x_test.obs.to_csv(
+            save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
+        )
+        if validation is not None:
+            v_adata.obs.to_csv(
+                save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
+                index=False,
+            )
+    train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
+        x_train, to_encode=to_encode, device=device
+    )
+    updated_kwargs, updated_train_kwargs = d_ut.update_batch_strategy(
+        loader_kwargs=loader_kwargs,
+        dataset=train_dset,
+        default_batch_size=512,
+        trainer_kwargs=trainer_kwargs,
+        grad_accumulation=grad_accumulation,
+        grad_accumulation_batch_size=grad_accumulation_batch_size,
+    )
+    trainer = L.Trainer(**updated_train_kwargs)
+    test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
+    train_l = DataLoader(train_dset, **updated_kwargs)
+    x_test_tensor, y_true = test_dset[:]
+    if scaler is not None:
+        scaler.fit(train_l.dataset[:][0])
+        model_config.scaler = scaler
+    model_config.init_device = device
+    with trainer.init_module():
+        model = model_cls.new(
+            in_features=in_features,
+            n_classes_per_task=n_classes,
+            conf=model_config,
+            **model_kwargs,
+        )
+    trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
+    model.to(device)
+    if not minimal:
+        proba = model.predict_proba(x_test_tensor)
+        y_true = test_dset.decode(y_true)
+        res: dict = multitask_all_metrics(
+            y_true=y_true,
+            scores=proba,
+            task_names=to_encode,
+            n_classes=n_classes,
+        )
+        return res
+
+    acc_kwargs = {"n_classes": n_classes, "task_names": to_encode}
+    test_acc = multitask_acc(
+        y_true=y_true, predictions=model.predict_step(test_dset[:]), **acc_kwargs
+    )
+    train_acc = multitask_acc(
+        y_true=train_dset[:][1],
+        predictions=model.predict_step(train_dset[:]),
+        **acc_kwargs,
+    )
+    return test_acc, train_acc
+
+
+# TODO: give this params for working with distillation
+def holdout(
+    data: ad.AnnData | dict[str, tuple[ad.AnnData, ad.AnnData]],
+    split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
+    | None = None,
+    split_masks: dict[str, tuple] | None = None,
+    outdir: Path | None = None,
     **kwargs,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split) with
@@ -130,113 +226,31 @@ def holdout(
         split->task->results_dict
     If `minimal`, is a dictionary of split->dict[task->accuracy]
     """
-    if split_fns is None and split_masks is None:
+    if (split_fns is None and split_masks is None) and isinstance(data, ad.AnnData):
         raise ValueError("Either split_fns or split_indices must be given!")
-    split_is_fn: bool = split_fns is not None
-    model_kwargs = ut.if_none(model_kwargs, {})
+    elif (split_fns is None and split_masks is None) and isinstance(data, dict):
+        pre_split: bool = True
+    else:
+        pre_split = False
 
-    def helper(set_label, splitter, cur_adata):
-        cur_adata = cur_adata.copy()
-        if save_split_path is not None:
-            root = save_split_path.joinpath(set_label)
-            root.mkdir(exist_ok=True)
-            trainer_kwargs["default_root_dir"] = root
-        if logger_fn is not None:
-            trainer_kwargs["logger"] = logger_fn(set_label)
-        if split_is_fn:
-            x_train, x_test = splitter(cur_adata)
-        else:
-            x_train = cur_adata[splitter[0], :]
-            x_test = cur_adata[splitter[1], :]
-        v_adata: ad.AnnData | None
-        if validation is not None:
-            x_test, v_adata = ut.train_test_split_ad(x_test, test_size=validation)
-        else:
-            v_adata = None
-        if verbose:
-            print(
-                f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
-            )
-        v_loader = (
-            DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode, device=device))
-            if isinstance(v_adata, ad.AnnData)
-            else None
-        )
-        if save_split_path is not None:
-            x_train.obs.to_csv(
-                save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
-            )
-            x_test.obs.to_csv(
-                save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
-            )
-            if validation is not None:
-                v_adata.obs.to_csv(
-                    save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
-                    index=False,
-                )
-        train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
-            x_train, to_encode=to_encode, device=device
-        )
-        updated_kwargs, updated_train_kwargs = d_ut.update_batch_strategy(
-            loader_kwargs=kwargs,
-            dataset=train_dset,
-            default_batch_size=32,
-            trainer_kwargs=trainer_kwargs,
-            grad_accumulation=grad_accumulation,
-            grad_accumulation_batch_size=grad_accumulation_batch_size,
-        )
-        trainer = L.Trainer(**updated_train_kwargs)
-        test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
-        train_l = DataLoader(train_dset, **updated_kwargs)
-        x_test_tensor, y_true = test_dset[:]
-        if scaler is not None:
-            scaler.fit(train_l.dataset[:][0])
-            model_config.scaler = scaler
-        model_config.init_device = device
-        with trainer.init_module():
-            model = model_cls.new(
-                in_features=in_features,
-                n_classes_per_task=n_classes,
-                conf=model_config,
-                **model_kwargs,
-            )
-
-        trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
-        model.to(device)
-
-        if not minimal:
-            proba = model.predict_proba(x_test_tensor)
-            y_true = test_dset.decode(y_true)
-            res: dict = multitask_all_metrics(
-                y_true=y_true,
-                scores=proba,
-                task_names=to_encode,
-                n_classes=n_classes,
-            )
-            return res
-        acc_kwargs = {"n_classes": n_classes, "task_names": to_encode}
-        test_acc = multitask_acc(
-            y_true=y_true, predictions=model.predict_step(test_dset[:]), **acc_kwargs
-        )
-        train_acc = multitask_acc(
-            y_true=train_dset[:][1],
-            predictions=model.predict_step(train_dset[:]),
-            **acc_kwargs,
-        )
-        return test_acc, train_acc
-
-    splitters: dict = split_fns if split_fns is not None else split_masks
     result: dict = {}
-    for set_label, splitter in splitters.items():
-        result[set_label] = helper(set_label, splitter, adata)
-        if outdir is not None and not minimal:
+    if split_fns is None and split_masks is None:
+        iter_over = data
+    else:
+        splitters: dict = split_fns if split_fns is not None else split_masks
+        iter_over = splitters
+    for set_label, val in iter_over.items():
+        result[set_label] = train_test_wrapper_torch(
+            set_label=set_label, pre_split=pre_split, maybe_split=val, **kwargs
+        )
+        if outdir is not None and not kwargs.get("minimal"):
             cur_outdir = outdir.joinpath(set_label)
             cur_outdir.mkdir(exist_ok=True)
-            for task in to_encode:
+            for task in kwargs["to_encode"]:
                 te.write_cross_val(
                     result[set_label][task], outdir=cur_outdir, prefix=f"{task}_"
                 )
-    if outdir is not None and minimal:
+    if outdir is not None and kwargs.get("minimal"):
         tasks = list(next(iter(result.values()))[0].keys())
         to_df = {"set": result.keys()}
         for t in tasks:

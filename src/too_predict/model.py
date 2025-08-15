@@ -147,7 +147,7 @@ class PredBase:
     ) -> dict:
         return holdout(
             model=self,
-            adata=adata,
+            data=adata,
             split_fns=split_fns,
             balancer=balancer,
             corrector=corrector,

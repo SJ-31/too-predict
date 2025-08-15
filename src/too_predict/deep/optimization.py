@@ -214,7 +214,7 @@ class DlOptimizer(topt.BaseOptimizer):
                 model_cls=model_cls,
                 model_config=model_kwargs,
                 trainer_kwargs=trainer_params,
-                adata=train,
+                data=train,
                 in_features=n_features,
                 n_classes=n_classes,
                 logger_fn=lambda x: self.log_fn(f"{trial.number}-holdout_{x}"),

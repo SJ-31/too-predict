@@ -435,7 +435,7 @@ def train_test_wrapper(
 
 
 def holdout(
-    pipeline: Pipeline,
+    pipeline_fn: Callable[[], Pipeline],
     data: ad.AnnData | dict[str, tuple[ad.AnnData, ad.AnnData]],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]
     | None = None,
@@ -490,7 +490,7 @@ def holdout(
     for set_label, val in iter_over.items():
         try:
             cur = train_test_wrapper(
-                pipeline=pipeline,
+                pipeline=pipeline_fn(),
                 label_col=label_col,
                 maybe_split=val,
                 set_label=set_label,
