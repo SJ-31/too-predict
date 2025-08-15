@@ -151,7 +151,7 @@ def data_spec(
         """
         x, y = data[:]
         if is_atomic(y) or y.shape[1] == 1:
-            n_classes = n_uniques(y)
+            n_classes = tuple([n_uniques(y)])
         else:
             n_classes: tuple[int, int] = tuple(
                 [n_uniques(y[:, i]) for i in range(y.shape[1])]

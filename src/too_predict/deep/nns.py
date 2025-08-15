@@ -132,16 +132,13 @@ class HardSharer(d_ut.MultiModule):
     @override
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss: torch.Tensor = 0
-        if self.n_tasks > 1:
-            total_loss += multitask_cross_entropy_loss(
-                y_pred,
-                y_true,
-                weights=self.conf.task_weights,
-                model=self,
-                prefix=context,
-            )
-        else:
-            total_loss += nn.functional.cross_entropy(y_pred, y_true)
+        total_loss += multitask_cross_entropy_loss(
+            y_pred,
+            y_true,
+            weights=self.conf.task_weights,
+            model=self,
+            prefix=context,
+        )
         total_loss += self.l2() + self.l1()
         return total_loss
 
@@ -211,16 +208,13 @@ class Disyak(d_ut.MultiModule):
     @override
     def criterion(self, y_pred, y_true, context: str | None = None):
         total_loss: torch.Tensor = 0
-        if self.n_tasks > 1:
-            total_loss += multitask_cross_entropy_loss(
-                y_pred,
-                y_true,
-                weights=self.conf.task_weights,
-                model=self,
-                prefix=context,
-            )
-        else:
-            total_loss += nn.functional.cross_entropy(y_pred, y_true)
+        total_loss += multitask_cross_entropy_loss(
+            y_pred,
+            y_true,
+            weights=self.conf.task_weights,
+            model=self,
+            prefix=context,
+        )
         total_loss += self.l2() + self.l1()
         return total_loss
 

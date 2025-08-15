@@ -118,8 +118,39 @@ EPOCHS = 20
 
 # %%
 
+# %%
+
 
 def test_lightning():
+    train_adset_1 = d_ut.AnnDataset(train, to_encode=("tumor_type",))
+    valid_adset_1 = d_ut.AnnDataset(test, to_encode=("tumor_type",))
+    n_features_1, n_classes_1 = d_ut.data_spec(train_adset_1)
+    model = d_nn.HardSharer(
+        n_features_1,
+        n_classes_per_task=n_classes_1,
+        conf=d_ut.ModuleConfig(record_metrics=True),
+    )
+    trainer = L.Trainer(
+        max_epochs=10,
+        log_every_n_steps=1,
+        enable_progress_bar=False,
+        enable_checkpointing=False,
+        default_root_dir=here("tests", "lightning"),
+        logger=None,
+    )
+    model.set_cache("train_acc")
+    trainer.fit(
+        model=model, train_dataloaders=DataLoader(train_adset_1), val_dataloaders=None
+    )
+    trainer.test(model=model, dataloaders=DataLoader(valid_adset_1))
+    return model, trainer
+
+
+model, trainer = test_lightning()
+
+
+# %%
+def test_lightning_multi():
     model = d_nn.HardSharer(
         n_features,
         n_classes_per_task=n_classes,
@@ -139,8 +170,7 @@ def test_lightning():
     return model, trainer
 
 
-model, trainer = test_lightning()
-
+model, trainer = test_lightning_multi()
 
 # %%
 
