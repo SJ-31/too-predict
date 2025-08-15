@@ -5,10 +5,12 @@ import imblearn.over_sampling as ios
 import imblearn.under_sampling as ius
 import numpy as np
 import pandas as pd
+from imblearn.over_sampling.base import BaseOverSampler
+from imblearn.under_sampling.base import BaseUnderSampler
 from scanpy import AnnData
 
 # Utilities for handling imbalanced data
-OTHERS: set = {"tmp"}
+OTHERS: set = {"noisy"}
 IMBLEARN_METHODS: set = {
     "SMOTE",
     "KMeansSMOTE",
@@ -29,61 +31,62 @@ IMPLEMENTED_BALANCE: set = IMBLEARN_METHODS | OTHERS
 
 
 class Balancer:
-    def __init__(self, method: str, label_col: str | None = None, **kwargs) -> None:
+    def __init__(self, method: str, **kwargs) -> None:
         if method not in IMPLEMENTED_BALANCE:
             raise ValueError(f"Method {method} not implemented!")
-        self.model = None
-        self.method = method
-        self.label_col: str | None = label_col
+        self.method: str = method
+        self.label_col: str | None = None
         self.is_imblearn: bool = False
         if self.method in IMBLEARN_METHODS:
             self.is_imblearn = True
-            self.model = self._imblearn_model(method, **kwargs)
-        self.kwargs = kwargs
+            self.model: BaseOverSampler | BaseUnderSampler | None = (
+                self._imblearn_model(method, **kwargs)
+            )
+        else:
+            self.model = None
+        self.kwargs: dict = kwargs
 
     def _imblearn_model(self, model, **kwargs):
-        match model:
-            case "SMOTE":
-                return ios.SMOTE(**kwargs)
-            case "KMeansSMOTE":
-                return ios.KMeansSMOTE(**kwargs)
-            case "NearMiss":
-                return ius.NearMiss(**kwargs)
-            case "SVMSMOTE":
-                return ios.SVMSMOTE(**kwargs)
-            case "ADASYN":
-                return ios.ADASYN(**kwargs)
-            case "RandomOverSampler":
-                return ios.RandomOverSampler(**kwargs)
-            case "SMOTEENN":
-                return icc.SMOTEENN(**kwargs)
-            case "SMOTETomek":
-                return icc.SMOTETomek(**kwargs)
-            case "EditedNearestNeighbours":
-                return ius.EditedNearestNeighbours(**kwargs)
-            case "TomekLinks":
-                return ius.TomekLinks(**kwargs)
-            case "BorderLineSMOTE":
-                return ios.BorderlineSMOTE(**kwargs)
-            case "InstanceHardnessThreshold":
-                return ius.InstanceHardnessThreshold(**kwargs)
-            case "RandomUnderSampler":
-                return ius.RandomUnderSampler(**kwargs)
+        if model == "SMOTE":
+            return ios.SMOTE(**kwargs)
+        if model == "KMeansSMOTE":
+            return ios.KMeansSMOTE(**kwargs)
+        if model == "NearMiss":
+            return ius.NearMiss(**kwargs)
+        if model == "SVMSMOTE":
+            return ios.SVMSMOTE(**kwargs)
+        if model == "ADASYN":
+            return ios.ADASYN(**kwargs)
+        if model == "RandomOverSampler":
+            return ios.RandomOverSampler(**kwargs)
+        if model == "SMOTEENN":
+            return icc.SMOTEENN(**kwargs)
+        if model == "SMOTETomek":
+            return icc.SMOTETomek(**kwargs)
+        if model == "EditedNearestNeighbours":
+            return ius.EditedNearestNeighbours(**kwargs)
+        if model == "TomekLinks":
+            return ius.TomekLinks(**kwargs)
+        if model == "BorderLineSMOTE":
+            return ios.BorderlineSMOTE(**kwargs)
+        if model == "InstanceHardnessThreshold":
+            return ius.InstanceHardnessThreshold(**kwargs)
+        if model == "RandomUnderSampler":
+            return ius.RandomUnderSampler(**kwargs)
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
-        self.adata = adata.copy()
         self.label_col = y
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
 
-    def fit_transform(self, adata: ad.AnnData, y, _=None) -> ad.AnnData:
+    def fit_transform(self, adata: ad.AnnData, y: str = "tumor_type") -> ad.AnnData:
         self.fit(adata, y)
-        return self.transform()
+        return self.transform(adata)
 
-    def transform(self, _=None) -> ad.AnnData:
+    def transform(self, adata: ad.AnnData) -> ad.AnnData:
         if self.is_imblearn:
             resampled_x, y = self.model.fit_resample(
-                self.adata.X, y=self.adata.obs[self.label_col]
+                adata.X, y=adata.obs[self.label_col]
             )
             new = AnnData(
                 X=resampled_x, var=self.adata.var, obs=pd.DataFrame({self.label_col: y})

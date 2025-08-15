@@ -4,7 +4,6 @@ include: "Snakefile"
 # Workflow to compare the effects of different data augmentation schemes on
 # classification performance
 
-# TODO: have splits for different tasks, where the train are augmented by
 store = f"{REPOS}/data_augmentation/{DATE}"
 out = f"{OUT}/data_augmentation"
 
@@ -23,11 +22,13 @@ rule generate_datasets:
         "scripts/data_augmentation.py"
 
 
-# rule baseline:
-#     "Evaluate performance on the baseline data"
-#     ...
-# rule evaluate:
-#     ...
+rule evaluate:
+    input:
+        rules.generate_datasets.output,
+    script:
+        "scripts/data_augmentation.py"
+
+
 # rule compare_results:
 #     "Aggregate results, produce plots and some summary statistics"
 #     ...
