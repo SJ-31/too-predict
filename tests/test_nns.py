@@ -29,7 +29,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
 from pyhere import here
-from too_predict._train_utils import get_model_fn
+from too_predict._train_utils import ADDITIONAL_SPLITS, get_model_fn
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
 from too_predict.deep.evaluation import (
@@ -288,6 +288,34 @@ def test_distillation():
 test_distillation()
 
 # %%
+
+
+def test_holdout():
+    result = d_ev.holdout(
+        module_cls=d_nn.Disyak,
+        in_features=n_features,
+        data=adata1,
+        split_fns={
+            n.lower(): lambda x: (
+                (
+                    x[x.obs["Project_ID"].str.contains(n)],
+                    x[~x.obs["Project_ID"].str.contains(n)],
+                )
+            )
+            for n in ["TARGET", "TCGA"]
+        },
+        n_classes=n_classes,
+        to_encode=("Sample_Type", "tumor_type"),
+        trainer_kwargs={
+            "max_epochs": 5,
+            "enable_checkpointing": False,
+            "enable_progress_bar": False,
+        },
+    )
+    return result
+
+
+test_holdout()
 
 
 def test_cross_val():

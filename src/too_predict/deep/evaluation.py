@@ -86,29 +86,30 @@ def train_test_split_torch(
 
 
 def train_test_wrapper_torch(
-    model_cls: d_ut.MultiModule,
+    module_cls: d_ut.MultiModule,
     maybe_split: Callable | Sequence,
     to_encode: Sequence[str] | str,
-    set_label: str,
     n_classes: Sequence[int],
     in_features: int,
-    model_kwargs: dict | None = None,
+    module_kwargs: dict | None = None,
     trainer_kwargs: dict | None = None,
-    cur_adata: ad.AnnData | None = None,
+    loader_kwargs: dict | None = None,
+    adata: ad.AnnData | None = None,
     logger_fn: None | Callable = None,
     validation: ad.AnnData | None = None,
-    model_config: d_ut.ModuleConfig | None = None,
-    save_split_path: Path | None = None,
+    module_config: d_ut.ModuleConfig | None = None,
     scaler: d_ut.TorchScaler | None = None,
     device: str = "cpu",
     pre_split: bool = True,
-    loader_kwargs: dict | None = None,
-    minimal: bool = False,
     grad_accumulation: bool = False,
     grad_accumulation_batch_size: int = 256,
+    minimal: bool = False,
+    set_label: str = "model",
+    save_split_path: Path | None = None,
 ):
-    loader_kwargs = ut.if_none(loader_kwargs)
-    cur_adata = cur_adata.copy()
+    loader_kwargs = ut.if_none(loader_kwargs, {})
+    module_config = d_ut.ModuleConfig() if module_config is None else module_config
+    module_kwargs = ut.if_none(module_kwargs, {})
     if save_split_path is not None:
         root = save_split_path.joinpath(set_label)
         root.mkdir(exist_ok=True)
@@ -117,10 +118,10 @@ def train_test_wrapper_torch(
         trainer_kwargs["logger"] = logger_fn(set_label)
     if not pre_split:
         if isinstance(maybe_split, Callable):
-            x_train, x_test = maybe_split(cur_adata)
+            x_train, x_test = maybe_split(adata)
         elif isinstance(maybe_split, Sequence):
-            x_train = cur_adata[maybe_split[0], :]
-            x_test = cur_adata[maybe_split[1], :]
+            x_train = adata[maybe_split[0], :]
+            x_test = adata[maybe_split[1], :]
 
     elif isinstance(maybe_split, Sequence):
         x_train, x_test = maybe_split
@@ -163,20 +164,19 @@ def train_test_wrapper_torch(
     x_test_tensor, y_true = test_dset[:]
     if scaler is not None:
         scaler.fit(train_l.dataset[:][0])
-        model_config.scaler = scaler
-    model_config.init_device = device
+        module_config.scaler = scaler
+    module_config.init_device = device
     with trainer.init_module():
-        model = model_cls.new(
+        model = module_cls.new(
             in_features=in_features,
             n_classes_per_task=n_classes,
-            conf=model_config,
-            **model_kwargs,
+            conf=module_config,
+            **module_kwargs,
         )
     trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
     model.to(device)
     if not minimal:
         proba = model.predict_proba(x_test_tensor)
-        y_true = test_dset.decode(y_true)
         res: dict = multitask_all_metrics(
             y_true=y_true,
             scores=proba,
@@ -241,7 +241,11 @@ def holdout(
         iter_over = splitters
     for set_label, val in iter_over.items():
         result[set_label] = train_test_wrapper_torch(
-            set_label=set_label, pre_split=pre_split, maybe_split=val, **kwargs
+            set_label=set_label,
+            pre_split=pre_split,
+            maybe_split=val,
+            adata=data if not pre_split else None,
+            **kwargs,
         )
         if outdir is not None and not kwargs.get("minimal"):
             cur_outdir = outdir.joinpath(set_label)
