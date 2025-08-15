@@ -108,6 +108,7 @@ cv_kwargs = {
     "validation": valid_adset,
     "in_features": n_features,
     "n_splits": 2,
+    # "init_bias": False,
 }
 
 # %%
@@ -163,6 +164,42 @@ def test_whole_dataset():
     print(cv)
 
 
+def test_acc_whole_dataset():
+    cv: pd.DataFrame = d_ev.cross_validate(
+        model_cls=d_nn.Disyak,
+        batch_size=-1,
+        grad_accumulation=True,
+        grad_accumulation_batch_size=32,
+        adset=train_adset,
+        **cv_kwargs,
+    )
+    print(cv)
+
+
+def test_acc_larger():
+    cv: pd.DataFrame = d_ev.cross_validate(
+        model_cls=d_nn.Disyak,
+        batch_size=700,
+        grad_accumulation=False,
+        grad_accumulation_batch_size=32,
+        adset=train_adset,
+        **cv_kwargs,
+    )
+    print(cv)
+
+
+def test_acc():
+    cv: pd.DataFrame = d_ev.cross_validate(
+        model_cls=d_nn.Disyak,
+        batch_size=150,
+        grad_accumulation=True,
+        grad_accumulation_batch_size=30,
+        adset=train_adset,
+        **cv_kwargs,
+    )
+    print(cv)
+
+
 def test_bootstrap_dataset():
     cv: pd.DataFrame = d_ev.cross_validate(
         model_cls=d_nn.Disyak, adset=train_adset, batch_size=700, **cv_kwargs
@@ -170,6 +207,7 @@ def test_bootstrap_dataset():
     print(cv)
 
 
+test_acc()
 # test_whole_dataset()
 # %%
 
@@ -196,7 +234,7 @@ def test_distillation():
     model = d_nn.Disyak(
         in_features=n_features,
         n_classes_per_task=n_classes,
-        conf=d_ut.ModuleConfig(record_metrics=False),
+        conf=d_ut.ModuleConfig(record_metrics=False, outlayer_type="regression"),
     )  # You can't calculate accuracy while using distillation
     use_kd_criterion(model)
     trainer.fit(model, train_dataloaders=DataLoader(response, batch_size=32))
@@ -209,8 +247,10 @@ def test_distillation():
     cv = d_ev.cross_validate(
         model_cls=d_nn.Disyak,
         adset=response,
-        model_config=d_ut.ModuleConfig(record_metrics=False),
-        **dict(cv_kwargs, **{"validation": None, "init_bias": True}),
+        model_config=d_ut.ModuleConfig(
+            record_metrics=False, outlayer_type="regression"
+        ),
+        **dict(cv_kwargs.copy(), **{"validation": None, "init_bias": True}),
     )
     print(cv)
 
@@ -225,12 +265,13 @@ def test_cross_val():
         model_cls=d_nn.Disyak,
         adset=adset,
         **dict(
-            cv_kwargs,
+            cv_kwargs.copy(),
             **{
                 "trainer_kwargs": {
                     "max_epochs": 5,
                     "enable_checkpointing": False,
                     "enable_progress_bar": False,
+                    # "num_sanity_val_steps": 0,
                 }
             },
         ),
@@ -262,4 +303,4 @@ def test_init():
     return init_test(model, train_l)
 
 
-pred, bias = test_init()
+# pred, bias = test_init()
