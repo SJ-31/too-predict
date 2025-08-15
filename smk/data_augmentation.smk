@@ -5,11 +5,16 @@ include: "Snakefile"
 # classification performance
 
 store = f"{REPOS}/data_augmentation/{DATE}"
-out = f"{OUT}/data_augmentation"
+out = f"{OUT}/data_augmentation/{DATE}"
 
 da_config = config["data_augmentation"]
 
-datasets = [directory(f"{store}/{s}") for s in da_config["subsets"]]
+augmentations = da_config["augmentation"].keys()
+
+subsets = da_config["subsets"]
+
+dataset_dirs = expand("{store}/{s}", store=store, s=subsets)
+result_dirs = expand("{out}/{s}", out=out, s=subsets)
 
 
 rule generate_datasets:
@@ -17,7 +22,7 @@ rule generate_datasets:
     params:
         store=store,
     output:
-        datasets,
+        [directory(d) for d in dataset_dirs],
     script:
         "scripts/data_augmentation.py"
 
@@ -25,6 +30,9 @@ rule generate_datasets:
 rule evaluate:
     input:
         rules.generate_datasets.output,
+    output:
+        final_csv=f"{out}/all_results.csv",
+        others=expand("{d}/{a}_result.csv", d=result_dirs, a=augmentations),
     script:
         "scripts/data_augmentation.py"
 

@@ -107,6 +107,7 @@ if smk.rule == "evaluate":
     wanted_metrics = ["acc", "kappa", "mcc", "fowlkes_mallows", "auroc"]
     results = {"dataset": [], "augmentation": []}
     results.update({w: [] for w in wanted_metrics})
+    dfs = []
     for dir in smk.input:
         path: Path = Path(str(dir))
         subset_name = path.stem
@@ -115,16 +116,25 @@ if smk.rule == "evaluate":
             test = d_ut.AnnDataset(test, to_encode=LABEL_COL)
         for adata_path in path.glob(pattern="*_train.h5ad"):
             name = adata_path.stem.replace("_train", "")
-            adata = ad.read_h5ad(adata_path)
-            train, valid = ut.train_test_split_ad(
-                adata,
-                random_state=smk.config["random_state"],
-                test_size=0.1,
-            )
-            results["dataset"].append(subset_name)
-            results["augmentation"].append(name)
-            metrics = evaluate(name, train=train, test=test, validation=valid)
-            for m in wanted_metrics:
-                results[m].append(metrics[m])
-    df = d_ut.tensor_cols_to_float(pd.DataFrame(results))
-    df.to_csv(smk.output[0])
+            cur_outfile = Path(f"{name}_result.csv")
+            if cur_outfile.exists():
+                df = pd.read_csv(cur_outfile)
+            else:
+                adata = ad.read_h5ad(adata_path)
+                train, valid = ut.train_test_split_ad(
+                    adata,
+                    random_state=smk.config["random_state"],
+                    test_size=0.1,
+                )
+                current = results.copy()
+                current["dataset"].append(subset_name)
+                current["augmentation"].append(name)
+                metrics = evaluate(name, train=train, test=test, validation=valid)
+                for m in wanted_metrics:
+                    current[m].append(metrics[m])
+                df = pd.DataFrame(current)
+                df = d_ut.tensor_cols_to_float(pd.DataFrame(results))
+                df.to_csv(path.joinpath(cur_outfile, index=False))
+            dfs.append(df)
+    df = pd.concat(dfs)
+    df.to_csv(smk.output["final_csv"], index=False)
