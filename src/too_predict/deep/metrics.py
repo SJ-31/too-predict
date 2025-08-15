@@ -68,7 +68,7 @@ def multitask_all_metrics(
     result = {}
     for task, truth, score, n in zip(task_names, to_iter, scores, n_classes):
         result[task] = {}
-        result[task]["accuracy"] = tmet.accuracy(
+        result[task]["acc"] = tmet.accuracy(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )  # NOTE: the multiclass_accuracy version produced a different result
         result[task]["kappa"] = tmet.cohen_kappa(

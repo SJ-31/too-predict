@@ -204,6 +204,12 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
         print("WARNING: failed to calculate PRC, ignoring...")
         print(f"Exception: {e}")
         prec_recall_df = None
+    try:
+        auroc = me.roc_auc_score(y_true=true, y_score=predictions, multi_class="ovr")
+    except ValueError as e:
+        print("auroc calculation failed with warning")
+        print(e)
+        auroc = 0
     return {
         "cm": cm,
         "pred": list(pred_vals),
@@ -211,6 +217,7 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
         "acc": acc,
         "kappa": me.cohen_kappa_score(true, pred_vals),
         "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
+        "auroc": auroc,
         "fowlkes_mallows": me.fowlkes_mallows_score(true, pred_vals),
         "mcc": me.matthews_corrcoef(true, pred_vals),
         "report": rep_df,
@@ -392,6 +399,7 @@ def train_test_wrapper(
             x_train, x_test = maybe_split(adata)
     elif isinstance(maybe_split, Sequence):
         x_train, x_test = maybe_split
+        n = len(x_train) + len(x_test)
     if verbose:
         print(
             f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
@@ -478,6 +486,7 @@ def holdout(
         "kappa": [],
         "jaccard": [],
         "fowlkes_mallows": [],
+        "auroc": [],
         "mcc": [],
     }
     cms = {}
@@ -515,7 +524,7 @@ def holdout(
         for d in dfs.keys():
             df = cur[d]
             if df is not None:
-                df.loc[:, "test_set"] = set_label
+                df["test_set"] = set_label
                 dfs[d].append(df)
     if not minimal:
         concat = {
