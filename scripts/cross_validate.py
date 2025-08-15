@@ -53,6 +53,8 @@ USE_CACHED: bool = True
 
 ADATA: ad.AnnData
 
+# TODO: [2025-08-15 Fri] re-write this to use pipeline
+
 
 def cross_validate_helper(
     lc,
@@ -100,7 +102,8 @@ def cross_validate_helper(
         if not here(result_dir, f"{lc}-misc.csv").exists() and DO_CV and "CV" in which:
             track_meta = result_dir.joinpath(".metadata")
             track_meta.mkdir(exist_ok=True)
-            results = model.cross_validate(
+            results = cross_validate(
+                model,
                 adata,
                 label_col=lc,
                 group_col=gc,

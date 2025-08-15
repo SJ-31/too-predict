@@ -838,7 +838,7 @@ def default_filter_transform(
         t_dct = dct["transformer"]
         f_dct = dct["filter"]
     else:
-        t_dct = {"method": "clr", "imputation": "plus_one"}
+        t_dct = {"method": "clr", "impute_fn": "plus_one"}
         f_dct = {
             "feature_set": "edgeR_median_lfc_feature_list_3000",
             "feature_col": "GENEID",

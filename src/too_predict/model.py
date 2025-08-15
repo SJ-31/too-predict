@@ -16,11 +16,10 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from xgboost import XGBClassifier
 
 from too_predict.corrector import Corrector
-from too_predict.evaluation import cross_validate, holdout
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
-from too_predict.utils import RANDOM_STATE, RNG, adata_to_df
+from too_predict.utils import RNG, adata_to_df
 
 
 class PredBase:
@@ -34,18 +33,18 @@ class PredBase:
         self, model, make_dense: bool = False, balancer: Balancer = None
     ) -> None:
         self.model = model
-        self._estimator_type = "classifier"
-        self._is_fitted = False
-        self.missing_features = (
+        self._estimator_type: str = "classifier"
+        self._is_fitted: bool = False
+        self.missing_features: Sequence = (
             None  # Requested features to subset by that weren't found
         )
-        self.make_dense = make_dense
-        self.had_inf = False
+        self.make_dense: bool = make_dense
+        self.had_inf: bool = False
         self.var = None
         self.balancer: None | Balancer = balancer  # Address class imbalance ONLY during
         # fitting
         if "predict_proba" in dir(model):
-            self.score_fn = "predict_proba"
+            self.score_fn: str = "predict_proba"
         elif "decision_function" in dir(model):
             self.score_fn = "decision_function"
         else:
@@ -135,44 +134,6 @@ class PredBase:
     @property
     def classes_(self):
         return self.model.classes_
-
-    def holdout(
-        self,
-        adata: ad.AnnData,
-        split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]],
-        balancer: Balancer | None = None,
-        corrector: Corrector | None = None,
-        transformer: Transformer | None = None,
-        label_col="tumor_type",
-    ) -> dict:
-        return holdout(
-            model=self,
-            data=adata,
-            split_fns=split_fns,
-            balancer=balancer,
-            corrector=corrector,
-            transformer=transformer,
-            label_col=label_col,
-        )
-
-    def cross_validate(
-        self,
-        adata,
-        label_col="tumor_type",
-        group_col="",
-        n_splits=5,
-        random_state=RANDOM_STATE,
-        **kwargs,
-    ) -> dict:
-        return cross_validate(
-            self,
-            adata,
-            label_col=label_col,
-            group_col=group_col,
-            n_splits=n_splits,
-            random_state=random_state,
-            **kwargs,
-        )
 
     def rfecv(self, X: ad.AnnData, y="tumor_type", rfecv_params: dict = None) -> RFECV:
         """Perform recursive feature elimination with cross validation
@@ -316,25 +277,6 @@ class BatchBase(PredBase):
         encoded = self.encoder.transform(reshaped)
         combined = np.concatenate([counts, encoded], axis=1)
         return combined
-
-    def cross_validate_outer(
-        self,
-        adata,
-        label_col,
-        group_col="",
-        n_splits=5,
-        random_state=RANDOM_STATE,
-        **kwargs,
-    ):
-        return cross_validate(
-            self.o_model,
-            adata,
-            label_col=label_col,
-            group_col=group_col,
-            n_splits=n_splits,
-            random_state=random_state,
-            **kwargs,
-        )
 
     @override
     def fit(self, X: ad.AnnData, y: str = "tumor_type") -> None:
@@ -781,3 +723,8 @@ class Pipeline:
         for step in self.preprocessing:
             x = step.transform(x)
         return self.predictor.predict(x)
+
+    def predict_proba(self, x) -> np.ndarray:
+        for step in self.preprocessing:
+            x = step.transform(x)
+        return self.predictor.predict_proba(x)
