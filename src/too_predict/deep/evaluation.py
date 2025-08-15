@@ -106,6 +106,8 @@ def holdout(
     outdir: Path | None = None,
     scaler: d_ut.TorchScaler | None = None,
     validation: float | None = None,
+    grad_accumulation: bool = False,
+    grad_accumulation_batch_size: int = 256,
     **kwargs,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split) with
@@ -141,7 +143,6 @@ def holdout(
             trainer_kwargs["default_root_dir"] = root
         if logger_fn is not None:
             trainer_kwargs["logger"] = logger_fn(set_label)
-        trainer = L.Trainer(**trainer_kwargs)
         if split_is_fn:
             x_train, x_test = splitter(cur_adata)
         else:
@@ -176,9 +177,17 @@ def holdout(
         train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
             x_train, to_encode=to_encode, device=device
         )
-        updated = d_ut.update_batch_strategy(kwargs, train_dset, default_batch_size=32)
+        updated_kwargs, updated_train_kwargs = d_ut.update_batch_strategy(
+            loader_kwargs=kwargs,
+            dataset=train_dset,
+            default_batch_size=32,
+            trainer_kwargs=trainer_kwargs,
+            grad_accumulation=grad_accumulation,
+            grad_accumulation_batch_size=grad_accumulation_batch_size,
+        )
+        trainer = L.Trainer(**updated_train_kwargs)
         test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
-        train_l = DataLoader(train_dset, **updated)
+        train_l = DataLoader(train_dset, **updated_kwargs)
         x_test_tensor, y_true = test_dset[:]
         if scaler is not None:
             scaler.fit(train_l.dataset[:][0])
@@ -258,6 +267,8 @@ def cross_validate(
     with_train_acc: bool = True,
     device: str = "cpu",
     init_bias: bool = True,
+    grad_accumulation: bool = False,
+    grad_accumulation_batch_size: int = 256,
     **kwargs,
 ) -> pd.DataFrame:
     """Run cross-validation
@@ -302,27 +313,33 @@ def cross_validate(
         if verbose:
             print(f"fold {fold} started")
         train_set = Subset(adset, train_idx)
-        updated = d_ut.update_batch_strategy(kwargs, train_set, default_batch_size=32)
-        train: DataLoader = DataLoader(train_set, **updated)
+        updated_kwargs, updated_trainer_kwargs = d_ut.update_batch_strategy(
+            loader_kwargs=kwargs,
+            dataset=train_set,
+            trainer_kwargs=trainer_kwargs,
+            grad_accumulation=grad_accumulation,
+            grad_accumulation_batch_size=grad_accumulation_batch_size,
+        )
+        train: DataLoader = DataLoader(train_set, **updated_kwargs)
         test: Dataset = Subset(adset, test_idx)
         val_loader = DataLoader(validation) if validation is not None else None
 
         if save_path is not None:
             root = save_path.joinpath(f"fold_{fold}")
             root.mkdir(exist_ok=True)
-            trainer_kwargs["default_root_dir"] = root
+            updated_trainer_kwargs["default_root_dir"] = root
 
         if logger_fn is not None:
-            trainer_kwargs["logger"] = logger_fn(fold)
+            updated_trainer_kwargs["logger"] = logger_fn(fold)
 
         if scaler is not None:
             scaler.fit(train.dataset[:][0])
 
         if callbacks is not None:
-            trainer_kwargs["callbacks"] = [c() for c in callbacks]
+            updated_trainer_kwargs["callbacks"] = [c() for c in callbacks]
 
         model_config.init_device = device
-        trainer = L.Trainer(**trainer_kwargs)
+        trainer = L.Trainer(**updated_trainer_kwargs)
         with trainer.init_module():
             model = model_cls.new(
                 in_features=in_features,

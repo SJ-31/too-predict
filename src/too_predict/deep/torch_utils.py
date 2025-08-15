@@ -1049,26 +1049,83 @@ class BootstrapSampler(Sampler):
 
 
 def update_batch_strategy(
-    config: dict, dataset: Dataset, default_batch_size=256
-) -> dict:
-    "Return dictionary defining appropriate params to pass to dataloader"
-    config = config.copy()
-    if "batch_size" not in config:
-        config["batch_size"] = default_batch_size
-    elif config.get("batch_size") == -1:
-        config["batch_size"] = len(dataset)
-    elif (bs := config["batch_size"]) > len(dataset) or (
-        (len(dataset) / config["batch_size"]) <= 1
-    ):
-        del config["batch_size"]
-        config["batch_sampler"] = BootstrapSampler(
-            batch_size=bs,
-            n_batches=config.pop("n_batches", 5),
-            data_source=dataset,
-            shuffle=config.pop("shuffle", True),
-            drop_last=config.pop("drop_last", False),
+    loader_kwargs: dict,
+    dataset: Dataset,
+    default_batch_size=512,
+    trainer_kwargs: dict | None = None,
+    grad_accumulation: bool = False,
+    grad_accumulation_batch_size: int = 256,
+) -> tuple[dict, dict]:
+    """R
+
+    Parameters
+    ----------
+    grad_accumulation : whether to `accumulate_grad_batches` in the Trainer instead
+        of passing true batches
+    grad_accumulation_batch_size : Actual batch size used by the Trainer. The number
+        of accumulation rounds is thus given by
+        default_batch_size(or loader_kwargs['batch_size']) // grad_accumulation_batch_size
+
+    Returns
+    -------
+    A tuple of [dataloader_kwargs, trainer_kwargs] to pass to the DataLoader and Trainer
+        respectively
+    """
+    loader_kwargs = loader_kwargs.copy()
+    if grad_accumulation and not isinstance(trainer_kwargs, dict):
+        raise ValueError(
+            "If you intend to use gradient accumulation to increase batch size, `trainer_kwargs` must be given!"
         )
-    return config
+    elif isinstance(trainer_kwargs, dict):
+        trainer_kwargs = trainer_kwargs.copy()
+    else:
+        trainer_kwargs = {}
+
+    if "batch_size" not in loader_kwargs:
+        loader_kwargs["batch_size"] = default_batch_size
+
+    use_whole: bool = loader_kwargs.get("batch_size") == -1
+    old_batch_size = loader_kwargs["batch_size"]
+
+    if not use_whole and (
+        old_batch_size > len(dataset)
+        or (
+            ((len(dataset) / loader_kwargs["batch_size"]) <= 1)
+            and not grad_accumulation
+        )
+    ):
+        del loader_kwargs["batch_size"]
+        loader_kwargs["batch_sampler"] = BootstrapSampler(
+            batch_size=old_batch_size,
+            n_batches=loader_kwargs.pop("n_batches", 5),
+            data_source=dataset,
+            shuffle=loader_kwargs.pop("shuffle", True),
+            drop_last=loader_kwargs.pop("drop_last", False),
+        )
+
+    if use_whole:
+        if not grad_accumulation:
+            loader_kwargs["batch_size"] = len(dataset)
+        else:
+            loader_kwargs["batch_size"] = grad_accumulation_batch_size
+            length = len(dataset)
+            remainder = length % grad_accumulation_batch_size
+            n_acc = length // grad_accumulation_batch_size
+            if n_acc <= 1:
+                raise ValueError(
+                    "grad_accumulation_batch_size is too large! Set a smaller value"
+                )
+            if remainder > 0:
+                loader_kwargs["batch_size"] += remainder // (n_acc + 1)
+            trainer_kwargs["accumulate_grad_batches"] = n_acc
+    elif grad_accumulation:
+        if not loader_kwargs.get("batch_sampler", False):
+            loader_kwargs["batch_size"] = grad_accumulation_batch_size
+        n_acc = old_batch_size // grad_accumulation_batch_size
+        trainer_kwargs["accumulate_grad_batches"] = (
+            n_acc if (old_batch_size % grad_accumulation_batch_size == 0) else n_acc + 1
+        )
+    return loader_kwargs, trainer_kwargs
 
 
 # * Initialization
@@ -1082,8 +1139,8 @@ def get_initial_out_bias(
         targets = targets.dataset
     if isinstance(targets, Dataset):
         targets = targets[:][1]
-        if isinstance(targets, Tensor):
-            targets = iter_cols(targets)
+    if isinstance(targets, Tensor):
+        targets = iter_cols(targets)
     if mode == "softmax":
         tmp = []
         for t in targets:
