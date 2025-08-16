@@ -23,7 +23,9 @@ USE_TORCH = DA_CONFIG["model"] != "PredBase"
 
 
 # * Utilities
-def get_subset(adata: ad.AnnData, spec: dict) -> ad.AnnData:
+
+
+def get_subset_from_yaml(adata: ad.AnnData, spec: dict) -> ad.AnnData:
     adatas: list = []
     for obs, val_list in spec.items():
         for value, match_type in val_list.items():
@@ -81,7 +83,7 @@ if smk.rule == "generate_datasets":
         adata = ut.training_data_internal(subset=False)
     for subset_name, config in DA_CONFIG["subsets"].items():
         outpath = STORAGE.joinpath(subset_name)
-        subset_ad = get_subset(adata, config)
+        subset_ad = get_subset_from_yaml(adata, config)
         preprocess = tm.Pipeline(steps=[*default_filter_transform(smk.config)])
         adata, test = ut.train_test_split_ad(
             subset_ad, random_state=smk.config["random_state"]

@@ -12,11 +12,13 @@ import too_predict.filter as fil
 import too_predict.model as tm
 import too_predict.utils as ut
 from snakemake.script import snakemake as smk
+from too_predict.transformer import Transformer
 
 REF, FEAT = ut.ref_feature_lists_internal()
 
 TEST = smk.config["test"]
 LABEL_COL = smk.config["single_label"]
+S_CONFIG = smk.config["shallow"]
 
 
 def get_adata() -> ad.AnnData:
@@ -38,9 +40,42 @@ def write_results(results, result_dir, label_col, cm_prefix: str = ""):
                 )
 
 
-def make_pipeline(config: dict) -> tm.Pipeline:
-    preprocessing = []
-    filter = config.get("filter")
+def make_pipeline(config) -> tm.Pipeline:
+    spec = config.get("config", {})
+    params = config.get("params", {})
+
+    #
+    if f := spec.get("filter", "variance_threshold"):
+        filter = fil.Filter(
+            features=spec.get("feature_set", None),
+            method=f,
+            feature_col=S_CONFIG["filter"]["feature_col"],
+            inplace=False,
+        )
+    else:
+        filter = None
+    if t := spec.get("transform", "clr"):
+        transform = Transformer(
+            method=t,
+            impute_fn=spec.get("imputation", "plus_one"),
+            inplace=False,
+            make_sparse=False,
+        )
+    else:
+        transform = None
+
+    filter_before = config.get("filter_before", False)
+    if filter is None and transform is None:
+        preprocessing = []
+    elif filter_before:
+        preprocessing = [filter, transform]
+    else:
+        preprocessing = [transform, filter]
+
+    m = spec.get("model", "XGBoost")
+    if m == "XGBoost":
+        model = tm.PredBase(tm.XGBClassifier(**params))
+    return tm.Pipeline(steps=preprocessing, predictor=model)
 
 
 def train_test_from_yaml(
@@ -69,10 +104,10 @@ if smk.rule == "cross_validate":
     cv_kwargs = smk.config["shallow"]["cv"]
     adata = get_adata()
     for i in smk.config["cv_n_repeats"]:
-        for model, spec in smk.params["models"]["shallow"].items():
+        for model, config in smk.params["models"]["shallow"].items():
             outdir: Path = Path(smk.params["outdir"].joinpath(model))
             outdir.mkdir(exist_ok=True)
-            pipeline = make_pipeline(config=spec)
+            pipeline = make_pipeline(config)
             result = te.cross_validate(
                 model=pipeline,
                 adata=adata,
@@ -86,10 +121,10 @@ if smk.rule == "cross_validate":
 elif smk.rule == "holdout":
     adata = get_adata()
     holdout_dct = smk.config["shallow"]["holdout"]
-    for model_name, spec in smk.params["models"]:
+    for model_name, config in smk.params["models"]:
         outdir = Path(smk.params["outdir"].joinpath(model_name))
         outdir.mkdir(exist_ok=True)
-        pipeline: tm.Pipeline = make_pipeline(config=spec)
+        pipeline: tm.Pipeline = make_pipeline(config)
         for split_name, config in holdout_dct["splits"].items():
             cur_outdir = outdir.joinpath(split_name)
             cur_outdir.mkdir(exist_ok=True)

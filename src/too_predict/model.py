@@ -695,7 +695,7 @@ class PredWithCorrection(PredBase):
 
 class Pipeline:
     def __init__(self, steps: Sequence, predictor: PredBase | None = None) -> None:
-        self.preprocessing: Sequence = steps
+        self.preprocessing: Sequence = [s for s in steps if s is not None]
         self.predictor: PredBase | None = predictor
 
     def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
