@@ -9,12 +9,17 @@ outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
 
 model_dict = config["models"]["dl"]
 
+print("----CROSS VALIDATION----")
 if only := config.get("run_only", []):
     if isinstance(only, str):
         only = only.split(",")
     models = list(set(model_dict.keys()) & set(only))
+    print(f"Running with {models}")
 else:
     models = [k for k in model_dict.keys() if not model_dict[k].get("skip")]
+    print("Running with models defined in yaml")
+    print("Use the run_only key to run specific models")
+print("------------------------")
 
 results = {}
 log_paths = {}

@@ -109,8 +109,7 @@ def cross_validate_helper(
                 group_col=gc,
                 random_state=RANDOM_STATE,
                 n_splits=K,
-                transformer=transformer,
-                corrector=None,  # [2025-04-30 Wed] NOTE: temporary
+                # corrector=None,  # [2025-04-30 Wed] NOTE: temporary
                 record_dir=track_meta,
             )
             write_results(results, result_dir, lc, cm_prefix="fold_")

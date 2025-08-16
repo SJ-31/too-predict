@@ -457,6 +457,7 @@ class MultiModule(L.LightningModule):
         self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
         self.n_classes: Sequence[int] = n_classes_per_task
         self._accs: nn.ModuleList | None = None
+        self.supervised: bool = True
         if self.conf.record:
             self._accs = nn.ModuleList(
                 [Accuracy(task="multiclass", num_classes=n) for n in n_classes_per_task]
@@ -570,7 +571,10 @@ class MultiModule(L.LightningModule):
 
     @override
     def training_step(self, batch, batch_idx):
-        x, y = batch
+        if self.supervised:
+            x, y = batch
+        else:
+            x, y = batch, None
         x = self.maybe_scale(x)
         output = self(x)
         loss = self.criterion(y_pred=output, y_true=y, context="train")

@@ -18,7 +18,7 @@ from torchmetrics.functional.classification import accuracy
 
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
-from too_predict.model import Pipeline
+from too_predict.model import Pipeline, PredBase
 from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE
 
@@ -239,15 +239,13 @@ def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
 
 
 def cross_validate(
-    model,
-    adata,
+    model: Pipeline | PredBase,
+    adata: ad.AnnData,
     label_col="tumor_type",
+    balancer: Balancer | None = None,
     group_col="",
     n_splits=5,
     random_state=RANDOM_STATE,
-    balancer: Balancer | None = None,
-    corrector: Corrector | None = None,
-    transformer: Transformer | None = None,
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
     record_dir: Path | None = None,
@@ -291,15 +289,9 @@ def cross_validate(
     misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
         x_train: ad.AnnData = N[train_i]
-        if corrector is not None:
-            x_train = corrector.fit_transform(x_train)
         if balancer is not None:  # Avoid data leakage
             x_train = balancer.fit_transform(x_train)  # Creates copy
         x_test: ad.AnnData = N[test_i]
-
-        if transformer is not None:
-            x_train = transformer.fit_transform(x_train)
-            x_test = transformer.transform(x_test)
 
         model.fit(x_train, y=label_col)
 

@@ -662,9 +662,8 @@ ADDITIONAL_SPLITS: dict = {
 #
 def organoid_test_task(
     adata: ad.AnnData,
-    model_spec: dict,
+    model: Pipeline | PredBase,
     outdir: Path | None = None,
-    correction_mode: Literal["before_split", "on_train", "on_train_test"] = "on_train",
     organoid_col: str = "is_organoid",
     label_col: str = "tumor_type",
     with_randoms: bool = True,
@@ -689,17 +688,8 @@ def organoid_test_task(
     with_randoms : True if the test set should include some random other samples, and
         not just the organoid samples for the given tumor type
     """
-    filter, model, transformer, balancer, encoder, corrector = read_model_spec(
-        model_spec
-    )
     if shuffle_kwargs is None:
         shuffle_kwargs = {}
-    if encoder is not None:
-        adata = encoder.fit_transform(adata)
-    if filter is not None:
-        adata = filter.fit_transform(adata)
-    if correction_mode == "before_split":
-        adata = corrector.fit_transform(adata)
     crosses = pd.crosstab(adata.obs[label_col], adata.obs[organoid_col])
     n: int = adata.shape[0]
     filtered = crosses.loc[crosses[True] > 0, :]
@@ -736,14 +726,6 @@ def organoid_test_task(
         adata,
         split_masks=split_masks,
         label_col=label_col,
-        transformer=transformer,
-        balancer=balancer,
-        corrector=corrector
-        if correction_mode in {"on_train", "on_train_test"}
-        else None,
-        apply_correction_to="train"
-        if correction_mode in {"on_train", "on_train_test"}
-        else "both",
         save_split_path=save_split_path,
         verbose=verbose,
     )
