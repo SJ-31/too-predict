@@ -16,7 +16,7 @@ from rpy2.robjects.packages import STAP, InstalledPackage, InstalledSTPackage, i
 from scipy import sparse, stats
 
 import too_predict
-from too_predict.utils import get_data
+from too_predict.utils import get_data, xarray_if_sparse
 
 
 def register_biocparallel(workers: int, param="MulticoreParam") -> None:
@@ -24,14 +24,27 @@ def register_biocparallel(workers: int, param="MulticoreParam") -> None:
     ro.r(f"register({param}(workers = {workers}))")
 
 
-def adata_to_r(adata: ad.AnnData, r_symbol: str = "", to_matrix: bool = True):
-    with localconverter(anndata2ri.converter):
-        ro.globalenv["adata_tmp"] = adata
-        id = r_symbol if r_symbol else "sce_tmp"
-        ro.r(f"{id} <- as(adata_tmp, 'SingleCellExperiment')")
-        if to_matrix:
-            ro.r(f"assays({id})$X <- as.matrix(assays({id})$X)")
-        ro.r("rm(adata_tmp)")
+def adata_to_r(
+    adata: ad.AnnData,
+    r_symbol: str = "",
+    to_matrix: bool = True,
+    object: Literal["dge", "sce"] = "sce",
+):
+    id = r_symbol if r_symbol else object
+    if object == "sce":
+        with localconverter(anndata2ri.converter):
+            ro.globalenv["adata_tmp"] = adata
+            ro.r(f"{id} <- as(adata_tmp, 'SingleCellExperiment')")
+            if to_matrix:
+                ro.r(f"assays({id})$X <- as.matrix(assays({id})$X)")
+            ro.r("rm(adata_tmp)")
+    else:
+        counts = xarray_if_sparse(adata)
+        np_to_r(counts, "counts")
+        df_to_r(adata.obs, "samples")
+        df_to_r(adata.var, "genes")
+        ro.r(f"{id} <- edgeR::DGEList(counts, samples = samples, genes = genes)")
+        _ = [ro.r(f"rm({f})") for f in ["counts", "samples", "genes"]]
     if not r_symbol:
         return ro.r(id)
 
