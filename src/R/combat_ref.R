@@ -19,14 +19,13 @@ suppressMessages({
 
 
 ComBat_ref <- function(
-  counts,
-  batch,
-  group = NULL,
-  covar_mod = NULL,
-  full_mod = TRUE,
-  genewise.disp = FALSE,
-  reference_batch = NULL
-) {
+    counts,
+    batch,
+    group = NULL,
+    covar_mod = NULL,
+    full_mod = TRUE,
+    genewise.disp = FALSE,
+    reference_batch = NULL) {
   ########  Preparation  ########
   counts <- as.matrix(counts)
 
@@ -275,13 +274,12 @@ vec2mat <- function(vec, n_times) {
 ####  Match quantiles
 # keep_zero: zero values in the original counts don't change
 match_quantiles <- function(
-  counts_sub,
-  old_mu,
-  old_phi,
-  new_mu,
-  new_phi,
-  keep_zero = TRUE
-) {
+    counts_sub,
+    old_mu,
+    old_phi,
+    new_mu,
+    new_phi,
+    keep_zero = TRUE) {
   new_counts_sub <- matrix(NA, nrow = nrow(counts_sub), ncol = ncol(counts_sub))
   for (a in 1:nrow(counts_sub)) {
     for (b in 1:ncol(counts_sub)) {

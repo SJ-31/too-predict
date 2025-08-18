@@ -54,7 +54,7 @@ def compare_new_original(adata):
             # )
             result = te.holdout(
                 model=model,
-                adata=copy,
+                data=copy,
                 split_fns=ADDITIONAL_SPLITS,
                 label_col=label_col,
                 transformer=transform,

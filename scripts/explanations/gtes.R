@@ -8,6 +8,7 @@ suppressMessages({
   library(reticulate)
   use_condaenv("too-predict")
 })
+
 outdir <- here("data", "output", "explanations", "batch_correction", "GTEs")
 ut <- import("too_predict.utils")
 FLISTS <- ut$ref_feature_lists_internal()[[2]]
@@ -57,13 +58,12 @@ rm(adata)
 ## * Utility functions
 
 gte_wrapper <- function(
-  X,
-  meta,
-  g_factor,
-  b_factor,
-  do.scale = FALSE,
-  n_feature_subsets = 2000
-) {
+    X,
+    meta,
+    g_factor,
+    b_factor,
+    do.scale = FALSE,
+    n_feature_subsets = 2000) {
   indices <- seq_len(nrow(X))
   feature_list <- split(rownames(X), ceiling(indices / n_feature_subsets))
   gte_splits <- lapply(
@@ -107,11 +107,11 @@ plot_overall <- function(gte, genes) {
 filter_hbgs <- function(gte, feature_list_name, out = outdir) {
   blacklist <- Select.HBGs(gte, bins = 0.1, gte.ratio = 0.90)
 
-  original <- FLISTS[feature_list_name]
+  original <- FLISTS[[feature_list_name]]
   removed <- original[!original %in% blacklist]
 
   new_name <- glue("{feature_list_name}_hbgs_removed.txt")
-  write_lines(removed, here(out, new_name))
+  writeLines(removed, here(out, new_name))
 }
 
 ## * Run
@@ -151,5 +151,22 @@ ggsave(filename = here(outdir, "cumulative_GTE_all.png"))
 q2 <- plot_overall(gte_orgs$OverallTechEffects, rownames(rowData(sce_oc))) +
   labs(title = "Cumulative GTE of all genes")
 ggsave(filename = here(outdir, "cumulative_GTE_org_compare.png"))
+# [2025-07-16 Wed] oddly there
 
-filter_hbgs(gte_all, "edgeR_median_lfc_feature_list_3000")
+filtered <- filter_hbgs(gte_all, "edgeR_median_lfc_feature_list_3000")
+# [2025-07-16 Wed] Removed only 31 genes. Not great
+
+# Batch sensitive genes
+hbgs <- Select.HBGs(gte_orgs, bins = 0.1, gte.ratio = 0.95)
+
+ovp_tb <- read_tsv(here(
+  "data",
+  "output",
+  "chula_organoid_comparison",
+  "de_enrichment",
+  "sample_type_top_tags.tsv"
+)) |>
+  mutate(abs_rank = rank(-abs(logFC))) |>
+  arrange(abs_rank) |>
+  mutate(is_hbgs = GENEID %in% hbgs)
+# [2025-07-16 Wed] It isn't returning the same information

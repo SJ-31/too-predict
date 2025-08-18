@@ -403,7 +403,7 @@ edgeR_ovr <- function(
     p_value = 0.05,
     treat = TRUE,
     intercept = FALSE) {
-  normLibSizes(dge)
+  dge <- normLibSizes(dge)
   var_ids <- dge$genes[[id_col]]
   var_cols <- colnames(dge$genes)
   if (intercept) {

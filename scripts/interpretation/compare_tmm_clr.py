@@ -64,11 +64,11 @@ if __name__ == "__main__":
     for method, kwargs in zip(
         [KMeans, AgglomerativeClustering], [{}, {"n_clusters": 8}]
     ):
-        clr_clst = method(**kwargs).fit_predict(ut.xarray_if_sparse(clr_transformed))
+        other_clst = method(**kwargs).fit_predict(ut.xarray_if_sparse(clr_transformed))
         tmm_clst = method(**kwargs).fit_predict(ut.xarray_if_sparse(tmm_transformed))
         result["clustering"].append(method.__name__)
         for metric, fn in metric_fns.items():
-            result[metric].append(fn(clr_clst, tmm_clst))
+            result[metric].append(fn(other_clst, tmm_clst))
     df = pd.DataFrame(result)
     df.to_csv(
         outdir.joinpath(f"{other_transform}_clustering_comparison.csv"), index=False
