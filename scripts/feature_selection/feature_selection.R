@@ -143,7 +143,7 @@ get_edgeR <- function(f, counts, data, group, technical_factors) {
     samples = colData(data),
     genes = rowData(data)
   )
-  normLibSizes(dge)
+  dge <- normLibSizes(dge)
   factor_str <- paste0(c(group, technical_factors), collapse = " + ")
   mm <- model.matrix(as.formula(paste("~0+", factor_str)), data = colData(data))
   dge <- estimateDisp(dge, design = mm, robust = TRUE)

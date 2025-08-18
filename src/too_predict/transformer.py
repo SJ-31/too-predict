@@ -450,7 +450,7 @@ def tmm(x: ad.AnnData | np.ndarray, log=True) -> np.ndarray:
     with np_cv_rules.context():
         ro.globalenv["mat"] = np.transpose(counts)
     ro.r("dge <- edgeR::DGEList(mat)")
-    ro.r("edgeR::normLibSizes(dge)")
+    ro.r("dge <- edgeR::normLibSizes(dge)")
     if log:
         ro.r("counts <- edgeR::cpm(dge, log = TRUE)")
     else:
