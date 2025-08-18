@@ -1,0 +1,79 @@
+#' Simulate count data using edgeR's NB model
+#'
+#' @param group_col Column of dge$samples specifying groups
+#' @param group_prop Proportion of each group to generate. Either a named list,
+#' or vector of floats. If passed as a list, only simulated samples for the groups
+#' present will be generated
+#' @param n number of simulated samples to generate
+#' @description
+#' This function uses genewise dispersion parameters
+#'    i.e. estimateDisp(..., tagwise = TRUE)
+#' If a `group_col` is provided, then the fitted values of the GLM are averaged
+#'   across all samples in the same group
+nb_simulate <- function(dge, n, group_col = NULL, group_prop = NULL) {
+  dge <- normLibSizes(dge)
+  if (is.null(group_col)) {
+    mm <- NULL
+    group_counts <- NULL
+  } else {
+    n_groups <- nlevels(dge$samples[[group_col]])
+    levels <- levels(dge$samples[[group_col]])
+    if (is.null(group_prop)) {
+      group_prop <- rep(1 / n_groups, n_groups)
+    } else if (!is.list(group_prop)) {
+      stopifnot(
+        "The length of `group_prop` is not equal to the number of groups!" = length(
+          group_prop
+        ) ==
+          n_groups
+      )
+    } else if (is.list(group_prop)) {
+      levels <- levels[levels %in% names(group_prop)]
+      n_groups <- length(levels)
+    }
+    group_counts <- round(unlist(group_prop) * n)
+    mm <- model.matrix(as.formula(paste0("~0+", group_col)), data = dge$samples)
+  }
+  dge <- estimateDisp(dge, design = mm, tagwise = TRUE, ...)
+  glm_f <- glmFit(dge, design = mm)
+
+  sim_from_dge <- function(dge_obj, tagwise_avg, n_sim) {
+    sapply(seq_len(dim(dge_obj)[1]), \(i) {
+      disp <- dge_obj$tagwise.dispersion[i]
+      mu <- tagwise_avg[i]
+      rnbinom(n = n_sim, mu = mu, size = disp)
+    }) |>
+      cbind()
+  }
+
+  if (!is.null(group_col)) {
+    simulations <- lapply(
+      seq_len(n_groups),
+      \(i) {
+        mask <- dge$samples[[group_col]] == levels[i]
+        summed <- glm_f$fitted.values %*% mask
+        cur_avg <- summed / sum(mask) # Get average mu estimate per-group for
+        # each gene
+        sim_from_dge(dge, cur_avg, n_sim = group_counts[i])
+      }
+    )
+    simulations <- do.call(rbind, simulations)
+
+    new_groups <- lapply(
+      seq_len(n_groups),
+      \(i) rep(levels[i], group_counts[i])
+    ) |>
+      unlist()
+    new_samples <- data.frame(row.names = seq_along(new_groups))
+    new_samples[[group_col]] <- new_groups
+  } else {
+    new_samples <- NULL
+    simulations <- sim_from_dge(dge, rowMeans(glm_f$fitted.values), n_sim = n)
+  }
+
+  DGEList(
+    counts = t(simulations),
+    genes = dge$genes,
+    samples = new_samples
+  )
+}

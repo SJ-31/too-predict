@@ -5,9 +5,13 @@ import imblearn.over_sampling as ios
 import imblearn.under_sampling as ius
 import numpy as np
 import pandas as pd
+import rpy2.robjects as ro
 from imblearn.over_sampling.base import BaseOverSampler
 from imblearn.under_sampling.base import BaseUnderSampler
 from scanpy import AnnData
+
+import too_predict.r_utils as ru
+import too_predict.utils as ut
 
 # Utilities for handling imbalanced data
 OTHERS: set = {"noisy"}
@@ -73,6 +77,24 @@ class Balancer:
             return ius.InstanceHardnessThreshold(**kwargs)
         if model == "RandomUnderSampler":
             return ius.RandomUnderSampler(**kwargs)
+
+    @ru.r_cleanup
+    def nb_simulate(
+        self, adata: ad.AnnData, y: str, n: int | None = None
+    ) -> ad.AnnData:
+        ro.r("library(edgeR)")
+        ru.source("simulation.R")
+        ru.adata_to_r(adata, "dge", object="dge")
+        ru.r_null_if_none(y, "group_col")
+        # TODO: calculate the group prop and n
+        # ru.r_null_if_none()
+        ro.r(f"sim <- nb_simulate(dge, {n}, group_col = group_col)")
+        new = ad.AnnData(
+            X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
+            obs=ru.df_from_r(ro.r("sim$samples")),
+            var=adata.var,
+        )
+        return new
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
         self.label_col = y
