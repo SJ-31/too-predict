@@ -182,7 +182,9 @@ def classification_report2df(
     return df, report["accuracy"]
 
 
-def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
+def get_all_metrics(
+    true, score, classes, average: str = "macro", multi_class: str = "ovr"
+) -> dict:
     predictions = pd.DataFrame(score, columns=classes)
     pred_vals = predictions.idxmax(1)
     rep = me.classification_report(true, pred_vals, output_dict=True)
@@ -190,26 +192,26 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
     cm = confusion_matrix_df(true, pred_vals, labels=classes)
     rep_df, acc = classification_report2df(rep)
     try:
-        roc_df = roc_multiclass(true, predictions, average=average)
+        roc_df = roc_multiclass(
+            true, predictions, average=average, multi_class=multi_class
+        )
+        auroc = roc_df[f"{average}_{multi_class}_auc"].unique().item()
     except (IndexError, ValueError) as e:
         # [2025-03-10 Mon] can happen when true values don't contain
         # all classes
         # Or when using a model with decision_function
         print("WARNING: failed to calculate ROC, ignoring...")
         print(f"Exception: {e}")
+        auroc = np.nan
         roc_df = None
     try:
         prec_recall_df = precision_recall_multiclass(true, predictions, average=average)
+        aupr = prec_recall_df[f"{average}_average_precision"].unique().item()
     except (IndexError, ValueError) as e:
         print("WARNING: failed to calculate PRC, ignoring...")
         print(f"Exception: {e}")
         prec_recall_df = None
-    try:
-        auroc = me.roc_auc_score(y_true=true, y_score=predictions, multi_class="ovr")
-    except ValueError as e:
-        print("auroc calculation failed with warning")
-        print(e)
-        auroc = 0
+        aupr = np.nan
     return {
         "cm": cm,
         "pred": list(pred_vals),
@@ -218,6 +220,7 @@ def get_all_metrics(true, score, classes, average: str = "macro") -> dict:
         "kappa": me.cohen_kappa_score(true, pred_vals),
         "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
         "auroc": auroc,
+        "aupr": aupr,
         "fowlkes_mallows": me.fowlkes_mallows_score(true, pred_vals),
         "mcc": me.matthews_corrcoef(true, pred_vals),
         "report": rep_df,
@@ -479,6 +482,7 @@ def holdout(
         "jaccard": [],
         "fowlkes_mallows": [],
         "auroc": [],
+        "aupr": [],
         "mcc": [],
     }
     cms = {}
