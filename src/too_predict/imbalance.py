@@ -1,4 +1,6 @@
 #!/usr/bin/env ipython
+from typing import Literal
+
 import anndata as ad
 import imblearn.combine as icc
 import imblearn.over_sampling as ios
@@ -8,13 +10,14 @@ import pandas as pd
 import rpy2.robjects as ro
 from imblearn.over_sampling.base import BaseOverSampler
 from imblearn.under_sampling.base import BaseUnderSampler
+from imblearn.utils import check_sampling_strategy
 from scanpy import AnnData
 
 import too_predict.r_utils as ru
 import too_predict.utils as ut
 
 # Utilities for handling imbalanced data
-OTHERS: set = {"noisy"}
+OTHERS: set = {"nb_edgeR"}
 IMBLEARN_METHODS: set = {
     "SMOTE",
     "KMeansSMOTE",
@@ -78,28 +81,44 @@ class Balancer:
         if model == "RandomUnderSampler":
             return ius.RandomUnderSampler(**kwargs)
 
-    @ru.r_cleanup
-    def nb_simulate(
-        self, adata: ad.AnnData, y: str, n: int | None = None
-    ) -> ad.AnnData:
-        ro.r("library(edgeR)")
-        ru.source("simulation.R")
-        ru.adata_to_r(adata, "dge", object="dge")
-        ru.r_null_if_none(y, "group_col")
-        # TODO: calculate the group prop and n
-        # ru.r_null_if_none()
-        ro.r(f"sim <- nb_simulate(dge, {n}, group_col = group_col)")
-        new = ad.AnnData(
-            X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
-            obs=ru.df_from_r(ro.r("sim$samples")),
-            var=adata.var,
+    def check_sampling_strategy(
+        self,
+        y,
+        type: Literal["over-sampling", "under-sampling", "clean-sampling"],
+        strategy: Literal["minority", "not minority", "not majority", "all"]
+        | None = None,
+        n: int | None = None,
+    ) -> dict:
+        if strategy is None and n is None:
+            raise ValueError("Either `n` or `strategy` must be provided!")
+        if strategy:
+            counts = check_sampling_strategy(
+                sampling_strategy=strategy, y=y, sampling_type=type
+            )
+            return counts
+        return {u: n for u in y.unique()}
+
+    def nb_edgeR_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
+        if n := kwargs.pop("n", None):
+            return nb_edgeR(adata=adata, n=n, **kwargs)
+        counts = self.check_sampling_strategy(
+            y=adata.obs[self.label_col],
+            strategy=kwargs.pop("sampling_strategy", "auto"),
+            type="over-sampling",
         )
-        return new
+        n = np.sum(list(counts.values()))
+        prop = {k: (v / n).item() for k, v in counts.items()}
+        return nb_edgeR(adata=adata, n=n.item(), group_prop=dict(prop), **kwargs)
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
         self.label_col = y
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
+        elif self.method == "nb_edgeR":
+            # TODO: you could rewrite this so that the params are saved as python
+            # objects. but then would need to do the simulation in python and only
+            # use R for parameter estimation
+            self.kwargs["y"] = y
 
     def fit_transform(self, adata: ad.AnnData, y: str = "tumor_type") -> ad.AnnData:
         self.fit(adata, y)
@@ -113,7 +132,31 @@ class Balancer:
             new = AnnData(
                 X=resampled_x, var=self.adata.var, obs=pd.DataFrame({self.label_col: y})
             )
+        elif self.method == "nb_edgeR":
+            new = self.nb_edgeR_wrapper(adata, **self.kwargs)
         return new
+
+
+@ru.r_cleanup
+def nb_edgeR(
+    adata: ad.AnnData,
+    y: str,
+    n: int | None = None,
+    group_prop: dict[str, int] | None = None,
+) -> ad.AnnData:
+    ro.r("library(edgeR)")
+    ru.source("simulation.R", in_r=True)
+    ru.adata_to_r(adata, "dge", object="dge")
+    ru.r_null_if_none(y, "group_col")
+    ro.globalenv["n"] = n
+    ru.r_null_if_none(group_prop, "prop", conversion=lambda x: ro.ListVector(x))
+    ro.r("sim <- nb_simulate(dge, n, group_col = group_col, group_prop = prop)")
+    new = ad.AnnData(
+        X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
+        obs=ru.df_from_r(ro.r("sim$samples")),
+        var=adata.var,
+    )
+    return new
 
 
 def spaced_resample(

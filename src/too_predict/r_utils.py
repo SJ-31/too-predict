@@ -43,7 +43,7 @@ def adata_to_r(
         np_to_r(counts, "counts")
         df_to_r(adata.obs, "samples")
         df_to_r(adata.var, "genes")
-        ro.r(f"{id} <- edgeR::DGEList(counts, samples = samples, genes = genes)")
+        ro.r(f"{id} <- edgeR::DGEList(t(counts), samples = samples, genes = genes)")
         _ = [ro.r(f"rm({f})") for f in ["counts", "samples", "genes"]]
     if not r_symbol:
         return ro.r(id)
