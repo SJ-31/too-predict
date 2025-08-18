@@ -164,10 +164,6 @@ def data_spec(
         and isinstance(X, ad.AnnData)
     ):
         y = X.obs.loc[:, y]
-    if isinstance(X, ad.AnnData) and not X.isbacked:
-        X = ut.xarray_if_sparse(X)
-    elif isinstance(X, ad.AnnData):
-        X = X.X
 
     if isinstance(X, Dataset):
         return _for_dataset(X)
@@ -177,7 +173,7 @@ def data_spec(
         return X.shape[1], tuple([len(y[s].unique()) for s in y])
     elif isinstance(y, np.ndarray) and len(y.shape) > 1:
         return X.shape[1], tuple([n_uniques(y[:, i]) for i in range(y.shape[1])])
-    return X.shape[1], tuple(len(set(y)))
+    return X.shape[1], tuple([len(set(y))])
 
 
 # * Datasets
