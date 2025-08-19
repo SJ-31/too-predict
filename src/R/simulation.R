@@ -20,6 +20,8 @@
 #' or vector of floats. If passed as a list, only simulated samples for the groups
 #' present will be generated
 #' @param n number of simulated samples to generate
+#' @param estimate_disp Use the estimateDisp method instead of the estimateGLM... sequence
+#'   to find dispersions
 #' @description
 #' This function uses genewise dispersion parameters
 #'    i.e. estimateDisp(..., tagwise = TRUE)
@@ -31,6 +33,7 @@ nb_simulate <- function(
     group_col = NULL,
     group_prop = NULL,
     sample_mus = FALSE,
+    estimate_disp = TRUE,
     ...) {
   dge <- normLibSizes(dge)
   if (is.null(group_col)) {
@@ -55,8 +58,19 @@ nb_simulate <- function(
     group_counts <- round(unlist(group_prop) * n)
     mm <- model.matrix(as.formula(paste0("~0+", group_col)), data = dge$samples)
   }
-  dge <- estimateDisp(dge, design = mm, tagwise = TRUE, ...)
-  glm_f <- glmFit(dge, design = mm)
+  if (estimate_disp) {
+    dge <- estimateDisp(dge, design = mm, tagwise = TRUE, ...)
+  } else {
+    dge <- estimateGLMCommonDisp(dge, design = mm)
+    dge <- estimateGLMTagwiseDisp(
+      dge,
+      design = mm,
+      trend = FALSE,
+      ...
+    )
+  }
+
+  glm_f <- glmFit(dge, design = mm) # glmFit better than glmQLFit
 
   sim_from_dge <- function(
       dge_obj,
@@ -70,7 +84,7 @@ nb_simulate <- function(
       } else {
         mu <- sample(mu_matrix[i, ], 1)
       }
-      rnbinom(n = n_sim, mu = mu, size = disp)
+      rnbinom(n = n_sim, mu = mu, size = 1 / disp)
     }) |>
       cbind()
   }
@@ -82,12 +96,12 @@ nb_simulate <- function(
         mask <- dge$samples[[group_col]] == levels[i]
         # Get average mu estimate per-group for
         # each gene
-        cur_avg <- rowMeans(dge$counts[, mask])
+        cur_avg <- rowMeans(glm_f$fitted.values[, mask])
         sim_from_dge(
           dge,
           cur_avg,
           n_sim = group_counts[i],
-          mu_matrix = dge$counts[, mask]
+          mu_matrix = glm_f$fitted.values[, mask]
         )
       }
     )
@@ -104,7 +118,7 @@ nb_simulate <- function(
     new_samples <- NULL
     simulations <- sim_from_dge(
       dge,
-      rowMeans(dge$counts),
+      rowMeans(glm_f$fitted.values),
       n_sim = n,
       mu_matrix = dge$counts
     )
