@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython
+import math
 from typing import Literal
 
 import anndata as ad
@@ -8,9 +9,11 @@ import imblearn.under_sampling as ius
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
+import scipy.stats as stats
 from imblearn.over_sampling.base import BaseOverSampler
 from imblearn.under_sampling.base import BaseUnderSampler
 from imblearn.utils import check_sampling_strategy
+from numpy.random import Generator
 from scanpy import AnnData
 
 import too_predict.r_utils as ru
@@ -218,3 +221,57 @@ def spaced_resample(
         new_loc = min(new_loc, len(vals) - 1) if not undersample else max(new_loc, 0)
         count_dict[label] = round(vals[new_loc])
     return count_dict
+
+
+def dirichlet_sim(
+    adata: ad.AnnData,
+    y: str,
+    targets: dict,
+    shuffle: bool = True,
+    replace: bool = False,
+    n_sim: int = 3,
+    rng: Generator = ut.RNG,
+    prior: float = 0.5,
+) -> ad.AnnData:
+    """Simulate samples from a Dirichlet distribution, inspired by ALDEx2
+
+    Parameters
+    ----------
+    targets : mapping of group names -> desired counts
+    y : group column in adata.obs
+    shuffle : bool
+        whether to shuffle samples before sampling
+    replace : bool
+        sample from simulations with replacement, recommended if meeting the desired number
+        of targets takes too many simulations
+    n_sim : int
+        number of simulations to generate, only used if `replace` is true
+    rng : Generator
+        generator object for sampling
+
+    Returns
+    -------
+    AnnData object with simulated samples according to ``targets``
+    """
+    # Determine minimum number of simulations to be able to get counts specified
+    # in ``targets`` without needing replacement
+    old_counts = adata.obs[y].value_counts()
+    diffs = {
+        k: max(math.ceil(max(old_counts[k], v) / min(old_counts[k], v)), 1)
+        for k, v in targets.items()
+    }
+    n_sims = max(diffs.values()) if not replace else n_sim
+
+    counts = ut.xarray_if_sparse(adata) + prior
+    dirichlet = np.apply_along_axis(lambda x: stats.dirichlet.rvs(x, n_sims), 1, counts)
+    group_sims = {}
+    for group, count in targets.items():
+        mask = adata.obs[y] == group
+        current = dirichlet[mask, :, :].reshape((-1, dirichlet.shape[2]))
+        group_sims[group] = rng.choice(
+            current, size=count, replace=replace, shuffle=shuffle
+        )
+    obs = pd.DataFrame({y: [val for k, v in targets.items() for val in [k] * v]})
+    return ad.AnnData(
+        X=np.concatenate(list(group_sims.values())), obs=obs, var=adata.var
+    )
