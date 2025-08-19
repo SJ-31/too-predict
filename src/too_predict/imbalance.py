@@ -125,6 +125,14 @@ class Balancer:
         prop = {k: (v / n).item() for k, v in group_counts.items()}
         return nb_edgeR(adata=adata, n=n.item(), group_prop=dict(prop), **kwargs)
 
+    def splatter_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
+        counts = self.check_sampling_strategy(
+            y=adata.obs[self.label_col],
+            strategy=kwargs.pop("sampling_strategy", "auto"),
+            type="over-sampling",
+        )
+        return splatter_bulk(adata, y=self.label_col, targets=counts, **kwargs)
+
     def dirichlet_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
         counts = self.check_sampling_strategy(
             y=adata.obs[self.label_col],
@@ -154,7 +162,7 @@ class Balancer:
                 adata.X, y=adata.obs[self.label_col]
             )
             new = AnnData(
-                X=resampled_x, var=self.adata.var, obs=pd.DataFrame({self.label_col: y})
+                X=resampled_x, var=adata.var, obs=pd.DataFrame({self.label_col: y})
             )
         elif self.method == "nb_edgeR":
             new = self.nb_edgeR_wrapper(adata, **self.kwargs)
@@ -162,6 +170,8 @@ class Balancer:
             new = self.dirichlet_wrapper(adata, **self.kwargs)
         elif self.method == "empirical":
             new = self.empirical_wrapper(adata, **self.kwargs)
+        elif self.method == "splatter":
+            new = self.splatter_wrapper(adata, **self.kwargs)
         else:
             raise ValueError(f"method {self.method} not implemented!")
         return new
@@ -350,3 +360,19 @@ def empirical(adata: ad.AnnData, y, targets: dict, rng) -> tuple[ad.AnnData, dic
     return ad.AnnData(
         X=np.vstack(samples), obs=pd.DataFrame({y: groups}), var=adata.var
     ), inv_ecdfs
+
+
+@ru.r_cleanup
+def splatter_bulk(adata: ad.AnnData, y: str, targets: dict) -> ad.AnnData:
+    groups = []
+    mats = []
+    for group, count in targets.items():
+        cur = adata[adata.obs[y] == group, :]
+        ru.adata_to_r(cur, "sce", "sce")
+        ro.globalenv["count"] = count.item()
+        ro.r("params <- splatter::splatEstimate(sce)")
+        ro.r("sim <- splatter::splatSimulate(params, batchCells = count)")
+        mat = ru.np_from_r(ro.r("assays(sim)$counts")).transpose()
+        mats.append(mat)
+        groups.extend([group] * count)
+    return ad.AnnData(X=np.vstack(mats), var=adata.var, obs=pd.DataFrame({y: groups}))
