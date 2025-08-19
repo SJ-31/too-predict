@@ -187,15 +187,18 @@ def nb_edgeR(
     n: int | None = None,
     targets: dict[str, int] | None = None,
     blocking: bool = True,
+    sample_mus: bool = False,
 ) -> ad.AnnData:
     ro.r("library(edgeR)")
     ru.source("simulation.R", in_r=True)
+    ro.globalenv["sample_mus"] = sample_mus
     if not blocking:
         ru.adata_to_r(adata, "dge", object="dge")
         ru.r_null_if_none(y, "group_col")
         ru.r_null_if_none(n, "n")
         ru.r_null_if_none(targets, "prop", conversion=lambda x: ro.ListVector(x))
-        ro.r("sim <- nb_simulate(dge, n, group_col = group_col, group_prop = prop)")
+        ro.r("""sim <- nb_simulate(dge, n, group_col = group_col,
+                        group_prop = prop, sample_mus = sample_mus)""")
         new = ad.AnnData(
             X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
             obs=ru.df_from_r(ro.r("sim$samples")),
@@ -209,7 +212,7 @@ def nb_edgeR(
             ru.adata_to_r(current, "dge", object="dge")
             ro.globalenv["n"] = count.item()
             groups.extend([group] * count)
-            ro.r("sim <- nb_simulate(dge, n = n)")
+            ro.r("sim <- nb_simulate(dge, n = n, sample_mus = sample_mus)")
             mats.append(np.transpose(ru.np_from_r(ro.r("sim$counts"))))
         new = ad.AnnData(
             X=np.vstack(mats), obs=pd.DataFrame({y: groups}), var=adata.var
