@@ -361,10 +361,10 @@ def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.Data
 def train_test_wrapper(
     pipeline: Pipeline,
     maybe_split: Callable | Sequence,
-    set_label: str,
     label_col: str,
     adata: ad.AnnData | None = None,
     pre_split: bool = True,
+    set_label: str = "0",
     verbose: bool = False,
     minimal: bool = True,
     save_split_path: Path | None = None,

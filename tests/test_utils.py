@@ -1,67 +1,17 @@
 #!/usr/bin/env ipython
-import itertools
-import math
-from abc import abstractmethod
-from datetime import date
-from functools import reduce
-from os import replace
-from pathlib import Path
-from typing import Literal, override
 
-import anndata as ad
-import h5py
-import marsilea as ma
-import marsilea.plotter as mp
-import matplotlib.pyplot as plt
+from functools import reduce
+
 import numpy as np
 import pandas as pd
-import polars as pl
-import rpy2.robjects as ro
-import scanpy as sc
-import scipy.cluster as cluster
-import scipy.cluster.hierarchy as sch
-import scipy.optimize as opt
-import scipy.spatial.distance as spd
-import seaborn as sns
-import seaborn.objects as so
-import shap
-import skbio.stats.composition as comp
-import sklearn.feature_selection as fs
-import sklearn.metrics as sm
-import sklearn.model_selection as ms
-import sklearn.neighbors as sn
-import sklearn.preprocessing as sp
-import too_predict._rust_helpers as rh
-import too_predict.deep.evaluation as d_ev
-import too_predict.deep.torch_utils as d_ut
-import too_predict.evaluation as te
-import too_predict.explanation as ex
-import too_predict.filter as fil
-import too_predict.go_utils as gu
-import too_predict.model as tm
-import too_predict.multitask as multi
-import too_predict.plotting as tp
-import too_predict.r_utils as ru
 import too_predict.utils as ut
-from matplotlib.axes import Axes
-from matplotlib.figure import Figure
-from numba import jit
 from pyhere import here
 from rpy2.robjects.packages import importr
-from scipy import sparse
-from scipy.stats import mode
-from sklearn.linear_model import ElasticNetCV, LogisticRegressionCV
 from too_predict._train_utils import (
-    ADDITIONAL_SPLITS,
     MODELS,
-    organoid_test_task,
     read_model_spec,
 )
-from too_predict.corrector import Corrector
-from too_predict.deep.logistic import MultiLevel
-from too_predict.imputer import Imputer
-from too_predict.transformer import Transformer
-from torch.utils.data import DataLoader
+from too_predict.imbalance import IMPLEMENTED_BALANCE, Balancer
 
 # %%
 
@@ -89,6 +39,41 @@ filtered.X = filtered.X.toarray()
 
 train, test = ut.train_test_split_ad(adata[:, :50])
 
+# %%
+import anndata as ad
+import numpy as np
 
-def get_labs(adata) -> np.ndarray:
-    return adata.obs.loc[:, ["tumor_type", "Sample_Type"]].values
+
+def get_subset_from_yaml(adata: ad.AnnData, spec: dict) -> ad.AnnData:
+    test_masks = []
+    for obs, val_dct in spec.items():
+        for value, match_type in val_dct.items():
+            if match_type == "exact":
+                test_masks.append(adata.obs[obs] == value)
+            elif match_type == "contains":
+                test_masks.append(adata.obs[obs].str.contains(value))
+            else:
+                raise ValueError(f"`{match_type}` is an invalid match type!")
+    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks)
+    return adata[test_mask, :]
+
+
+def test_get_subset():
+    spec = {
+        "tumor_type": {"BRCA": "exact", "COAD_READ": "exact", "DLBC": "exact"},
+        "Sample_Type": {"org": "contains"},
+    }
+    sub = get_subset_from_yaml(adata, spec)
+    counts = sub.obs["tumor_type"].value_counts().to_dict()
+    original = adata.obs["tumor_type"].value_counts().to_dict()
+    print(counts)
+    print(original)
+    for group in spec["tumor_type"].keys():
+        assert counts[group] == original[group]
+    assert (
+        adata.obs["Sample_Type"].value_counts()["organoid"]
+        == sub.obs["Sample_Type"].value_counts()["organoid"]
+    )
+
+
+test_get_subset()

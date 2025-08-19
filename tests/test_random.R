@@ -20,5 +20,21 @@ ad <- import("anndata")
 
 adata <- ut$training_data_internal_test(minimal = TRUE)
 
-dge <- DGEList(t(as.matrix(adata$X)), samples = adata$obs, genes = adata$var)
-ovr <- edgeR_ovr(dge, "tumor_type", fc_cutoff = 1.2, treat = FALSE)
+
+brca <- adata[adata$obs$tumor_type == "BRCA", ]
+
+n_groups <- nlevels(adata$obs$tumor_type)
+
+obj <- as.matrix(t(adata$X))
+colnames(obj) <- rownames(adata$obs)
+rownames(obj) <- rownames(adata$var)
+
+mm <- model.matrix(~ 0 + tumor_type, data = adata$obs)
+
+adata$X <- as.matrix(adata$X)
+sce <- zellkonverter::AnnData2SCE(adata)
+
+library(splatter)
+
+params <- splatEstimate(sce)
+sim <- splatSimulate(params, batchCells = 100)
