@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
+from functools import reduce
 from pathlib import Path
 
 import anndata as ad
+import numpy as np
 import pandas as pd
 import too_predict.deep.evaluation as d_ev
 import too_predict.deep.torch_utils as d_ut
@@ -16,7 +18,6 @@ from too_predict.imbalance import Balancer
 
 DA_CONFIG: dict = smk.config["data_augmentation"]
 DL_CONFIG: dict = smk.config["dl"]
-STORAGE: Path = Path(smk.params["storage"])
 TEST: bool = smk.config["test"]
 LABEL_COL: str = smk.config["shallow"]["filter"]["label_col"]
 USE_TORCH = DA_CONFIG["model"] != "PredBase"
@@ -26,33 +27,31 @@ USE_TORCH = DA_CONFIG["model"] != "PredBase"
 
 
 def get_subset_from_yaml(adata: ad.AnnData, spec: dict) -> ad.AnnData:
-    adatas: list = []
-    for obs, val_list in spec.items():
-        for value, match_type in val_list.items():
+    test_masks = []
+    for obs, val_dct in spec.items():
+        for value, match_type in val_dct.items():
             if match_type == "exact":
-                adatas.append(adata[adata.obs[obs] == value, :])
+                test_masks.append(adata.obs[obs] == value)
             elif match_type == "contains":
-                adatas.append(adata[adata.obs[obs].str.contains(value), :])
+                test_masks.append(adata.obs[obs].str.contains(value))
             else:
                 raise ValueError(f"`{match_type}` is an invalid match type!")
-    merged = ad.concat(adatas, merge="same")
-    merged = merged[merged.obs.duplicated(), :]
-    return merged
+    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks)
+    return adata[test_mask, :]
 
 
 # You could do this all in `holdout`, but don't want to read everything in all at once
 def evaluate(name: str, train: ad.AnnData, test, validation):
     result: dict
     if not USE_TORCH:
-        model = tm.Pipeline(
-            [*default_filter_transform(smk.config)], predictor=tm.XGBClassifier()
-        )
+        model = tm.PredBase(tm.XGBEstimator())
         result = train_test_wrapper(
-            pipeline=model,
+            model=model,
             maybe_split=(train, test),
             label_col=LABEL_COL,
             set_label=name,
             pre_split=True,
+            minimal=False,
         )
     else:
         result = d_ev.train_test_wrapper_torch(
@@ -77,12 +76,13 @@ def evaluate(name: str, train: ad.AnnData, test, validation):
 # ** Generate data
 if smk.rule == "generate_datasets":
     subsets = []
+    storage: Path = Path(smk.params["store"])
     if TEST:
         adata = ut.training_data_internal_test()
     else:
         adata = ut.training_data_internal(subset=False)
-    for subset_name, config in DA_CONFIG["subsets"].items():
-        outpath = STORAGE.joinpath(subset_name)
+    for subset_name, config in smk.params["subsets"].items():
+        outpath = storage.joinpath(subset_name)
         subset_ad = get_subset_from_yaml(adata, config)
         preprocess = tm.Pipeline(steps=[*default_filter_transform(smk.config)])
         adata, test = ut.train_test_split_ad(
@@ -90,35 +90,42 @@ if smk.rule == "generate_datasets":
         )
         adata = preprocess.fit_transform(adata)
         test = preprocess.transform(test)
-        in_features, n_classes = d_ut.data_spec(adata, y=adata.obs[LABEL_COL])
+        in_features, n_classes = d_ut.data_spec(
+            adata, y=adata.obs[LABEL_COL].astype(str)
+        )
         adata.write_h5ad(outpath.joinpath("baseline_train.h5ad"))
         test.write_h5ad(outpath.joinpath("test.h5ad"))
 
-        outpath.joinpath("in_features.txt").write_text(in_features)
-        outpath.joinpath("n_classes.txt").write_text(n_classes)
+        outpath.joinpath("in_features.txt").write_text(str(in_features))
+        outpath.joinpath("n_classes.txt").write_text(str(n_classes))
 
         for method, conf in DA_CONFIG["augmentations"].items():
-            if not conf.get("enabled", True) or method == "baseline":
+            if method == "baseline" or (
+                conf is not None and not conf.get("skip", True)
+            ):
                 continue
-            balancer = Balancer(method, **conf.get("params", {}))
+            params: dict = ut.if_none(ut.if_none(conf, {}).get("params", {}), {})
+            balancer = Balancer(method, **params)
             augmented = balancer.fit_transform(adata, y=LABEL_COL)
             augmented.write_h5ad(outpath.joinpath(f"{method}_train.h5ad"))
 
 # ** Evaluate
 if smk.rule == "evaluate":
-    wanted_metrics = ["acc", "kappa", "mcc", "fowlkes_mallows", "auroc"]
+    wanted_metrics = ["acc", "kappa", "auroc", "aupr"]
     results = {"dataset": [], "augmentation": []}
     results.update({w: [] for w in wanted_metrics})
     dfs = []
+    outdir: Path = Path(smk.params["outdir"])
     for dir in smk.input:
         path: Path = Path(str(dir))
         subset_name = path.stem
         test = ad.read_h5ad(path.joinpath("test.h5ad"))
+        cur_outdir = outdir.joinpath(subset_name)
         if USE_TORCH:
             test = d_ut.AnnDataset(test, to_encode=LABEL_COL)
         for adata_path in path.glob(pattern="*_train.h5ad"):
             name = adata_path.stem.replace("_train", "")
-            cur_outfile = Path(f"{name}_result.csv")
+            cur_outfile = cur_outdir.joinpath(f"{name}_result.csv")
             if cur_outfile.exists():
                 df = pd.read_csv(cur_outfile)
             else:
@@ -135,8 +142,9 @@ if smk.rule == "evaluate":
                 for m in wanted_metrics:
                     current[m].append(metrics[m])
                 df = pd.DataFrame(current)
-                df = d_ut.tensor_cols_to_float(pd.DataFrame(results))
-                df.to_csv(path.joinpath(cur_outfile, index=False))
+                if USE_TORCH:
+                    df = d_ut.tensor_cols_to_float(pd.DataFrame(results))
+                df.to_csv(cur_outfile, index=False)
             dfs.append(df)
     df = pd.concat(dfs)
     df.to_csv(smk.output["final_csv"], index=False)
