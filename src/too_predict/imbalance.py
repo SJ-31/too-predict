@@ -15,12 +15,12 @@ from imblearn.under_sampling.base import BaseUnderSampler
 from imblearn.utils import check_sampling_strategy
 from numpy.random import Generator
 from scanpy import AnnData
+from statsmodels.distributions.empirical_distribution import ECDF, monotone_fn_inverter
 
 import too_predict.r_utils as ru
 import too_predict.utils as ut
 
 # Utilities for handling imbalanced data
-OTHERS: set = {"nb_edgeR"}
 IMBLEARN_METHODS: set = {
     "SMOTE",
     "KMeansSMOTE",
@@ -37,13 +37,10 @@ IMBLEARN_METHODS: set = {
     "SMOTETomek",
     "EditedNearestNeighbours",
 }
-IMPLEMENTED_BALANCE: set = IMBLEARN_METHODS | OTHERS
 
 
 class Balancer:
     def __init__(self, method: str, **kwargs) -> None:
-        if method not in IMPLEMENTED_BALANCE:
-            raise ValueError(f"Method {method} not implemented!")
         self.method: str = method
         self.label_col: str | None = None
         self.is_imblearn: bool = False
@@ -55,6 +52,7 @@ class Balancer:
         else:
             self.model = None
         self.kwargs: dict = kwargs
+        self.inv_ecdfs: dict[str, stats.interp1d] | None = None
 
     def _imblearn_model(self, model, **kwargs):
         if model == "SMOTE":
@@ -101,17 +99,40 @@ class Balancer:
             return counts
         return {u: n for u in y.unique()}
 
+    def empirical_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
+        group_counts = self.check_sampling_strategy(
+            y=adata.obs[self.label_col],
+            strategy=kwargs.pop("sampling_strategy", "auto"),
+            type="over-sampling",
+        )
+        new, self.inv_ecdfs = empirical(
+            adata=adata,
+            y=self.label_col,
+            rng=kwargs.get("rng", ut.RNG),
+            targets=group_counts,
+        )
+        return new
+
     def nb_edgeR_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
         if n := kwargs.pop("n", None):
             return nb_edgeR(adata=adata, n=n, **kwargs)
+        group_counts = self.check_sampling_strategy(
+            y=adata.obs[self.label_col],
+            strategy=kwargs.pop("sampling_strategy", "auto"),
+            type="over-sampling",
+        )
+        n = np.sum(list(group_counts.values()))
+        prop = {k: (v / n).item() for k, v in group_counts.items()}
+        return nb_edgeR(adata=adata, n=n.item(), group_prop=dict(prop), **kwargs)
+
+    def dirichlet_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
         counts = self.check_sampling_strategy(
             y=adata.obs[self.label_col],
             strategy=kwargs.pop("sampling_strategy", "auto"),
             type="over-sampling",
         )
-        n = np.sum(list(counts.values()))
-        prop = {k: (v / n).item() for k, v in counts.items()}
-        return nb_edgeR(adata=adata, n=n.item(), group_prop=dict(prop), **kwargs)
+        _ = kwargs.pop("as_transform", None)
+        return dirichlet_sim(adata, y=self.label_col, targets=counts, **kwargs)
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
         self.label_col = y
@@ -137,6 +158,12 @@ class Balancer:
             )
         elif self.method == "nb_edgeR":
             new = self.nb_edgeR_wrapper(adata, **self.kwargs)
+        elif self.method == "dirichlet":
+            new = self.dirichlet_wrapper(adata, **self.kwargs)
+        elif self.method == "empirical":
+            new = self.empirical_wrapper(adata, **self.kwargs)
+        else:
+            raise ValueError(f"method {self.method} not implemented!")
         return new
 
 
@@ -223,15 +250,19 @@ def spaced_resample(
     return count_dict
 
 
+# * Simulation functions
+
+
 def dirichlet_sim(
     adata: ad.AnnData,
-    y: str,
-    targets: dict,
+    y: str | None = None,
+    targets: dict | None = None,
     shuffle: bool = True,
     replace: bool = False,
     n_sim: int = 3,
-    rng: Generator = ut.RNG,
+    rng: Generator | None = ut.RNG,
     prior: float = 0.5,
+    as_transform: bool = False,
 ) -> ad.AnnData:
     """Simulate samples from a Dirichlet distribution, inspired by ALDEx2
 
@@ -255,23 +286,67 @@ def dirichlet_sim(
     """
     # Determine minimum number of simulations to be able to get counts specified
     # in ``targets`` without needing replacement
-    old_counts = adata.obs[y].value_counts()
-    diffs = {
-        k: max(math.ceil(max(old_counts[k], v) / min(old_counts[k], v)), 1)
-        for k, v in targets.items()
-    }
-    n_sims = max(diffs.values()) if not replace else n_sim
-
     counts = ut.xarray_if_sparse(adata) + prior
-    dirichlet = np.apply_along_axis(lambda x: stats.dirichlet.rvs(x, n_sims), 1, counts)
-    group_sims = {}
-    for group, count in targets.items():
-        mask = adata.obs[y] == group
-        current = dirichlet[mask, :, :].reshape((-1, dirichlet.shape[2]))
-        group_sims[group] = rng.choice(
-            current, size=count, replace=replace, shuffle=shuffle
+    if not as_transform and targets is None:
+        raise ValueError("`targets` must be provided if using to simulate samples!")
+    elif not as_transform and y is None:
+        raise ValueError("`y` must be provided if using to simulate samples!")
+    if not as_transform:
+        old_counts = adata.obs[y].value_counts()
+        diffs = {
+            k: max(math.ceil(max(old_counts[k], v) / min(old_counts[k], v)), 1)
+            for k, v in targets.items()
+        }
+        n_sims = max(diffs.values()) if not replace else n_sim
+
+        dirichlet = np.apply_along_axis(
+            lambda x: stats.dirichlet.rvs(x, n_sims), 1, counts
         )
-    obs = pd.DataFrame({y: [val for k, v in targets.items() for val in [k] * v]})
+        group_sims = {}
+        for group, count in targets.items():
+            mask = adata.obs[y] == group
+            current = dirichlet[mask, :, :].reshape((-1, dirichlet.shape[2]))
+            group_sims[group] = rng.choice(
+                current, size=count, replace=replace, shuffle=shuffle
+            )
+        obs = pd.DataFrame({y: [val for k, v in targets.items() for val in [k] * v]})
+        return ad.AnnData(
+            X=np.concatenate(list(group_sims.values())), obs=obs, var=adata.var
+        )
+    dirichlet = np.apply_along_axis(lambda x: stats.dirichlet.rvs(x, 1), 1, counts)
+    transformed = dirichlet[:, 0, :]
+    return ad.AnnData(X=transformed, obs=adata.obs, var=adata.var)
+
+
+def empirical(adata: ad.AnnData, y, targets: dict, rng) -> tuple[ad.AnnData, dict]:
+    """Simulate samples using inverse of empirical distribution for each gene,
+    blocking by group
+    """
+
+    def get_inv_ecdf(arr: np.ndarray):
+        fn = monotone_fn_inverter(ECDF(arr), arr)
+        return fn
+
+    def make_samples(inv_ecdfs, n):
+        return np.vstack(
+            [
+                np.hstack(
+                    list(map(lambda fn: fn(max(rng.random(), fn.x[0])), inv_ecdfs))
+                )
+                for _ in range(n)
+            ]
+        )
+
+    samples = []
+    groups = []
+    inv_ecdfs: dict = {}
+    counts = ut.xarray_if_sparse(adata)
+    for group, count in targets.items():
+        masked = counts[adata.obs[y] == group, :]
+        cur_fns = np.apply_along_axis(get_inv_ecdf, 0, masked)
+        samples.append(make_samples(cur_fns, count))
+        inv_ecdfs[group] = cur_fns
+        groups.extend([group] * count)
     return ad.AnnData(
-        X=np.concatenate(list(group_sims.values())), obs=obs, var=adata.var
-    )
+        X=np.vstack(samples), obs=pd.DataFrame({y: groups}), var=adata.var
+    ), inv_ecdfs
