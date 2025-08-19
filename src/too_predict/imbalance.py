@@ -121,9 +121,12 @@ class Balancer:
             strategy=kwargs.pop("sampling_strategy", "auto"),
             type="over-sampling",
         )
-        n = np.sum(list(group_counts.values()))
-        prop = {k: (v / n).item() for k, v in group_counts.items()}
-        return nb_edgeR(adata=adata, n=n.item(), group_prop=dict(prop), **kwargs)
+        if not kwargs.get("blocking", False):
+            n = np.sum(list(group_counts.values()))
+            prop = {k: (v / n).item() for k, v in group_counts.items()}
+            return nb_edgeR(adata=adata, n=n.item(), targets=dict(prop), **kwargs)
+        else:
+            return nb_edgeR(adata=adata, targets=group_counts, **kwargs)
 
     def splatter_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
         counts = self.check_sampling_strategy(
@@ -182,20 +185,35 @@ def nb_edgeR(
     adata: ad.AnnData,
     y: str,
     n: int | None = None,
-    group_prop: dict[str, int] | None = None,
+    targets: dict[str, int] | None = None,
+    blocking: bool = True,
 ) -> ad.AnnData:
     ro.r("library(edgeR)")
     ru.source("simulation.R", in_r=True)
-    ru.adata_to_r(adata, "dge", object="dge")
-    ru.r_null_if_none(y, "group_col")
-    ro.globalenv["n"] = n
-    ru.r_null_if_none(group_prop, "prop", conversion=lambda x: ro.ListVector(x))
-    ro.r("sim <- nb_simulate(dge, n, group_col = group_col, group_prop = prop)")
-    new = ad.AnnData(
-        X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
-        obs=ru.df_from_r(ro.r("sim$samples")),
-        var=adata.var,
-    )
+    if not blocking:
+        ru.adata_to_r(adata, "dge", object="dge")
+        ru.r_null_if_none(y, "group_col")
+        ru.r_null_if_none(n, "n")
+        ru.r_null_if_none(targets, "prop", conversion=lambda x: ro.ListVector(x))
+        ro.r("sim <- nb_simulate(dge, n, group_col = group_col, group_prop = prop)")
+        new = ad.AnnData(
+            X=np.transpose(ru.np_from_r(ro.r("sim$counts"))),
+            obs=ru.df_from_r(ro.r("sim$samples")),
+            var=adata.var,
+        )
+    elif targets is not None:
+        groups = []
+        mats = []
+        for group, count in targets.items():
+            current = adata[adata.obs[y] == group, :]
+            ru.adata_to_r(current, "dge", object="dge")
+            ro.globalenv["n"] = count.item()
+            groups.extend([group] * count)
+            ro.r("sim <- nb_simulate(dge, n = n)")
+            mats.append(np.transpose(ru.np_from_r(ro.r("sim$counts"))))
+        new = ad.AnnData(
+            X=np.vstack(mats), obs=pd.DataFrame({y: groups}), var=adata.var
+        )
     return new
 
 

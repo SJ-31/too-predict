@@ -359,7 +359,7 @@ def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.Data
 
 
 def train_test_wrapper(
-    pipeline: Pipeline,
+    model: Pipeline | PredBase,
     maybe_split: Callable | Sequence,
     label_col: str,
     adata: ad.AnnData | None = None,
@@ -416,14 +416,15 @@ def train_test_wrapper(
         },
         index=[0],
     )
-    pipeline.fit(x_train, y=label_col)
+    model.fit(x_train, y=label_col)
     y_true = x_test.obs[label_col]
     if not minimal:
-        proba = pipeline.predict_proba(x_test)
+        proba = model.predict_proba(x_test)
         y_uniques = y_true.unique()
-        res: dict = get_all_metrics(
-            true=y_true, score=proba, classes=pipeline.predictor.classes_
+        classes = (
+            model.predictor.classes_ if isinstance(model, Pipeline) else model.classes_
         )
+        res: dict = get_all_metrics(true=y_true, score=proba, classes=classes)
         for k, v in res.items():
             if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
                 if k == "cm":
@@ -433,7 +434,7 @@ def train_test_wrapper(
         res["misses"] = get_misses(x_test, y_true, res["pred"])
         res["split_prop"] = split_prop
         return res
-    pred = pipeline.predict(x_test)
+    pred = model.predict(x_test)
     return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}
 
 
@@ -495,7 +496,7 @@ def holdout(
     for set_label, val in iter_over.items():
         try:
             cur = train_test_wrapper(
-                pipeline=pipeline_fn(),
+                model=pipeline_fn(),
                 label_col=label_col,
                 maybe_split=val,
                 set_label=set_label,

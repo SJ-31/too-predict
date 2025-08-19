@@ -38,8 +38,19 @@ def test_sim_nb():
     print(result)
 
 
+def test_sim_nb_block():
+    tcga = adata[adata.obs["Project_ID"].str.contains("TCGA"), :]
+    counts = tcga.obs[y].value_counts()
+    valid = counts[counts > 10]
+    tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
+    balancer = tb.Balancer(method="nb_edgeR", blocking=True)
+    new = balancer.fit_transform(tcga, y=y)
+    print(new.X)
+    result = te.train_test_wrapper(model, (new, tcga), y)
+    print(result)
+
+
 # TODO: you need to make this as good as the original
-test_sim_nb()
 
 import scipy.stats as stats
 
