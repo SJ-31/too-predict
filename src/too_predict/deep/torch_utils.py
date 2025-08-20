@@ -428,7 +428,99 @@ class ModuleConfig:
             self._init_device = value
 
 
-class MultiModule(L.LightningModule):
+class BaseNN(L.LightningModule):
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        conf: ModuleConfig | None = None,
+    ) -> None:
+        super().__init__()
+        self.in_features: int = in_features
+        self.n_tasks: int = len(n_classes_per_task)
+        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
+        self.n_classes: Sequence[int] = n_classes_per_task
+        self.cache: dict
+
+    @classmethod
+    def new(
+        cls,
+        in_features: int,
+        n_classes_per_task: list[int],
+        conf: ModuleConfig | None = None,
+        **kwargs,
+    ):
+        return cls(in_features, n_classes_per_task, conf=conf, **kwargs)
+
+    def set_cache(
+        self, value: Literal["train_loss", "val_acc", "val_loss", "train_acc"]
+    ):
+        if value not in self.cache:
+            raise ValueError(f"Value to cache must be one of {self.cache.keys()}")
+        self.cache[value] = (True, [])
+
+    def _try_cache_to(self, target: str, value: Tensor) -> None:
+        """Record ``value`` to the cache if it has been set for recording"""
+        if self.cache[target][0]:
+            self.cache[target][1].append(value.detach())
+
+    def cache_clear(self, target) -> None:
+        self.cache[target][1].clear()
+
+    def maybe_scale(self, x):
+        if self.conf.scaler is not None:
+            return self.conf.scaler.transform(x)
+        return x
+
+    def register_optimizers(self, opt_fn: Callable):
+        """Specify the optimizer to use for this model
+
+        Parameters
+        ----------
+        opt_fn : Callable
+            returns a Pytorch-compatible optimizer when called with named_parameters()
+        """
+        self.conf.optimizer_fn = opt_fn
+
+    def register_schedulers(
+        self,
+        scheduler_fn: Callable | None = None,
+        lr_scheduler_config: None | dict = None,
+    ):
+        """Register a scheduler and/or scheduler config
+
+        Parameters
+        ----------
+        scheduler_fn : Callable
+            Function returning a Pytorch-compatible scheduler, taking the optimizer as
+            the argument
+        lr_scheduler_config : dict
+            lr_scheduler_config as defined by Pytorch lightning
+        """
+        self.conf.scheduler_fn = scheduler_fn
+        self.conf.scheduler_config = lr_scheduler_config
+
+    @override
+    def configure_optimizers(self) -> OptimizerConfig:
+        if self.conf.optimizer_fn is not None:
+            optimizer = self.conf.optimizer_fn(self.named_parameters())
+        else:
+            optimizer = optim.Adam(self.named_parameters(), lr=0.001)
+        lr_scheduler_config = (
+            self.conf.scheduler_config.copy()
+            if self.conf.scheduler_config is not None
+            else {"monitor": "train_loss"}
+        )
+        if self.conf.scheduler_fn is None:
+            lr_scheduler_config["scheduler"] = schedule.ReduceLROnPlateau(
+                optimizer=optimizer, patience=40
+            )
+        else:
+            lr_scheduler_config["scheduler"] = self.conf.scheduler_fn(optimizer)
+        return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
+
+
+class MultiModule(BaseNN):
     """MultiModule."""
 
     def __init__(
@@ -447,11 +539,9 @@ class MultiModule(L.LightningModule):
             n_classes_per_task
 
         """
-        super().__init__()
-        self.in_features: int = in_features
-        self.n_tasks: int = len(n_classes_per_task)
-        self.conf: ModuleConfig = ModuleConfig() if conf is None else conf
-        self.n_classes: Sequence[int] = n_classes_per_task
+        super().__init__(
+            in_features=in_features, n_classes_per_task=n_classes_per_task, conf=conf
+        )
         self._accs: nn.ModuleList | None = None
         self.supervised: bool = True
         if self.conf.record:
@@ -494,35 +584,10 @@ class MultiModule(L.LightningModule):
         """Return the module's ith outlayer"""
         raise NotImplementedError()
 
-    @classmethod
-    def new(
-        cls,
-        in_features: int,
-        n_classes_per_task: list[int],
-        conf: ModuleConfig | None = None,
-        **kwargs,
-    ):
-        return cls(in_features, n_classes_per_task, conf=conf, **kwargs)
-
     @override
     def forward(self, X):
         "Should return unnormalized logits. predict_proba returns probabilities"
         raise NotImplementedError()
-
-    def set_cache(
-        self, value: Literal["train_loss", "val_acc", "val_loss", "train_acc"]
-    ):
-        if value not in self.cache:
-            raise ValueError(f"Value to cache must be one of {self.cache.keys()}")
-        self.cache[value] = (True, [])
-
-    def _try_cache_to(self, target: str, value: Tensor) -> None:
-        """Record ``value`` to the cache if it has been set for recording"""
-        if self.cache[target][0]:
-            self.cache[target][1].append(value.detach())
-
-    def cache_clear(self, target) -> None:
-        self.cache[target][1].clear()
 
     def _calc_accuracy(
         self,
@@ -559,11 +624,6 @@ class MultiModule(L.LightningModule):
         if isinstance(proba, tuple):
             return tuple(p.detach() for p in proba)
         return proba.detach()
-
-    def maybe_scale(self, x):
-        if self.conf.scaler is not None:
-            return self.conf.scaler.transform(x)
-        return x
 
     @override
     def training_step(self, batch, batch_idx):
@@ -639,54 +699,7 @@ class MultiModule(L.LightningModule):
     def reset_parameters(self):
         raise NotImplementedError()
 
-    def register_optimizers(self, opt_fn: Callable):
-        """Specify the optimizer to use for this model
-
-        Parameters
-        ----------
-        opt_fn : Callable
-            returns a Pytorch-compatible optimizer when called with named_parameters()
-        """
-        self.conf.optimizer_fn = opt_fn
-
-    def register_schedulers(
-        self,
-        scheduler_fn: Callable | None = None,
-        lr_scheduler_config: None | dict = None,
-    ):
-        """Register a scheduler and/or scheduler config
-
-        Parameters
-        ----------
-        scheduler_fn : Callable
-            Function returning a Pytorch-compatible scheduler, taking the optimizer as
-            the argument
-        lr_scheduler_config : dict
-            lr_scheduler_config as defined by Pytorch lightning
-        """
-        self.conf.scheduler_fn = scheduler_fn
-        self.conf.scheduler_config = lr_scheduler_config
-
-    @override
-    def configure_optimizers(self) -> OptimizerConfig:
-        if self.conf.optimizer_fn is not None:
-            optimizer = self.conf.optimizer_fn(self.named_parameters())
-        else:
-            optimizer = optim.Adam(self.named_parameters(), lr=0.001)
-        lr_scheduler_config = (
-            self.conf.scheduler_config.copy()
-            if self.conf.scheduler_config is not None
-            else {"monitor": "train_loss"}
-        )
-        if self.conf.scheduler_fn is None:
-            lr_scheduler_config["scheduler"] = schedule.ReduceLROnPlateau(
-                optimizer=optimizer, patience=40
-            )
-        else:
-            lr_scheduler_config["scheduler"] = self.conf.scheduler_fn(optimizer)
-        return {"optimizer": optimizer, "lr_scheduler_config": lr_scheduler_config}
-
-    def criterion(self, y_pred, y_true, context: str | None = None):
+    def criterion(self, y_pred, y_true, context: str | None = None, **kwargs):
         """criterion.
 
         Parameters
