@@ -1144,3 +1144,24 @@ def xgb_complexity(model: XGBClassifier) -> pd.DataFrame:
         .loc[:, ["stat", "value"]]
     )
     return pd.concat([pd.DataFrame(stats), stat_df]).sort_values("stat")
+
+
+def train_test_from_yaml(
+    adata: ad.AnnData, spec: dict
+) -> tuple[ad.AnnData, ad.AnnData]:
+    """Subset adata into train, test sets. The parameters in the config are interpreted
+    as the specification for the TEST set. The train set is the inverse of that
+    """
+    test_masks = []
+    for obs, val_list in spec.items():
+        for value, match_type in val_list.items():
+            if match_type == "exact":
+                test_masks.append(adata.obs[obs] == value)
+            elif match_type == "contains":
+                test_masks.append(adata.obs[obs].str.contains(value))
+            else:
+                raise ValueError(f"`{match_type}` is an invalid match type!")
+    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks)
+    test = adata[test_mask, :]
+    train = adata[~test_mask, :]
+    return train, test

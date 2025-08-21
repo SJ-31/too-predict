@@ -285,7 +285,7 @@ def test_distillation():
     print(cv)
 
 
-test_distillation()
+# test_distillation()
 
 # %%
 
@@ -317,6 +317,8 @@ def test_holdout():
 
 result = test_holdout()
 
+t = result["target"]
+
 
 def test_cross_val():
     cv: pd.DataFrame = d_ev.cross_validate(
@@ -337,7 +339,7 @@ def test_cross_val():
     return cv
 
 
-cv = test_cross_val()
+# cv = test_cross_val()
 
 # %%
 
