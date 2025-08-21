@@ -12,9 +12,12 @@ import too_predict.imbalance as tb
 import too_predict.model as tm
 import too_predict.r_utils as ru
 import too_predict.utils as ut
+import torch
+from pyhere import here
 from too_predict.transformer import Transformer
 
 # %%
+torch.set_default_dtype(torch.float32)
 
 #
 adata = ut.training_data_internal_test(minimal=True)
@@ -25,7 +28,7 @@ train, test = ut.train_test_split_ad(adata)
 
 y = "tumor_type"
 
-model = tm.PredBase(tm.XGBEstimator())
+model = tm.PredBase(tm.XGBEstimator(max_depth=1))
 result = te.train_test_wrapper(model, (train, test), y)
 
 
@@ -46,7 +49,9 @@ def test_sim_nb_block():
     counts = tcga.obs[y].value_counts()
     valid = counts[counts > 10]
     tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
-    balancer = tb.Balancer(method="nb_edgeR", blocking=True, sample_mus=False)
+    balancer = tb.Balancer(
+        method="nb_edgeR", blocking=True, sample_mus=False, sampling_strategy="none"
+    )
     new = balancer.fit_transform(tcga, y=y)
     result = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
@@ -94,7 +99,37 @@ def test_splatter():
     print(base, result)
 
 
+def test_cvae():
+    # tcga = adata[adata.obs["Project_ID"].str.contains("TCGA"), :]
+    # counts = tcga.obs[y].value_counts()
+    # valid = counts[counts > 10]
+    # tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
+
+    balancer = tb.Balancer(
+        method="cvae",
+        sampling_strategy="none",
+        trainer_kwargs={
+            "enable_checkpointing": False,
+            "max_epochs": 100,
+            "enable_progress_bar": False,
+        },
+        loader_kwargs={"batch_size": 20},
+        logger_kwargs={
+            "exp_name": "imb_cvae",
+            "platform": "tensorboard",
+            "save_dir": here("tests", "lightning_logs"),
+        },
+        n_latent=5,
+    )
+    trans = transformer.fit_transform(adata)
+    new = balancer.fit_transform(trans, y=y)
+    result = te.train_test_wrapper(model, (new, trans), y)
+    base = te.train_test_wrapper(model, (trans, trans), y)
+    print(base, result)
+    return new
+
+
+new = test_cvae()
 #
 # Pool the simulated samples together, grouping by the same label. Then sample
 # according to the specification
-targets = {"BRCA": 50, "UCEC": 40, "LGG": 60}

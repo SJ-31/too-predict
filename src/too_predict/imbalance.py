@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 import math
+from collections import Counter
 from typing import Callable, Literal
 
 import anndata as ad
@@ -11,6 +12,7 @@ import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scipy.stats as stats
+import sklearn.preprocessing as sp
 import torch
 from imblearn.over_sampling.base import BaseOverSampler
 from imblearn.under_sampling.base import BaseUnderSampler
@@ -45,6 +47,8 @@ IMBLEARN_METHODS: set = {
 }
 TORCH_METHODS: set = {"cvae"}
 
+# * Main class
+
 
 class Balancer:
     def __init__(
@@ -53,13 +57,21 @@ class Balancer:
         logger_kwargs: dict | None = None,
         loader_kwargs: dict | None = None,
         trainer_kwargs: dict | None = None,
+        sampling_strategy: Literal[
+            "minority", "not minority", "not majority", "all", "none"
+        ]
+        | None = "auto",
+        n: int | None = None,
         **kwargs,
     ) -> None:
         self.method: str = method
         self.label_col: str | None = None
         self.is_imblearn: bool = False
         self.is_torch: bool = False
+        self.n: int | None = n
+        self.sampling_strategy: str | None = sampling_strategy
         self.model: None | BaseOverSampler | BaseUnderSampler | BaseNN
+        self.encoders: dict[str, sp.LabelEncoder] | None = None
         self.trainer_kwargs: dict = ut.if_none(trainer_kwargs, {})
         self.logger_kwargs: dict | None = logger_kwargs
         self.loader_kwargs: dict = ut.if_none(loader_kwargs, {})
@@ -106,28 +118,25 @@ class Balancer:
         if model == "RandomUnderSampler":
             return ius.RandomUnderSampler(**kwargs)
 
-    def check_sampling_strategy(
+    def get_sampling_strategy(
         self,
         y,
         type: Literal["over-sampling", "under-sampling", "clean-sampling"],
-        strategy: Literal["minority", "not minority", "not majority", "all"]
-        | None = None,
-        n: int | None = None,
     ) -> dict:
-        if strategy is None and n is None:
-            raise ValueError("Either `n` or `strategy` must be provided!")
-        if strategy:
-            counts = check_sampling_strategy(
-                sampling_strategy=strategy, y=y, sampling_type=type
+        if self.sampling_strategy and self.sampling_strategy != "none":
+            counts: dict = check_sampling_strategy(
+                sampling_strategy=self.sampling_strategy,
+                y=y,
+                sampling_type=type,
             )
-            return counts
-        return {u: n for u in y.unique()}
+            return {k: v.item() for k, v in counts.items()}
+        elif self.sampling_strategy and self.sampling_strategy == "none":
+            return dict(Counter(y))
+        return {u: self.n for u in y.unique()}
 
     def empirical_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
-        group_counts = self.check_sampling_strategy(
-            y=adata.obs[self.label_col],
-            strategy=kwargs.pop("sampling_strategy", "auto"),
-            type="over-sampling",
+        group_counts = self.get_sampling_strategy(
+            y=adata.obs[self.label_col], type="over-sampling"
         )
         new, self.inv_ecdfs = empirical(
             adata=adata,
@@ -138,54 +147,52 @@ class Balancer:
         return new
 
     def nb_edgeR_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
-        if n := kwargs.pop("n", None):
-            return nb_edgeR(adata=adata, n=n, **kwargs)
-        group_counts = self.check_sampling_strategy(
-            y=adata.obs[self.label_col],
-            strategy=kwargs.pop("sampling_strategy", "auto"),
-            type="over-sampling",
+        if self.n is not None and self.sampling_strategy is None:
+            return nb_edgeR(adata=adata, n=self.n, **kwargs)
+        group_counts = self.get_sampling_strategy(
+            y=adata.obs[self.label_col], type="over-sampling"
         )
         if not kwargs.get("blocking", False):
             n = np.sum(list(group_counts.values()))
-            prop = {k: (v / n).item() for k, v in group_counts.items()}
-            return nb_edgeR(adata=adata, n=n.item(), targets=dict(prop), **kwargs)
+            prop = {k: (v / n) for k, v in group_counts.items()}
+            return nb_edgeR(adata=adata, n=n, targets=dict(prop), **kwargs)
         else:
             return nb_edgeR(adata=adata, targets=group_counts, **kwargs)
 
     def splatter_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
-        counts = self.check_sampling_strategy(
-            y=adata.obs[self.label_col],
-            strategy=kwargs.pop("sampling_strategy", "auto"),
-            type="over-sampling",
+        counts = self.get_sampling_strategy(
+            y=adata.obs[self.label_col], type="over-sampling"
         )
         return splatter_bulk(adata, y=self.label_col, targets=counts, **kwargs)
 
     def dirichlet_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
-        counts = self.check_sampling_strategy(
-            y=adata.obs[self.label_col],
-            strategy=kwargs.pop("sampling_strategy", "auto"),
-            type="over-sampling",
+        counts = self.get_sampling_strategy(
+            y=adata.obs[self.label_col], type="over-sampling"
         )
         _ = kwargs.pop("as_transform", None)
         return dirichlet_sim(adata, y=self.label_col, targets=counts, **kwargs)
+
+    def _fit_torch(self, adata: ad.AnnData, y="tumor_type", _=None):
+        n_features, n_classes = data_spec(adata, [y])
+        self.model = self._torch_model(self.method)(
+            in_features=n_features, n_classes_per_task=n_classes, **self.kwargs
+        )
+        if self.logger_kwargs is None:
+            self.trainer_kwargs["logger"] = None
+        else:
+            self.trainer_kwargs["logger"] = lightning_logger(**self.logger_kwargs)
+        trainer = L.Trainer(**self.trainer_kwargs)
+        adset = AnnDataset(adata, to_encode=[y] if isinstance(y, str) else y)
+        self.encoders = adset.encoders
+        loader = DataLoader(adset, **self.loader_kwargs)
+        trainer.fit(model=self.model, train_dataloaders=loader)
 
     def fit(self, adata: ad.AnnData, y="tumor_type", _=None) -> None:
         self.label_col = y
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
         elif self.is_torch:
-            n_features, n_classes = data_spec(adata, [y])
-            self.model = self._torch_model()(
-                in_features=n_features, n_classes_per_task=n_classes
-            )
-            if self.logger_kwargs is None:
-                self.trainer_kwargs["logger"] = None
-            else:
-                self.trainer_kwargs["logger"] = lightning_logger(**self.logger_kwargs)
-            trainer = L.Trainer(**self.trainer_kwargs)
-            adset = AnnDataset(adata, to_encode=[y] if isinstance(y, str) else y)
-            loader = DataLoader(adset, **self.loader_kwargs)
-            trainer.fit(train_dataloaders=loader)
+            self._fit_torch(adata=adata, y=y, _=_)
         elif self.method == "nb_edgeR":
             # TODO: you could rewrite this so that the params are saved as python
             # objects. but then would need to do the simulation in python and only
@@ -212,6 +219,18 @@ class Balancer:
             )
             new = AnnData(
                 X=resampled_x, var=adata.var, obs=pd.DataFrame({self.label_col: y})
+            )
+        elif self.is_torch:
+            new_counts = self.get_sampling_strategy(
+                y=adata.obs[self.label_col], type="over-sampling"
+            )
+            labels = [k for k, count in new_counts.items() for _ in range(count)]
+            labels = torch.as_tensor(
+                self.encoders[self.label_col].transform(labels).reshape((-1, 1))
+            )
+            new = self.model.sample_as(labels, "anndata", label_names=[self.label_col])
+            new.obs[self.label_col] = self.encoders[self.label_col].inverse_transform(
+                new.obs[self.label_col]
             )
         elif self.method == "nb_edgeR":
             new = self.nb_edgeR_wrapper(adata, **self.kwargs)
@@ -256,7 +275,7 @@ def nb_edgeR(
         for group, count in targets.items():
             current = adata[adata.obs[y] == group, :]
             ru.adata_to_r(current, "dge", object="dge")
-            ro.globalenv["n"] = count.item()
+            ro.globalenv["n"] = count
             groups.extend([group] * count)
             ro.r("sim <- nb_simulate(dge, n = n, sample_mus = sample_mus)")
             mats.append(np.transpose(ru.np_from_r(ro.r("sim$counts"))))
@@ -436,7 +455,7 @@ def splatter_bulk(adata: ad.AnnData, y: str, targets: dict) -> ad.AnnData:
     for group, count in targets.items():
         cur = adata[adata.obs[y] == group, :]
         ru.adata_to_r(cur, "sce", "sce")
-        ro.globalenv["count"] = count.item()
+        ro.globalenv["count"] = count
         ro.r("params <- splatter::splatEstimate(sce)")
         ro.r("sim <- splatter::splatSimulate(params, batchCells = count)")
         mat = ru.np_from_r(ro.r("assays(sim)$counts")).transpose()
