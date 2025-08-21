@@ -1,8 +1,10 @@
 #!/usr/bin/env ipython
 
+from functools import reduce
 from pathlib import Path
 
 import anndata as ad
+import lightning as L
 import pandas as pd
 import too_predict._train_utils as tt
 import too_predict.deep.torch_utils as d_ut

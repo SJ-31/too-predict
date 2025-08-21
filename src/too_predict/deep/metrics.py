@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 import lightning as L
 import numpy as np
+import pandas as pd
 import too_predict.deep.torch_utils as d_ut
 import torch
 import torch.nn as nn
@@ -50,6 +51,17 @@ def multitask_acc(
             preds=pred, target=y, num_classes=n_classes[i], task="multiclass"
         ).item()
     return result
+
+
+def multitask_metrics2df(metrics: dict) -> pd.DataFrame:
+    to_df = {"task": [], "metric": [], "value": []}
+    for task, dct in metrics.items():
+        for metric, value in dct.items():
+            if metric != "cm":
+                to_df["task"].append(task)
+                to_df["metric"].append(metric)
+                to_df["value"].append(value.item())
+    return pd.DataFrame(to_df)
 
 
 def multitask_all_metrics(

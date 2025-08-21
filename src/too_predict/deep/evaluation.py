@@ -87,81 +87,101 @@ def train_test_split_torch(
 
 def train_test_wrapper_torch(
     module_cls: d_ut.MultiModule,
-    maybe_split: Callable | Sequence,
+    train_test: Sequence[Dataset],
     to_encode: Sequence[str] | str,
     n_classes: Sequence[int],
     in_features: int,
     module_kwargs: dict | None = None,
     trainer_kwargs: dict | None = None,
     loader_kwargs: dict | None = None,
-    adata: ad.AnnData | None = None,
     logger_fn: None | Callable = None,
-    validation: ad.AnnData | None = None,
+    validation: Dataset | None = None,
     module_config: d_ut.ModuleConfig | None = None,
     scaler: d_ut.TorchScaler | None = None,
     device: str = "cpu",
-    pre_split: bool = True,
     grad_accumulation: bool = False,
     grad_accumulation_batch_size: int = 256,
     minimal: bool = False,
     set_label: str = "model",
-    save_split_path: Path | None = None,
 ):
+    """
+    Parameters
+    ----------
+    module_cls : d_ut.MultiModule
+        A model class compatible with PyTorch Lightning that provides a
+        `.new()` constructor for instantiation.
+    maybe_split : Callable or Sequence
+        If `pre_split` is False, either a callable that splits `adata`
+        into train/test sets or a sequence of index arrays.
+        If `pre_split` is True, directly provide `(train, test)` `AnnData`
+        objects.
+    to_encode : str or sequence of str
+        Names of observation columns in `AnnData` to be used as labels
+        for supervised learning tasks.
+    n_classes : sequence of int
+        Number of classes per task, matching the length of `to_encode`.
+    in_features : int
+        Number of input features for the model.
+    module_kwargs : dict, optional
+        Additional keyword arguments passed to `module_cls.new()`.
+    trainer_kwargs : dict, optional
+        Keyword arguments forwarded to `pytorch_lightning.Trainer`.
+    loader_kwargs : dict, optional
+        Keyword arguments forwarded to `torch.utils.data.DataLoader`.
+    logger_fn : callable, optional
+        Callable that accepts a model label and returns a logger instance.
+    validation : ad.AnnData, optional
+        Validation dataset, or if `pre_split=False`, fraction for
+        splitting validation from test set.
+    module_config : d_ut.ModuleConfig, optional
+        Configuration object for the model.
+    scaler : d_ut.TorchScaler, optional
+        Optional feature scaler applied before training.
+    device : str, default="cpu"
+        Device string (`"cpu"`, `"cuda"`, etc.).
+    grad_accumulation : bool, default=False
+        Whether to use gradient accumulation during training.
+    grad_accumulation_batch_size : int, default=256
+        Effective batch size if gradient accumulation is enabled.
+    minimal : bool, default=False
+        If True, return only train/test accuracies. If False, return a
+        full set of metrics.
+    set_label : str, default="model"
+        Label used for saving outputs and logging.
+
+    Returns
+    -------
+    dict
+        If `minimal=False`, returns a dictionary of multitask evaluation
+        metrics (`multitask_all_metrics`).
+    (float, float)
+        If `minimal=True`, returns `(test_accuracy, train_accuracy)`.
+
+    Notes
+    -----
+    - Requires `pytorch_lightning`, `torch`, and `anndata`.
+    - Splits can be saved to disk for reproducibility if `save_split_path`
+      is provided.
+    - For multitask learning, multiple labels in `to_encode` are supported
+    """
     loader_kwargs = ut.if_none(loader_kwargs, {})
     module_config = d_ut.ModuleConfig() if module_config is None else module_config
     module_kwargs = ut.if_none(module_kwargs, {})
-    if save_split_path is not None:
-        root = save_split_path.joinpath(set_label)
-        root.mkdir(exist_ok=True)
-        trainer_kwargs["default_root_dir"] = root
     if logger_fn is not None:
         trainer_kwargs["logger"] = logger_fn(set_label)
-    if not pre_split:
-        if isinstance(maybe_split, Callable):
-            x_train, x_test = maybe_split(adata)
-        elif isinstance(maybe_split, Sequence):
-            x_train = adata[maybe_split[0], :]
-            x_test = adata[maybe_split[1], :]
-
-    elif isinstance(maybe_split, Sequence):
-        x_train, x_test = maybe_split
-    v_adata: ad.AnnData | None
-    if validation is not None:
-        x_test, v_adata = ut.train_test_split_ad(x_test, test_size=validation)
-    else:
-        v_adata = None
-    v_loader = (
-        DataLoader(d_ut.AnnDataset(v_adata, to_encode=to_encode, device=device))
-        if isinstance(v_adata, ad.AnnData)
-        else None
-    )
-    if save_split_path is not None:
-        x_train.obs.to_csv(
-            save_split_path.joinpath(f"{set_label}_train_obs.csv"), index=False
-        )
-        x_test.obs.to_csv(
-            save_split_path.joinpath(f"{set_label}_test_obs.csv"), index=False
-        )
-        if validation is not None:
-            v_adata.obs.to_csv(
-                save_split_path.joinpath(f"{set_label}_validation_obs.csv"),
-                index=False,
-            )
-    train_dset: d_ut.AnnDataset = d_ut.AnnDataset(
-        x_train, to_encode=to_encode, device=device
-    )
-    updated_kwargs, updated_train_kwargs = d_ut.update_batch_strategy(
+    x_train, x_test = train_test
+    v_loader = DataLoader(validation) if validation is not None else None
+    updated_loader_kwargs, updated_train_kwargs = d_ut.update_batch_strategy(
         loader_kwargs=loader_kwargs,
-        dataset=train_dset,
+        dataset=x_train,
         default_batch_size=512,
         trainer_kwargs=trainer_kwargs,
         grad_accumulation=grad_accumulation,
         grad_accumulation_batch_size=grad_accumulation_batch_size,
     )
     trainer = L.Trainer(**updated_train_kwargs)
-    test_dset = d_ut.AnnDataset(x_test, to_encode=to_encode, device=device)
-    train_l = DataLoader(train_dset, **updated_kwargs)
-    x_test_tensor, y_true = test_dset[:]
+    train_l = DataLoader(x_train, **updated_loader_kwargs)
+    x_test_tensor, y_true = x_test[:]
     if scaler is not None:
         scaler.fit(train_l.dataset[:][0])
         module_config.scaler = scaler
@@ -173,6 +193,8 @@ def train_test_wrapper_torch(
             conf=module_config,
             **module_kwargs,
         )
+        if isinstance(x_train, TeacherResponse):
+            use_kd_criterion(model)
     trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=v_loader)
     model.to(device)
     if not minimal:
@@ -187,11 +209,11 @@ def train_test_wrapper_torch(
 
     acc_kwargs = {"n_classes": n_classes, "task_names": to_encode}
     test_acc = multitask_acc(
-        y_true=y_true, predictions=model.predict_step(test_dset[:]), **acc_kwargs
+        y_true=y_true, predictions=model.predict_step(x_test[:]), **acc_kwargs
     )
     train_acc = multitask_acc(
-        y_true=train_dset[:][1],
-        predictions=model.predict_step(train_dset[:]),
+        y_true=x_train[:][1],
+        predictions=model.predict_step(x_train[:]),
         **acc_kwargs,
     )
     return test_acc, train_acc
@@ -236,14 +258,14 @@ def holdout(
     result: dict = {}
     if split_fns is None and split_masks is None:
         iter_over = data
+    elif split_fns:
+        iter_over = {k: split(data) for k, split in split_fns.items()}
     else:
-        splitters: dict = split_fns if split_fns is not None else split_masks
-        iter_over = splitters
+        iter_over = {k: (data[s[0], :], data[s[1], :]) for k, s in split_masks.items()}
     for set_label, val in iter_over.items():
         result[set_label] = train_test_wrapper_torch(
             set_label=set_label,
-            pre_split=pre_split,
-            maybe_split=val,
+            train_test=val,
             adata=data if not pre_split else None,
             **kwargs,
         )
