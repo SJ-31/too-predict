@@ -58,7 +58,7 @@ class Balancer:
         loader_kwargs: dict | None = None,
         trainer_kwargs: dict | None = None,
         sampling_strategy: Literal[
-            "minority", "not minority", "not majority", "all", "none"
+            "minority", "not minority", "not majority", "all", "none", "auto"
         ]
         | None = "auto",
         n: int | None = None,
