@@ -861,6 +861,45 @@ def get_callback_fn(name: str, config: dict | None = None) -> Callable:
     return make
 
 
+def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.Pipeline:
+    spec = config.get("config", {})
+    params = config.get("params", {})
+
+    if f := spec.get("filter", "variance_threshold"):
+        filter = Filter(
+            features=spec.get("feature_set", None),
+            method=f,
+            feature_col=feature_col,
+            inplace=False,
+        )
+    else:
+        filter = None
+    if t := spec.get("transform", "clr"):
+        transform = Transformer(
+            method=t,
+            impute_fn=spec.get("imputation", "plus_one"),
+            inplace=False,
+            make_sparse=False,
+        )
+    else:
+        transform = None
+
+    filter_before = config.get("filter_before", False)
+    if filter is None and transform is None:
+        preprocessing = []
+    elif filter_before:
+        preprocessing = [filter, transform]
+    else:
+        preprocessing = [transform, filter]
+
+    m = spec.get("model", "XGBoost")
+    if m == "XGBoost":
+        model = tm.PredBase(tm.XGBClassifier(**params))
+    if with_predictor:
+        return tm.Pipeline(steps=preprocessing, predictor=model)
+    return tm.Pipeline(steps=preprocessing)
+
+
 # * Snakemake
 
 

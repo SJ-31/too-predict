@@ -40,44 +40,6 @@ def write_results(results, result_dir, label_col, cm_prefix: str = ""):
                 )
 
 
-def make_pipeline(config) -> tm.Pipeline:
-    spec = config.get("config", {})
-    params = config.get("params", {})
-
-    #
-    if f := spec.get("filter", "variance_threshold"):
-        filter = fil.Filter(
-            features=spec.get("feature_set", None),
-            method=f,
-            feature_col=S_CONFIG["filter"]["feature_col"],
-            inplace=False,
-        )
-    else:
-        filter = None
-    if t := spec.get("transform", "clr"):
-        transform = Transformer(
-            method=t,
-            impute_fn=spec.get("imputation", "plus_one"),
-            inplace=False,
-            make_sparse=False,
-        )
-    else:
-        transform = None
-
-    filter_before = config.get("filter_before", False)
-    if filter is None and transform is None:
-        preprocessing = []
-    elif filter_before:
-        preprocessing = [filter, transform]
-    else:
-        preprocessing = [transform, filter]
-
-    m = spec.get("model", "XGBoost")
-    if m == "XGBoost":
-        model = tm.PredBase(tm.XGBClassifier(**params))
-    return tm.Pipeline(steps=preprocessing, predictor=model)
-
-
 # * Cross validation
 if smk.rule == "cross_validate":
     cv_kwargs = smk.config["shallow"]["cv"]
@@ -86,7 +48,7 @@ if smk.rule == "cross_validate":
         for model, config in smk.params["models"]["shallow"].items():
             outdir: Path = Path(smk.params["outdir"].joinpath(model))
             outdir.mkdir(exist_ok=True)
-            pipeline = make_pipeline(config)
+            pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
             result = te.cross_validate(
                 model=pipeline,
                 adata=adata,
@@ -100,14 +62,14 @@ if smk.rule == "cross_validate":
 elif smk.rule == "holdout":
     adata = get_adata()
     holdout_dct = smk.config["shallow"]["holdout"]
-    for model_name, config in smk.params["models"]:
+    for model_name, m_config in smk.params["models"]:
         outdir = Path(smk.params["outdir"].joinpath(model_name))
         outdir.mkdir(exist_ok=True)
-        pipeline: tm.Pipeline = make_pipeline(config)
-        for split_name, config in holdout_dct["splits"].items():
+        pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
+        for split_name, split_config in holdout_dct["splits"].items():
             cur_outdir = outdir.joinpath(split_name)
             cur_outdir.mkdir(exist_ok=True)
-            train, test = train_test_from_yaml(adata=adata, config=config)
+            train, test = ut.train_test_from_yaml(adata=adata, config=split_config)
             result = te.holdout(
                 pipeline_fn=lambda: pipeline,
                 data={split_name: (train, test)},
