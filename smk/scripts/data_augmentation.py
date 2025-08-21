@@ -14,7 +14,7 @@ from snakemake.script import snakemake as smk
 from too_predict._train_utils import default_filter_transform, get_model_fn
 from too_predict.deep.nns import Disyak
 from too_predict.evaluation import train_test_wrapper
-from too_predict.imbalance import Balancer
+from too_predict.imbalance import TORCH_METHODS, Balancer
 
 DA_CONFIG: dict = smk.config["data_augmentation"]
 DL_CONFIG: dict = smk.config["dl"]
@@ -77,6 +77,7 @@ def evaluate(name: str, train: ad.AnnData, test, validation):
 if smk.rule == "generate_datasets":
     subsets = []
     storage: Path = Path(smk.params["store"])
+    result_dir: Path = Path(smk.params["result_dir"])
     if TEST:
         adata = ut.training_data_internal_test()
     else:
@@ -104,8 +105,30 @@ if smk.rule == "generate_datasets":
                 conf is not None and not conf.get("skip", True)
             ):
                 continue
-            params: dict = ut.if_none(ut.if_none(conf, {}).get("params", {}), {})
-            balancer = Balancer(method, **params)
+            if method in TORCH_METHODS:
+                dl_config: dict = smk.config["dl"]
+                trainer_kwargs = dl_config["trainer"]
+                loader_kwargs = dl_config["dataloader"]
+                logger_kwargs = {
+                    "exp_name": f"{method}_log",
+                    "platform": "tensorboard",
+                    "save_dir": result_dir.joinpath(subset_name),
+                }
+            else:
+                trainer_kwargs = None
+                loader_kwargs = None
+                logger_kwargs = None
+            conf = ut.if_none(conf, {})
+            params: dict = ut.if_none(conf.get("params", {}), {})
+            balancer = Balancer(
+                method,
+                trainer_kwargs=trainer_kwargs,
+                logger_kwargs=logger_kwargs,
+                loader_kwargs=loader_kwargs,
+                sampling_strategy=conf.get("sampling_strategy", "auto"),
+                n=conf.get("n", None),
+                **params,
+            )
             augmented = balancer.fit_transform(adata, y=LABEL_COL)
             augmented.write_h5ad(outpath.joinpath(f"{method}_train.h5ad"))
 
