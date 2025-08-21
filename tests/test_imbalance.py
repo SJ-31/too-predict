@@ -31,9 +31,12 @@ result = te.train_test_wrapper(model, (train, test), y)
 
 def test_sim_nb():
     tcga = adata[adata.obs["Project_ID"].str.contains("TCGA"), :]
-    balancer = tb.Balancer(method="nb_edgeR")
+    counts = tcga.obs[y].value_counts()
+    valid = counts[counts > 10]
+    tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
+    balancer = tb.Balancer(method="nb_edgeR", sample_mus=False, blocking=False)
+    # Seems to do better without sampling, and instead taking the mean
     new = balancer.fit_transform(tcga, y=y)
-    print(new.X)
     result = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
@@ -43,12 +46,13 @@ def test_sim_nb_block():
     counts = tcga.obs[y].value_counts()
     valid = counts[counts > 10]
     tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
-    balancer = tb.Balancer(method="nb_edgeR", blocking=True)
+    balancer = tb.Balancer(method="nb_edgeR", blocking=True, sample_mus=False)
     new = balancer.fit_transform(tcga, y=y)
-    print(new.X)
     result = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
+
+test_sim_nb_block()
 
 # TODO: you need to make this as good as the original
 

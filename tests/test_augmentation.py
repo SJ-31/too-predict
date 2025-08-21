@@ -78,11 +78,11 @@ def test_cvae():
             save_dir=here("tests", "lightning_logs"),
         ),
     )
-    model = d_au.cVAE(in_features=n_features, n_classes_per_task=n_classes)
+    model = d_au.cVAE(in_features=n_features, n_classes_per_task=n_classes, n_latent=5)
     trainer.fit(model, train_dataloaders=DataLoader(adset, batch_size=20))
-    generated = model.sample_to_dataset(labels=adset[:][1])
+    generated = model.sample_as(labels=adset[:][1])
     base_perf(DataLoader(generated), DataLoader(adset))
     return model
 
 
-result = test_cvae()
+model = test_cvae()

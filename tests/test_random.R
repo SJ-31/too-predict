@@ -30,11 +30,3 @@ colnames(obj) <- rownames(adata$obs)
 rownames(obj) <- rownames(adata$var)
 
 mm <- model.matrix(~ 0 + tumor_type, data = adata$obs)
-
-adata$X <- as.matrix(adata$X)
-sce <- zellkonverter::AnnData2SCE(adata)
-
-library(splatter)
-
-params <- splatEstimate(sce)
-sim <- splatSimulate(params, batchCells = 100)
