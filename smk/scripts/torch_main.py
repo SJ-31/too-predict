@@ -12,13 +12,21 @@ import too_predict.utils as ut
 import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as schedule
+import yaml
 from sklearn.model_selection import KFold
 from too_predict._train_utils import get_model_fn, smk_callbacks
 from too_predict.deep.distillation import TeacherResponse
-from too_predict.deep.evaluation import cross_validate
-from too_predict.deep.metrics import multitask_acc
+from too_predict.deep.evaluation import (
+    cross_validate,
+    train_test_split_torch,
+    train_test_wrapper_torch,
+)
+from too_predict.deep.metrics import (
+    multitask_acc,
+    multitask_metrics2df,
+)
 from too_predict.deep.nns import Baseline
-from torch.utils.data import Subset
+from torch.utils.data import DataLoader, Subset
 
 try:
     from snakemake.script import snakemake as smk
@@ -33,6 +41,8 @@ DL_CONFIG = smk.config["dl"]
 TEST: bool = smk.config["test"]
 N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
 BASELINE_KWARGS = {"max_depth": 2}
+DEVICE = "cpu" if TEST else DL_CONFIG["device"]
+ROUTINE = "cv" if smk.config["do_cv"] and not smk.config["do_holdout"] else "holdout"
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":
     torch.set_float32_matmul_precision(mlp)
@@ -51,30 +61,9 @@ def get_scheduler(optimizer):
     return schedule.ReduceLROnPlateau(optimizer, **DL_CONFIG["schedule"])
 
 
-def cross_val(in_file: str, distillation: bool = False):
-    adata = ad.read_h5ad(in_file, backed=True)
-    model = Path(in_file).stem
-    model_kwargs = MODELS[model].get("params", {})
-    model_cls = get_model_fn(model)
-    n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
-    train, valid = ut.train_test_split_ad(
-        adata, test_size=0.1, random_state=ut.RANDOM_STATE
-    )
-    train_set = d_ut.AnnDataset(
-        train, to_encode=LABELS, device="cpu" if TEST else DL_CONFIG["device"]
-    )
-    valid_set = d_ut.AnnDataset(
-        valid, to_encode=LABELS, device="cpu" if TEST else DL_CONFIG["device"]
-    )
-    if distillation:
-        baseline = Baseline(
-            in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
-        )
-        train_set = TeacherResponse(data=train_set, teacher=baseline)
-        valid_set = TeacherResponse(data=valid_set, teacher=baseline, is_fitted=True)
-        outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
-    else:
-        outdir = Path(smk.params["outdir"]).joinpath(model)
+def get_kwargs(model_name):
+    model_kwargs = MODELS[model_name].get("params", {})
+    model_cls = get_model_fn(model_name)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
     if TEST:
@@ -87,24 +76,106 @@ def cross_val(in_file: str, distillation: bool = False):
         record_norm=smk.config.get("record_norm", True),
         **MODELS[model].get("s_params", {}),
     )
+    return {
+        "model_class": model_cls,
+        "model_kwargs": model_kwargs,
+        "mconfig": mconfig,
+        "trainer_kwargs": trainer_kwargs,
+    }
+
+
+def holdout(file, distillation: bool = False):
+    outdir = Path(smk.params["outdir"])
+    train_path = Path(file)
+    split_name = train_path.stem.replace("_train.h5ad", "")
+    with open(train_path.parent.joinpath(f"{split_name}_spec.yaml"), "r") as f:
+        tmp = yaml.safe_load(f)
+        n_features = tmp["n_features"]
+        n_classes = tmp["n_classes"]
+    test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
+    cur_outdir = outdir.joinpath(split_name)
+    train = d_ut.AnnDataset(
+        ad.read_h5ad(train_path, backed=True), to_encode=LABELS, device=DEVICE
+    )
+    train, valid = train_test_split_torch(
+        train, generator=torch.Generator().manual_seed(smk.config["random_state"])
+    )
+    if distillation:
+        baseline = Baseline(
+            in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
+        )
+        train = TeacherResponse(data=train, teacher=baseline)
+        valid = TeacherResponse(data=valid, teacher=baseline, is_fitted=True)
+        outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
+    else:
+        outdir = Path(smk.params["outdir"]).joinpath(model)
+    test = d_ut.AnnDataset(
+        ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
+    )
+    for model_name in smk.params["models"]:
+        output = cur_outdir.joinpath(f"{model_name}.csv")
+        if not output.exists():
+            kwargs = get_kwargs(model_name)
+            trainer_kwargs: dict = kwargs["trainer_kwargs"]
+            trainer_kwargs["callbacks"] = smk_callbacks(DL_CONFIG)
+            result = train_test_wrapper_torch(
+                module_cls=kwargs["model_class"],
+                trainer_kwargs=trainer_kwargs,
+                device=DEVICE,
+                train_test=(train, test),
+                to_encode=LABELS,
+                validation=valid,
+                n_classes=n_classes,
+                in_features=n_features,
+                logger_fn=lambda x: d_ut.lightning_logger(
+                    x,
+                    platform="tensorboard",
+                    save_dir=cur_outdir.joinpath(f"{model_name}_tensorboard"),
+                ),
+                module_config=kwargs["mconfig"],
+                set_label=model_name,
+            )
+            df = multitask_metrics2df(result)
+            df.to_csv(output)
+
+
+def cross_val(in_file: str, distillation: bool = False):
+    adata = ad.read_h5ad(in_file, backed=True)
+    model = Path(in_file).stem
+    n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
+    train, valid = ut.train_test_split_ad(
+        adata, test_size=0.1, random_state=ut.RANDOM_STATE
+    )
+    train_set = d_ut.AnnDataset(train, to_encode=LABELS, device=DEVICE)
+    valid_set = d_ut.AnnDataset(valid, to_encode=LABELS, device=DEVICE)
+    if distillation:
+        baseline = Baseline(
+            in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
+        )
+        train_set = TeacherResponse(data=train_set, teacher=baseline)
+        valid_set = TeacherResponse(data=valid_set, teacher=baseline, is_fitted=True)
+        outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
+    else:
+        outdir = Path(smk.params["outdir"]).joinpath(model)
+    kwargs = get_kwargs(model)
     dfs = []
     for i in range(N_REPEATS):
         cv: pd.DataFrame = cross_validate(
-            model_cls=model_cls,
-            model_kwargs=model_kwargs,
-            model_config=mconfig,
+            model_cls=kwargs["model_class"],
+            model_kwargs=kwargs["model_kwargs"],
+            model_config=kwargs["mconfig"],
             callbacks=smk_callbacks(DL_CONFIG),
             logger_fn=lambda x: d_ut.lightning_logger(
                 f"fold_{x}_repeat_{i}",
                 platform="tensorboard",
                 save_dir=outdir.joinpath("tensorboard"),
             ),
-            trainer_kwargs=trainer_kwargs,
+            trainer_kwargs=kwargs["trainer_kwargs"],
             adset=train_set,
             in_features=n_features,
             n_classes=n_classes,
             validation=valid_set,
-            device=DL_CONFIG["device"],
+            device=DEVICE,
             **DL_CONFIG["cv"],
         )
         cv.loc[:, "repeat"] = i
@@ -112,16 +183,22 @@ def cross_val(in_file: str, distillation: bool = False):
     pd.concat(dfs).to_csv(outdir.joinpath("cv_results.csv"), index=False)
 
 
-if smk.rule == "preprocess":
+# * Snakemake rules
+# ** Preprocess for CV
+if smk.rule == "preprocess" and ROUTINE == "cv":
     if TEST:
         adata = ut.training_data_internal_test(minimal=True)
     else:
         adata = ut.training_data_internal()
     filter, transform = tt.default_filter_transform(smk.config)
+    masks = []
     for col, allowed in smk.config.get("obs_filters", {}).items():
         if allowed:
             print(f"Only allowing {adata}['{col}'] in {allowed}")
-            adata = adata[adata[col].isin(allowed), :]
+            masks.append(adata[col].isin(allowed))
+    if masks:
+        mask = reduce(lambda x, y: x | y, masks)
+        adata = adata[mask, :]
     for model in smk.output:
         if Path(model).exists():
             continue
@@ -133,15 +210,67 @@ if smk.rule == "preprocess":
         if spec.get("transform"):
             cur = transform.fit_transform(cur)
         cur.write_h5ad(model)
+# ** Preprocess for holdout
+if smk.rule == "preprocess" and ROUTINE == "holdout":
+    config = smk.config["dl"]["holdout"]
+
+# ** Cross validate
 if smk.rule == "cross_validate":
     for f in smk.input:
         if "baseline.h5ad" not in f:
             cross_val(f)
-if smk.rule == "distillation":
+if smk.rule == "distillation" and ROUTINE == "cv":
     for f in smk.input:
         if "baseline.h5ad" not in f:
             cross_val(f, distillation=True)
-if smk.rule == "baseline":
+# ** Holdout
+if smk.rule == "holdout":
+    outdir = Path(smk.params["outdir"])
+    for f in smk.input:
+        train_path = Path(f)
+        split_name = train_path.stem.replace("_train.h5ad", "")
+        test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
+        cur_outdir = outdir.joinpath(split_name)
+        train = d_ut.AnnDataset(
+            ad.read_h5ad(train_path, backed=True), to_encode=LABELS, device=DEVICE
+        )
+        train, valid = ut.train_test_split_ad(train, random_state=ut.RANDOM_STATE)
+        test = d_ut.AnnDataset(
+            ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
+        )
+        loader_kwargs = DL_CONFIG["dataloader"]
+        train_l = DataLoader(train, **loader_kwargs)
+        val_l = DataLoader(valid, **loader_kwargs)
+
+        for model_name in smk.params["models"]:
+            output = cur_outdir.joinpath(f"{model_name}.csv")
+            if not output.exists():
+                n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
+                kwargs = get_kwargs(model_name)
+                trainer_kwargs: dict = kwargs["trainer_kwargs"]
+                trainer_kwargs["callbacks"] = smk_callbacks(DL_CONFIG)
+                result = train_test_wrapper_torch(
+                    module_cls=kwargs["model_class"],
+                    trainer_kwargs=trainer_kwargs,
+                    device=DEVICE,
+                    train_test=(train, test),
+                    to_encode=LABELS,
+                    n_classes=n_classes,
+                    in_features=n_features,
+                    logger_fn=lambda x: d_ut.lightning_logger(
+                        x,
+                        platform="tensorboard",
+                        save_dir=cur_outdir.joinpath(f"{model_name}_tensorboard"),
+                    ),
+                    module_config=kwargs["mconfig"],
+                    set_label=model_name,
+                )
+                df = multitask_metrics2df(result)
+                df.to_csv(output)
+
+
+# ** Baseline CV
+if smk.rule == "baseline" and smk.config["do_cv"]:
     baseline = [x for x in smk.input if "baseline" in str(x)][0]
     batch_size = DL_CONFIG["cv"]["batch_size"]
     adata = ad.read_h5ad(baseline, backed=True)
