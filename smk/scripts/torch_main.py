@@ -23,10 +23,11 @@ from too_predict.deep.evaluation import (
 )
 from too_predict.deep.metrics import (
     multitask_acc,
+    multitask_all_metrics,
     multitask_metrics2df,
 )
 from too_predict.deep.nns import Baseline
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 
 try:
     from snakemake.script import snakemake as smk
@@ -84,6 +85,20 @@ def get_kwargs(model_name):
     }
 
 
+def baseline_eval(train: Dataset, test: Dataset, n_features, n_classes, outdir: Path):
+    base = Baseline(n_features, n_classes, **BASELINE_KWARGS)
+    base.fit(train)
+    scores = base.predict_proba(test[:][0])
+    metrics = multitask_all_metrics(
+        y_true=test[:][1],
+        scores=scores,
+        task_names=LABELS,
+        n_classes=n_classes,
+    )
+    df = multitask_metrics2df(metrics)
+    df.to_csv(outdir.joinpath("baseline.csv"), index=False)
+
+
 def holdout(file, distillation: bool = False):
     outdir = Path(smk.params["outdir"])
     train_path = Path(file)
@@ -100,20 +115,21 @@ def holdout(file, distillation: bool = False):
     train, valid = train_test_split_torch(
         train, generator=torch.Generator().manual_seed(smk.config["random_state"])
     )
+    baseline_eval(train, test, n_features, n_classes=n_classes, outdir=cur_outdir)
     if distillation:
         baseline = Baseline(
             in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
         )
         train = TeacherResponse(data=train, teacher=baseline)
         valid = TeacherResponse(data=valid, teacher=baseline, is_fitted=True)
-        outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
-    else:
-        outdir = Path(smk.params["outdir"]).joinpath(model)
     test = d_ut.AnnDataset(
         ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
     )
     for model_name in smk.params["models"]:
-        output = cur_outdir.joinpath(f"{model_name}.csv")
+        if distillation:
+            output = cur_outdir.joinpath(f"{model_name}_kd.csv")
+        else:
+            output = cur_outdir.joinpath(f"{model_name}.csv")
         if not output.exists():
             kwargs = get_kwargs(model_name)
             trainer_kwargs: dict = kwargs["trainer_kwargs"]
@@ -214,6 +230,7 @@ if smk.rule == "preprocess" and ROUTINE == "cv":
 if smk.rule == "preprocess" and ROUTINE == "holdout":
     config = smk.config["dl"]["holdout"]
 
+
 # ** Cross validate
 if smk.rule == "cross_validate":
     for f in smk.input:
@@ -225,49 +242,11 @@ if smk.rule == "distillation" and ROUTINE == "cv":
             cross_val(f, distillation=True)
 # ** Holdout
 if smk.rule == "holdout":
-    outdir = Path(smk.params["outdir"])
     for f in smk.input:
-        train_path = Path(f)
-        split_name = train_path.stem.replace("_train.h5ad", "")
-        test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
-        cur_outdir = outdir.joinpath(split_name)
-        train = d_ut.AnnDataset(
-            ad.read_h5ad(train_path, backed=True), to_encode=LABELS, device=DEVICE
-        )
-        train, valid = ut.train_test_split_ad(train, random_state=ut.RANDOM_STATE)
-        test = d_ut.AnnDataset(
-            ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
-        )
-        loader_kwargs = DL_CONFIG["dataloader"]
-        train_l = DataLoader(train, **loader_kwargs)
-        val_l = DataLoader(valid, **loader_kwargs)
-
-        for model_name in smk.params["models"]:
-            output = cur_outdir.joinpath(f"{model_name}.csv")
-            if not output.exists():
-                n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
-                kwargs = get_kwargs(model_name)
-                trainer_kwargs: dict = kwargs["trainer_kwargs"]
-                trainer_kwargs["callbacks"] = smk_callbacks(DL_CONFIG)
-                result = train_test_wrapper_torch(
-                    module_cls=kwargs["model_class"],
-                    trainer_kwargs=trainer_kwargs,
-                    device=DEVICE,
-                    train_test=(train, test),
-                    to_encode=LABELS,
-                    n_classes=n_classes,
-                    in_features=n_features,
-                    logger_fn=lambda x: d_ut.lightning_logger(
-                        x,
-                        platform="tensorboard",
-                        save_dir=cur_outdir.joinpath(f"{model_name}_tensorboard"),
-                    ),
-                    module_config=kwargs["mconfig"],
-                    set_label=model_name,
-                )
-                df = multitask_metrics2df(result)
-                df.to_csv(output)
-
+        holdout(f, False)
+if smk.rule == "distillation" and ROUTINE == "holdout":
+    for f in smk.input:
+        holdout(f, True)
 
 # ** Baseline CV
 if smk.rule == "baseline" and smk.config["do_cv"]:
