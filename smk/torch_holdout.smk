@@ -4,7 +4,7 @@ import yaml
 include: "Snakefile"
 
 
-outpath = f"{OUT}/deep/holdout/{config.get('date', TODAY)}-{RUN}"
+outdir = f"{OUT}/deep/holdout/{config.get('date', TODAY)}-{RUN}"
 config["do_cv"] = False
 config["do_holdout"] = True
 
@@ -31,7 +31,7 @@ for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
         directory(d)
         for d in expand(
             "{out}/{splits}/{model}{s}_tensorboard",
-            out=outpath,
+            out=outdir,
             splits=split_names,
             s=suffix,
             model=models,
@@ -39,17 +39,16 @@ for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
     ]
     results[out_file_type] = expand(
         "{out}/{splits}/{model}{s}.csv",
-        out=outpath,
+        out=outdir,
         splits=split_names,
         s=suffix,
         model=models,
     )
 
-baseline_results = expand(
-    "{out}/{splits}/baseline.csv", out=outpath, splits=split_names
-)
+baseline_results = expand("{out}/{splits}/baseline.csv", out=outdir, splits=split_names)
+all_holdout = f"{outdir}/holdout_summary.csv"
 
-for_all = {"holdout": results["holdout"], "baseline": baselien_results}
+for_all = {"holdout": results["holdout"], "baseline": baseline_results}
 if config["do_kd"]:
     for_all["holdout_kd"] = results["holdout_kd"]
     print("Using knowledge distillation for training")
@@ -62,14 +61,16 @@ rule all:
 
 
 train_test_files = {
-    k: [f"{REPOS}/adatas/torch_holdout_{DATE}/{s}_{suffix}.h5ad" for s in split_names]
-    for k in ["train", "test"]
+    k: [f"{REPOS}/adatas/torch_holdout_{DATE}/{s}_{k}.{ext}" for s in split_names]
+    for k, ext in zip(["train", "test", "spec"], ["h5ad", "h5ad", "yaml"])
 }
 
 
 rule preprocess:
     output:
         **train_test_files,
+    params:
+        outdir=REPOS,
     script:
         "scripts/torch_main.py"
 
@@ -78,7 +79,7 @@ rule holdout:
     input:
         rules.preprocess.output.train,
     params:
-        outdir=outpath,
+        outdir=outdir,
         models=models,
         date=DATE,
     output:
@@ -90,9 +91,9 @@ rule holdout:
 
 rule distillation:
     input:
-        rules.preprocess.output.main,
+        rules.preprocess.output.train,
     params:
-        outdir=outpath,
+        outdir=outdir,
         date=DATE,
     output:
         holdout=results["holdout_kd"],
@@ -103,7 +104,7 @@ rule distillation:
 
 rule combine:
     input:
-        rules.cross_validate.output.holdout,
+        rules.holdout.output.holdout,
     output:
         all_holdout,
     run:
@@ -116,5 +117,5 @@ rule combine:
 
 
 onsuccess:
-    with open(f"{outpath}/snakemake_config.yaml", "w") as f:
+    with open(f"{outdir}/snakemake_config.yaml", "w") as f:
         yaml.safe_dump(config, f)

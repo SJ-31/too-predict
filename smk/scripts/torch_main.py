@@ -4,7 +4,6 @@ from functools import reduce
 from pathlib import Path
 
 import anndata as ad
-import lightning as L
 import pandas as pd
 import too_predict._train_utils as tt
 import too_predict.deep.torch_utils as d_ut
@@ -27,7 +26,8 @@ from too_predict.deep.metrics import (
     multitask_metrics2df,
 )
 from too_predict.deep.nns import Baseline
-from torch.utils.data import DataLoader, Dataset, Subset
+from too_predict.model import Pipeline
+from torch.utils.data import Dataset, Subset
 
 try:
     from snakemake.script import snakemake as smk
@@ -115,6 +115,10 @@ def holdout(file, distillation: bool = False):
     train, valid = train_test_split_torch(
         train, generator=torch.Generator().manual_seed(smk.config["random_state"])
     )
+
+    test = d_ut.AnnDataset(
+        ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
+    )
     baseline_eval(train, test, n_features, n_classes=n_classes, outdir=cur_outdir)
     if distillation:
         baseline = Baseline(
@@ -122,14 +126,9 @@ def holdout(file, distillation: bool = False):
         )
         train = TeacherResponse(data=train, teacher=baseline)
         valid = TeacherResponse(data=valid, teacher=baseline, is_fitted=True)
-    test = d_ut.AnnDataset(
-        ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
-    )
     for model_name in smk.params["models"]:
-        if distillation:
-            output = cur_outdir.joinpath(f"{model_name}_kd.csv")
-        else:
-            output = cur_outdir.joinpath(f"{model_name}.csv")
+        outname = f"{model_name}_kd" if distillation else model_name
+        output = cur_outdir.joinpath(f"{outname}.csv")
         if not output.exists():
             kwargs = get_kwargs(model_name)
             trainer_kwargs: dict = kwargs["trainer_kwargs"]
@@ -146,7 +145,7 @@ def holdout(file, distillation: bool = False):
                 logger_fn=lambda x: d_ut.lightning_logger(
                     x,
                     platform="tensorboard",
-                    save_dir=cur_outdir.joinpath(f"{model_name}_tensorboard"),
+                    save_dir=cur_outdir.joinpath(f"{outname}_tensorboard"),
                 ),
                 module_config=kwargs["mconfig"],
                 set_label=model_name,
@@ -199,14 +198,11 @@ def cross_val(in_file: str, distillation: bool = False):
     pd.concat(dfs).to_csv(outdir.joinpath("cv_results.csv"), index=False)
 
 
-# * Snakemake rules
-# ** Preprocess for CV
-if smk.rule == "preprocess" and ROUTINE == "cv":
+def get_adata():
     if TEST:
         adata = ut.training_data_internal_test(minimal=True)
     else:
         adata = ut.training_data_internal()
-    filter, transform = tt.default_filter_transform(smk.config)
     masks = []
     for col, allowed in smk.config.get("obs_filters", {}).items():
         if allowed:
@@ -215,6 +211,14 @@ if smk.rule == "preprocess" and ROUTINE == "cv":
     if masks:
         mask = reduce(lambda x, y: x | y, masks)
         adata = adata[mask, :]
+    return adata
+
+
+# * Snakemake rules
+# ** Preprocess for CV
+if smk.rule == "preprocess" and ROUTINE == "cv":
+    filter, transform = tt.default_filter_transform(smk.config)
+    adata = get_adata()
     for model in smk.output:
         if Path(model).exists():
             continue
@@ -228,8 +232,24 @@ if smk.rule == "preprocess" and ROUTINE == "cv":
         cur.write_h5ad(model)
 # ** Preprocess for holdout
 if smk.rule == "preprocess" and ROUTINE == "holdout":
-    config = smk.config["dl"]["holdout"]
+    adata = get_adata()
+    feature_col = smk.config["shallow"]["filter"]["feature_col"]
+    holdout_config = DL_CONFIG["holdout"]
+    outdir = Path(smk.params["outdir"])
+    for split_name, split_config in holdout_config["splits"].items():
+        train, test = ut.train_test_from_yaml(adata=adata, config=split_config["spec"])
+        pp_spec = split_config.get("pipeline", "clr_edgeR_old")
+        preprocessing: Pipeline = tt.make_pipeline(
+            pp_spec, feature_col=feature_col, with_predictor=False
+        )
+        n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
+        train = preprocessing.fit_transform(train)
+        test = preprocessing.transform(test)
 
+        train.write_h5ad(outdir.joinpath(f"{split_name}_train.h5ad"))
+        test.write_h5ad(outdir.joinpath(f"{split_name}_test.h5ad"))
+        with open(outdir.joinpath(f"{split_name}_spec.yaml"), "w") as f:
+            yaml.safe_dump({"n_classes": n_classes, "n_features": n_features}, f)
 
 # ** Cross validate
 if smk.rule == "cross_validate":
