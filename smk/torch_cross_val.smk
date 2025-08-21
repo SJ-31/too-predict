@@ -5,6 +5,8 @@ include: "Snakefile"
 
 
 outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
+config["do_cv"] = True
+config["do_holdout"] = False
 
 
 model_dict = config["models"]["dl"]
@@ -23,14 +25,14 @@ print("------------------------")
 
 results = {}
 log_paths = {}
-for variant, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
-    log_paths[variant] = [
+for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
+    log_paths[out_file_type] = [
         directory(d)
         for d in expand(
             "{out}/{model}{s}/tensorboard", out=outpath, s=suffix, model=models
         )
     ]
-    results[variant] = expand(
+    results[out_file_type] = expand(
         "{out}/{model}{s}/cv_results.csv", out=outpath, s=suffix, model=models
     )
 
@@ -61,7 +63,7 @@ rule preprocess:
         ),
         baseline=f"{REPOS}/adatas/torch_cv_{DATE}/baseline.h5ad",
     script:
-        f"{config['scripts']}/torch_cross_val.py"
+        "scripts/torch_main.py"
 
 
 rule baseline:
@@ -71,7 +73,7 @@ rule baseline:
         **{m: f"{outpath}/baseline_{m}.csv" for m in config["multi_labels"]},
         cv=rules.all.input.baseline_cv,
     script:
-        f"{config['scripts']}/torch_cross_val.py"
+        "scripts/torch_main.py"
 
 
 rule cross_validate:
@@ -84,7 +86,7 @@ rule cross_validate:
         cv=results["cv"],
         log=log_paths["cv"],
     script:
-        f"{config['scripts']}/torch_cross_val.py"
+        "scripts/torch_main.py"
 
 
 rule distillation:
@@ -97,7 +99,7 @@ rule distillation:
         cv=results["cv_kd"],
         log=log_paths["cv_kd"],
     script:
-        f"{config['scripts']}/torch_cross_val.py"
+        "scripts/torch_main.py"
 
 
 rule combine_cvs:
