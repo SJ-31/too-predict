@@ -1,24 +1,30 @@
 #!/usr/bin/env ipython
 import math
-from typing import Literal
+from typing import Callable, Literal
 
 import anndata as ad
 import imblearn.combine as icc
 import imblearn.over_sampling as ios
 import imblearn.under_sampling as ius
+import lightning as L
 import numpy as np
 import pandas as pd
 import rpy2.robjects as ro
 import scipy.stats as stats
+import torch
 from imblearn.over_sampling.base import BaseOverSampler
 from imblearn.under_sampling.base import BaseUnderSampler
 from imblearn.utils import check_sampling_strategy
 from numpy.random import Generator
 from scanpy import AnnData
 from statsmodels.distributions.empirical_distribution import ECDF, monotone_fn_inverter
+from torch import Tensor
+from torch.utils.data import DataLoader
 
 import too_predict.r_utils as ru
 import too_predict.utils as ut
+from too_predict.deep.augmentation import cVAE
+from too_predict.deep.torch_utils import AnnDataset, BaseNN, data_spec, lightning_logger
 
 # Utilities for handling imbalanced data
 IMBLEARN_METHODS: set = {
@@ -37,22 +43,40 @@ IMBLEARN_METHODS: set = {
     "SMOTETomek",
     "EditedNearestNeighbours",
 }
+TORCH_METHODS: set = {"cvae"}
 
 
 class Balancer:
-    def __init__(self, method: str, **kwargs) -> None:
+    def __init__(
+        self,
+        method: str,
+        logger_kwargs: dict | None = None,
+        loader_kwargs: dict | None = None,
+        trainer_kwargs: dict | None = None,
+        **kwargs,
+    ) -> None:
         self.method: str = method
         self.label_col: str | None = None
         self.is_imblearn: bool = False
+        self.is_torch: bool = False
+        self.model: None | BaseOverSampler | BaseUnderSampler | BaseNN
+        self.trainer_kwargs: dict = ut.if_none(trainer_kwargs, {})
+        self.logger_kwargs: dict | None = logger_kwargs
+        self.loader_kwargs: dict = ut.if_none(loader_kwargs, {})
         if self.method in IMBLEARN_METHODS:
             self.is_imblearn = True
-            self.model: BaseOverSampler | BaseUnderSampler | None = (
-                self._imblearn_model(method, **kwargs)
-            )
+            self.model = self._imblearn_model(method, **kwargs)
+        elif self.method in TORCH_METHODS:
+            self.is_torch = True
         else:
             self.model = None
         self.kwargs: dict = kwargs
         self.inv_ecdfs: dict[str, stats.interp1d] | None = None
+
+    def _torch_model(self, model) -> Callable[[], BaseNN]:
+        if model == "cvae":
+            return cVAE.new
+        raise ValueError("Model name not recognized!")
 
     def _imblearn_model(self, model, **kwargs):
         if model == "SMOTE":
@@ -149,6 +173,19 @@ class Balancer:
         self.label_col = y
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
+        elif self.is_torch:
+            n_features, n_classes = data_spec(adata, [y])
+            self.model = self._torch_model()(
+                in_features=n_features, n_classes_per_task=n_classes
+            )
+            if self.logger_kwargs is None:
+                self.trainer_kwargs["logger"] = None
+            else:
+                self.trainer_kwargs["logger"] = lightning_logger(**self.logger_kwargs)
+            trainer = L.Trainer(**self.trainer_kwargs)
+            adset = AnnDataset(adata, to_encode=[y] if isinstance(y, str) else y)
+            loader = DataLoader(adset, **self.loader_kwargs)
+            trainer.fit(train_dataloaders=loader)
         elif self.method == "nb_edgeR":
             # TODO: you could rewrite this so that the params are saved as python
             # objects. but then would need to do the simulation in python and only
@@ -158,6 +195,15 @@ class Balancer:
     def fit_transform(self, adata: ad.AnnData, y: str = "tumor_type") -> ad.AnnData:
         self.fit(adata, y)
         return self.transform(adata)
+
+    def generate(self, y: np.ndarray | Tensor | None = None, **kwargs) -> ad.AnnData:
+        if not self.is_torch:
+            raise ValueError(
+                "Generative capabilities only available for torch methods!"
+            )
+        if isinstance(y, np.ndarray):
+            y = torch.from_numpy(y)
+        return self.model.sample_as(labels=y, type="anndata", **kwargs)
 
     def transform(self, adata: ad.AnnData) -> ad.AnnData:
         if self.is_imblearn:
