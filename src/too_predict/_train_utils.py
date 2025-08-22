@@ -896,8 +896,9 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
         preprocessing = [transform, filter]
 
     m = spec.get("model", "XGBoost")
+    model: PredBase | None = None
     if m == "XGBoost":
-        model = tm.PredBase(tm.XGBClassifier(**params))
+        model = tm.PredBase(tm.XGBEstimator(**params))
     if m == "RandomForest":
         model = tm.PredBase(RandomForestClassifier(**params))
     if m == "LogisticRegression":
