@@ -13,10 +13,13 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.evaluation as te
 import too_predict.utils as ut
 import torch
-import torch.nn as nn
-from lightning.pytorch.loggers import CometLogger, Logger
+from lightning.pytorch.loggers import Logger
 from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
-from too_predict.deep.metrics import multitask_acc, multitask_all_metrics
+from too_predict.deep.metrics import (
+    multitask_acc,
+    multitask_all_metrics,
+    multitask_metrics2df,
+)
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, Subset, TensorDataset, random_split
 
@@ -310,6 +313,7 @@ def cross_validate(
     init_bias: bool = True,
     grad_accumulation: bool = False,
     grad_accumulation_batch_size: int = 256,
+    minimal: bool = True,
     **kwargs,
 ) -> pd.DataFrame:
     """Run cross-validation
@@ -330,17 +334,14 @@ def cross_validate(
         print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
     splits = cv.split(adset)
-    metrics: dict = {"fold": []}
+    dfs = []
+
     model_config = model_config if model_config else d_ut.ModuleConfig()
     tasks = adset.label_cols
     if init_bias:
         model_config.out_bias = d_ut.get_initial_out_bias(
             model_config.outlayer_type, adset
         )
-    for task in tasks:
-        metrics[f"{task}_valid_acc"] = []
-        if with_train_acc:
-            metrics[f"{task}_train_acc"] = []
     if scaler is not None:
         model_config.scaler = scaler
     if isinstance(adset, TeacherResponse):
@@ -402,31 +403,48 @@ def cross_validate(
         else:
             test_y = labels[test_idx, :]
             train_y = labels[train_idx, :]
-        acc = multitask_acc(
-            y_true=test_y,
-            predictions=model.predict_step(test[:]),
-            task_names=tasks,
-            n_classes=n_classes,
-        )
-        if with_train_acc:
-            train_acc = multitask_acc(
-                y_true=train_y,
-                predictions=model.predict_step(train.dataset[:]),
+
+        if minimal:
+            acc = multitask_acc(
+                y_true=test_y,
+                predictions=model.predict_step(test[:]),
                 task_names=tasks,
                 n_classes=n_classes,
+                as_df=True,
             )
-        for t in tasks:
-            metrics[f"{t}_valid_acc"].append(acc[t])
+            dfs.append(acc.assign(fold=fold, context="test"))
             if with_train_acc:
-                metrics[f"{t}_train_acc"].append(train_acc[t])
-        metrics["fold"].append(fold)
+                train_acc = multitask_acc(
+                    y_true=train_y,
+                    predictions=model.predict_step(train.dataset[:]),
+                    task_names=tasks,
+                    n_classes=n_classes,
+                    as_df=True,
+                )
+                dfs.append(train_acc.assign(fold=fold, context="train"))
+        else:
+            test_metrics = multitask_metrics2df(
+                multitask_all_metrics(
+                    y_true=test_y,
+                    scores=model.predict_proba(test[:][0]),
+                    task_names=tasks,
+                    n_classes=n_classes,
+                )
+            ).assign(context="test", fold=fold)
+            dfs.append(test_metrics)
+            if with_train_acc:
+                train_metrics = multitask_metrics2df(
+                    multitask_all_metrics(
+                        y_true=train_y,
+                        scores=model.predict_proba(train.dataset[:][0]),
+                        task_names=tasks,
+                        n_classes=n_classes,
+                    )
+                ).assign(context="train", fold=fold)
+                dfs.append(train_metrics)
     if verbose:
         print("Cross validation completed")
-    df = pd.DataFrame(metrics)
-    df = d_ut.tensor_cols_to_float(df)
-    if isinstance(trainer.logger, CometLogger):
-        trainer.logger.experiment.log_table("cv_summary.csv", df, True)
-    return df
+    return pd.DataFrame(pd.concat(dfs))
 
 
 # * Test functions

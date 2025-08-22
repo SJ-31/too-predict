@@ -95,7 +95,6 @@ base_acc = multitask_acc(
 )
 print(f"Base acc: {base_acc}")
 
-
 cv_kwargs = {
     "n_classes": n_classes,
     "device": "cpu",
@@ -319,6 +318,8 @@ result = test_holdout()
 
 t = result["target"]
 
+# %%
+
 
 def test_cross_val():
     cv: pd.DataFrame = d_ev.cross_validate(
@@ -328,18 +329,19 @@ def test_cross_val():
             cv_kwargs.copy(),
             **{
                 "trainer_kwargs": {
-                    "max_epochs": 5,
+                    "max_epochs": 3,
                     "enable_checkpointing": False,
                     "enable_progress_bar": False,
                     # "num_sanity_val_steps": 0,
                 }
             },
         ),
+        minimal=False,
     )
     return cv
 
 
-# cv = test_cross_val()
+cv = test_cross_val()
 
 # %%
 

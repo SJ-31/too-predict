@@ -18,7 +18,8 @@ def multitask_acc(
     y_true: Tensor | DataLoader | Dataset | np.ndarray,
     n_classes: Sequence[int],
     task_names: Sequence[str] | None = None,
-) -> dict:
+    as_df: bool = False,
+) -> dict | pd.DataFrame:
     """Compute accuracy independently on each prediction task
 
     Parameters
@@ -50,7 +51,14 @@ def multitask_acc(
         result[task] = tmet.accuracy(
             preds=pred, target=y, num_classes=n_classes[i], task="multiclass"
         ).item()
-    return result
+    if not as_df:
+        return result
+    df = {"metric": [], "value": [], "task": []}
+    for task, val in result.items():
+        df["metric"].append("acc")
+        df["value"].append(val)
+        df["task"].append(task)
+    return pd.DataFrame(df)
 
 
 def multitask_metrics2df(metrics: dict) -> pd.DataFrame:
@@ -90,6 +98,9 @@ def multitask_all_metrics(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
         result[task]["auroc"] = tmet.auroc(
+            preds=score, target=truth, num_classes=n, task="multiclass"
+        )
+        result[task]["aupr"] = tmet.average_precision(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
         result[task]["cm"] = tmet.confusion_matrix(

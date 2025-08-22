@@ -395,6 +395,8 @@ def train_test_wrapper(
     elif isinstance(maybe_split, Sequence):
         x_train, x_test = maybe_split
         n = len(x_train) + len(x_test)
+    else:
+        raise ValueError("Split format not supported")
     if verbose:
         print(
             f"Train, test sizes for set {set_label}: {x_train.shape[0]}, {x_test.shape[0]}"
