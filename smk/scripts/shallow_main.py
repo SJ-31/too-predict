@@ -80,21 +80,19 @@ if smk.rule == "cross_validate":
 elif smk.rule == "holdout":
     adata = get_adata()
     holdout_dct = smk.config["shallow"]["holdout"]
-    for model_name, m_config in smk.params["models"]:
-        outdir = Path(smk.params["outdir"].joinpath(model_name))
+    for model_name, m_config in smk.params["models"].items():
+        outdir = Path(smk.params["outdir"]).joinpath(model_name)
         outdir.mkdir(exist_ok=True)
         pipeline = tt.make_pipeline(m_config, S_CONFIG["filter"]["feature_col"])
         for split_name, split_config in smk.params["split_dct"].items():
-            cur_outdir = outdir.joinpath(split_name)
-            cur_outdir.mkdir(exist_ok=True)
-            train, test = ut.train_test_from_yaml(adata=adata, config=split_config)
+            train, test = ut.train_test_from_yaml(adata=adata, spec=split_config)
             result = te.holdout(
                 pipeline_fn=lambda: pipeline,
                 data={split_name: (train, test)},
                 label_col=LABEL_COL,
-                save_split_path=cur_outdir,
+                save_split_path=outdir,
             )
-            write_results(result, cur_outdir, cm_prefix=split_name)
+            write_results(result, outdir, label_col=split_name)
         if holdout_dct["organoid_test_task"]["do"]:
             adata.obs.loc[:, "is_organoid"] = adata.obs["Sample_Type"] == "organoid"
             org_outdir = outdir.joinpath("organoid_test")
