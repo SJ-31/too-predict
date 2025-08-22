@@ -29,15 +29,13 @@ def get_adata() -> ad.AnnData:
     return adata
 
 
-def write_results(results, result_dir, label_col, cm_prefix: str = ""):
+def write_results(results, result_dir, label_col):
     for name, item in results.items():
         if name != "cm" and isinstance(item, pd.DataFrame):
             item.to_csv(result_dir.joinpath(f"{label_col}-{name}.csv"), index=False)
         elif name == "cm":
-            for lab, cm in item.items():
-                cm.to_csv(
-                    result_dir.joinpath(f"{label_col}-{name}_cm-{cm_prefix}{lab}.csv")
-                )
+            for _, cm in item.items():
+                cm.to_csv(result_dir.joinpath(f"{label_col}_cm.csv"))
 
 
 # * Cross validation
