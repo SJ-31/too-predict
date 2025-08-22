@@ -210,7 +210,7 @@ def cross_val(in_file: str, distillation: bool = False):
     for task, cm_list in cms.items():
         agg_cms = ConfusionMatrices(cm_list, encoder=train_set.encoders[task])
         agg_cms.mean().to_csv(outdir.joinpath(f"{task}-average_cm.csv"))
-        agg_cms.total_correctness().to_csv(outdir.joinpath(f"{task}-cm_totals.csv"))
+        agg_cms.total_correctness().to_csv(outdir.joinpath(f"{task}-total_cm.csv"))
     pd.concat(dfs).to_csv(outdir.joinpath("cv_results.csv"), index=False)
 
 

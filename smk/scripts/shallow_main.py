@@ -73,7 +73,7 @@ if smk.rule == "cross_validate":
         cm = ConfusionMatrices(matrices)
         ut.write_pickle(cm, outdir.joinpath(f"{LABEL_COL}-cm.pkl"))
         cm.mean().to_csv(outdir.joinpath(f"{LABEL_COL}-mean_cm.csv"), index=False)
-        cm.mean_correctness().to_csv(
+        cm.total_correctness().to_csv(
             outdir.joinpath(f"{LABEL_COL}-mean_cm_correctness.csv"), index=False
         )
 # * Holdout
