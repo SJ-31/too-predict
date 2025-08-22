@@ -167,7 +167,7 @@ class ConfusionMatrices:
         else:
             _ = [self._add_cm(m, i) for m, i in enumerate(matrices)]
 
-    def mean_correctness(self) -> pd.DataFrame:
+    def total_correctness(self) -> pd.DataFrame:
         dfs = pd.concat(
             [
                 ConfusionMatrices.correctness(m).loc[

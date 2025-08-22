@@ -315,7 +315,7 @@ def cross_validate(
     grad_accumulation_batch_size: int = 256,
     minimal: bool = True,
     **kwargs,
-) -> pd.DataFrame:
+) -> pd.DataFrame | tuple[pd.DataFrame, dict]:
     """Run cross-validation
 
     Parameters
@@ -334,10 +334,11 @@ def cross_validate(
         print("Beginning cross validation...")
     cv = ms.KFold(n_splits=n_splits, random_state=random_state, shuffle=True)
     splits = cv.split(adset)
-    dfs = []
+    dfs: list = []
 
     model_config = model_config if model_config else d_ut.ModuleConfig()
     tasks = adset.label_cols
+    cms: dict = {t: [] for t in tasks} if not minimal else {}
     if init_bias:
         model_config.out_bias = d_ut.get_initial_out_bias(
             model_config.outlayer_type, adset
@@ -432,6 +433,8 @@ def cross_validate(
             dfs.append(
                 multitask_metrics2df(test_metrics).assign(context="test", fold=fold)
             )
+            for t in tasks:
+                cms[t].append(test_metrics[t]["cm"])
             if with_train_acc:
                 train_metrics = multitask_all_metrics(
                     y_true=train_y,
@@ -446,7 +449,9 @@ def cross_validate(
                 )
     if verbose:
         print("Cross validation completed")
-    return pd.DataFrame(pd.concat(dfs))
+    if minimal:
+        return pd.DataFrame(pd.concat(dfs))
+    return pd.DataFrame(pd.concat(dfs)), cms
 
 
 # * Test functions

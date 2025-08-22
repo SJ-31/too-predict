@@ -21,6 +21,7 @@ from too_predict.deep.evaluation import (
     train_test_wrapper_torch,
 )
 from too_predict.deep.metrics import (
+    ConfusionMatrices,
     multitask_acc,
     multitask_all_metrics,
     multitask_metrics2df,
@@ -111,7 +112,9 @@ def holdout(file, distillation: bool = False):
         n_classes = tmp["n_classes"]
     test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
     cur_outdir = outdir.joinpath(split_name)
-    train = d_ut.AnnDataset(ad.read_h5ad(train_path), to_encode=LABELS, device=DEVICE)
+    train: d_ut.AnnDataset = d_ut.AnnDataset(
+        ad.read_h5ad(train_path), to_encode=LABELS, device=DEVICE
+    )
     train, valid = train_test_split_torch(
         train,
         generator=torch.Generator().manual_seed(smk.config["random_state"]),
@@ -151,6 +154,9 @@ def holdout(file, distillation: bool = False):
                 set_label=model_name,
             )
             df = multitask_metrics2df(result)
+            for lab in LABELS:
+                cm_df = ConfusionMatrices.as_df(lab, encoder=train.encoders[lab])
+                cm_df.to_csv(cur_outdir.joinpath(f"{lab}-{outname}_cm.csv"))
             df.to_csv(output, index=False)
 
 
@@ -174,8 +180,11 @@ def cross_val(in_file: str, distillation: bool = False):
         outdir = Path(smk.params["outdir"]).joinpath(model)
     kwargs = get_kwargs(model)
     dfs = []
+    cms = {lab: [] for lab in LABELS}
     for i in range(N_REPEATS):
-        cv: pd.DataFrame = cross_validate(
+        cv: pd.DataFrame
+        cm: dict
+        cv, cm = cross_validate(
             model_cls=kwargs["model_class"],
             model_kwargs=kwargs["model_kwargs"],
             model_config=kwargs["mconfig"],
@@ -191,22 +200,29 @@ def cross_val(in_file: str, distillation: bool = False):
             n_classes=n_classes,
             validation=valid_set,
             device=DEVICE,
+            minimal=False,
             **DL_CONFIG["cv"],
         )
         cv.loc[:, "repeat"] = i
         dfs.append(cv)
+        for task, cm_list in cm:
+            cms[task].extend(cm_list)
+    for task, cm_list in cms.items():
+        agg_cms = ConfusionMatrices(cm_list, encoder=train_set.encoders[task])
+        agg_cms.mean().to_csv(outdir.joinpath(f"{task}-average_cm.csv"))
+        agg_cms.total_correctness().to_csv(outdir.joinpath(f"{task}-cm_totals.csv"))
     pd.concat(dfs).to_csv(outdir.joinpath("cv_results.csv"), index=False)
 
 
 def get_adata():
     if TEST:
         adata = ut.training_data_internal_test(minimal=True)
-        adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "redcurrent"]), :]
+        adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "recurrent"]), :]
         adata.obs["RANDOM"] = ut.RNG.choice(
             [str(s) for s in (range(8))], adata.shape[0]
         )
     else:
-        adata = ut.training_data_internal()
+        adata = ut.training_data_internal(**smk.config["training_data"])
     masks = []
     for col, allowed in smk.config.get("obs_filters", {}).items():
         if allowed:
