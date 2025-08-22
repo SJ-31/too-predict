@@ -75,7 +75,7 @@ def get_kwargs(model_name):
         scheduler_fn=get_scheduler,
         optimizer_fn=opt_fn,
         record_norm=smk.config.get("record_norm", True),
-        **MODELS[model].get("s_params", {}),
+        **MODELS[model_name].get("s_params", {}),
     )
     return {
         "model_class": model_cls,
@@ -84,11 +84,13 @@ def get_kwargs(model_name):
         "trainer_kwargs": trainer_kwargs,
     }
 
+    # TODO: get backed anndata working with anndataset
+
 
 def baseline_eval(train: Dataset, test: Dataset, n_features, n_classes, outdir: Path):
     base = Baseline(n_features, n_classes, **BASELINE_KWARGS)
     base.fit(train)
-    scores = base.predict_proba(test[:][0])
+    scores = base.predict_proba(test[:])
     metrics = multitask_all_metrics(
         y_true=test[:][1],
         scores=scores,
@@ -102,23 +104,21 @@ def baseline_eval(train: Dataset, test: Dataset, n_features, n_classes, outdir: 
 def holdout(file, distillation: bool = False):
     outdir = Path(smk.params["outdir"])
     train_path = Path(file)
-    split_name = train_path.stem.replace("_train.h5ad", "")
+    split_name = train_path.stem.replace("_train", "")
     with open(train_path.parent.joinpath(f"{split_name}_spec.yaml"), "r") as f:
         tmp = yaml.safe_load(f)
         n_features = tmp["n_features"]
         n_classes = tmp["n_classes"]
     test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
     cur_outdir = outdir.joinpath(split_name)
-    train = d_ut.AnnDataset(
-        ad.read_h5ad(train_path, backed=True), to_encode=LABELS, device=DEVICE
-    )
+    train = d_ut.AnnDataset(ad.read_h5ad(train_path), to_encode=LABELS, device=DEVICE)
     train, valid = train_test_split_torch(
-        train, generator=torch.Generator().manual_seed(smk.config["random_state"])
+        train,
+        generator=torch.Generator().manual_seed(smk.config["random_state"]),
+        as_dataloader=False,
     )
 
-    test = d_ut.AnnDataset(
-        ad.read_h5ad(test_path, backed=True), to_encode=LABELS, device=DEVICE
-    )
+    test = d_ut.AnnDataset(ad.read_h5ad(test_path), to_encode=LABELS, device=DEVICE)
     baseline_eval(train, test, n_features, n_classes=n_classes, outdir=cur_outdir)
     if distillation:
         baseline = Baseline(
@@ -151,7 +151,7 @@ def holdout(file, distillation: bool = False):
                 set_label=model_name,
             )
             df = multitask_metrics2df(result)
-            df.to_csv(output)
+            df.to_csv(output, index=False)
 
 
 def cross_val(in_file: str, distillation: bool = False):
@@ -306,6 +306,6 @@ if smk.rule == "baseline" and smk.config["do_cv"]:
                 results[f"{task}_{group}_acc"].append(acc[task])
         results["fold"].append(fold)
     df = pd.DataFrame(results)
-    df.to_csv(smk.output["cv"])
+    df.to_csv(smk.output["cv"], index=False)
     for i, label in enumerate(LABELS):
         ut.xgb_complexity(baseline.models[i]).to_csv(smk.output[label], index=False)
