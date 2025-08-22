@@ -4,7 +4,7 @@ import yaml
 include: "Snakefile"
 
 
-outpath = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
+outdir = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
 config["do_cv"] = True
 config["do_holdout"] = False
 
@@ -33,16 +33,16 @@ for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
     log_paths[out_file_type] = [
         directory(d)
         for d in expand(
-            "{out}/{model}{s}/tensorboard", out=outpath, s=suffix, model=models
+            "{out}/{model}{s}/tensorboard", out=outdir, s=suffix, model=models
         )
     ]
     results[out_file_type] = expand(
-        "{out}/{model}{s}/{f}.csv", out=outpath, s=suffix, model=models, f=output_files
+        "{out}/{model}{s}/{f}.csv", out=outdir, s=suffix, model=models, f=output_files
     )
 
 
 models = models + ["baseline"]
-baseline_cv = f"{outpath}/baseline_cv.csv"
+baseline_cv = f"{outdir}/baseline_cv.csv"
 all_cv = f"{output}/cv_all.csv"
 
 for_all = {"cv": results["cv"]}
@@ -50,10 +50,17 @@ if config["do_kd"]:
     for_all["cv_kd"] = results["cv_kd"]
     print("Using knowledge distillation for training")
 
+evaluations = {
+    "omnibus": f"{outdir}/friedman_omnibus.csv",
+    "post_hoc": f"{outdir}/wilcox_post_hoc.csv",
+    "metric_plot": f"{outdir}/metrics_plot.png",
+}
+
 
 rule all:
     input:
         **for_all,
+        **evaluations,
         all_cv=all_cv,
         baseline_cv=baseline_cv,
 
@@ -75,7 +82,7 @@ rule baseline:
     input:
         rules.preprocess.output.baseline,
     output:
-        **{m: f"{outpath}/baseline_{m}.csv" for m in config["multi_labels"]},
+        **{m: f"{outdir}/baseline_{m}.csv" for m in config["multi_labels"]},
         cv=rules.all.input.baseline_cv,
     script:
         "scripts/torch_main.py"
@@ -85,7 +92,7 @@ rule cross_validate:
     input:
         rules.preprocess.output.main,
     params:
-        outdir=outpath,
+        outdir=outdir,
         date=DATE,
     output:
         cv=results["cv"],
@@ -98,7 +105,7 @@ rule distillation:
     input:
         rules.preprocess.output.main,
     params:
-        outdir=outpath,
+        outdir=outdir,
         date=DATE,
     output:
         cv=results["cv_kd"],
@@ -121,6 +128,17 @@ rule combine_cvs:
         pd.concat(dfs).to_csv(output[0])
 
 
+rule evaluate:
+    input:
+        rules.combine_cvs.output,
+    output:
+        **evaluations,
+    params:
+        var="fold",
+    script:
+        "scripts/format_evaluation.R"
+
+
 onsuccess:
-    with open(f"{outpath}/snakemake_config.yaml", "w") as f:
+    with open(f"{outdir}/snakemake_config.yaml", "w") as f:
         yaml.safe_dump(config, f)

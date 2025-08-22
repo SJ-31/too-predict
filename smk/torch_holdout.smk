@@ -40,6 +40,12 @@ else:
     print("Use the run_only key to run specific models")
 print("------------------------")
 
+evaluations = {
+    "omnibus": f"{outdir}/friedman_omnibus.csv",
+    "post_hoc": f"{outdir}/wilcox_post_hoc.csv",
+    "metric_plot": f"{outdir}/metrics_plot.png",
+}
+
 results = {}
 log_paths = {}
 for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
@@ -137,6 +143,17 @@ rule combine:
             df = pd.read_csv(csv).assign(model=model_name, split=split_name)
             dfs.append(df)
         pd.concat(dfs).to_csv(output[0], index=False)
+
+
+rule evaluate:
+    input:
+        rules.combine.output,
+    output:
+        **evaluations,
+    params:
+        var="split",
+    script:
+        "scripts/format_evaluation.R"
 
 
 onsuccess:

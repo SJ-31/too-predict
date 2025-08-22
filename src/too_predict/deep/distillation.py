@@ -41,6 +41,10 @@ class TeacherResponse(torch.utils.data.Dataset):
             proba = self.teacher.predict_proba(self.input)
         self.response = proba
 
+    @property
+    def encoders(self):
+        return self.data.encoders
+
     def get_targets(self):
         return self.data[:][1]
 

@@ -90,7 +90,6 @@ basename_no_ext <- function(file) {
 friedman_test_wrapper <- function(
     tb,
     metric_col,
-    with_class = TRUE,
     var = "fold") {
   j <- length(unique(tb[[var]]))
   k <- length(unique(tb$model))
