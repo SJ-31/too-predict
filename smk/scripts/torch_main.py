@@ -201,6 +201,10 @@ def cross_val(in_file: str, distillation: bool = False):
 def get_adata():
     if TEST:
         adata = ut.training_data_internal_test(minimal=True)
+        adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "redcurrent"]), :]
+        adata.obs["RANDOM"] = ut.RNG.choice(
+            [str(s) for s in (range(8))], adata.shape[0]
+        )
     else:
         adata = ut.training_data_internal()
     masks = []

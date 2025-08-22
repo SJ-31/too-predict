@@ -61,6 +61,7 @@ for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
         model=models,
     )
 
+
 baseline_results = expand("{out}/{splits}/baseline.csv", out=outdir, splits=split_names)
 all_holdout = f"{outdir}/holdout_summary.csv"
 
@@ -128,10 +129,10 @@ rule combine:
     run:
         dfs = []
         for csv in input:
-            name = Path(csv).absolute().parent.stem
+            name = Path(csv).stem
             df = pd.read_csv(csv).assign(model=name)
             dfs.append(df)
-        pd.concat(dfs).to_csv(output[0])
+        pd.concat(dfs).to_csv(output[0], index=False)
 
 
 onsuccess:
