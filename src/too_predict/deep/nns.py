@@ -280,7 +280,9 @@ class Baseline:
 
     def __init__(self, in_features: int, n_classes_per_task: list[int], **kwargs):
         """ """
-        self.models: list = [XGBClassifier(**kwargs) for _ in n_classes_per_task]
+        self.models: list = [
+            XGBClassifier(**kwargs, num_class=n) for n in n_classes_per_task
+        ]
 
     def fit(self, X, y=None):
         if isinstance(X, Tensor):
@@ -308,4 +310,4 @@ class Baseline:
             x = batch
         if isinstance(x, Tensor):
             x = x.numpy()
-        return tuple(m.predict_proba(x) for m in self.models)
+        return tuple(torch.tensor(m.predict_proba(x)) for m in self.models)
