@@ -20,7 +20,7 @@
     "reportMissingParameterType": false,
     "reportMissingTypeStubs": false,
     "reportUntypedFunctionDecorator": false,
-    "reportUnboundVariable": false,
+    "reportUnboundVariable": true,
     "reportUnnecessaryIsInstance": false,
     "extraPaths": [
         "/home/shannc/Bio_SDD/miniforge3/envs/too-predict/lib/python3.12/site-packages",

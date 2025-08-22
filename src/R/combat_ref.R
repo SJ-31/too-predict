@@ -191,6 +191,8 @@ Please remove confounded covariates and rerun ComBat-Seq"
         rep(disp_common[j], nrow(counts))
       } else {
         estimateGLMTagwiseDisp(
+          # Estimate tagwise dispersion in each batch, using
+          # the batch common dispersion as prior
           counts[, batches_ind[[j]]],
           design = mod[batches_ind[[j]], ],
           dispersion = disp_common[j],

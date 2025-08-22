@@ -865,7 +865,7 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
     spec = config.get("config", {})
     params = config.get("params", {})
 
-    if f := spec.get("filter", "variance_threshold"):
+    if f := spec.get("filter"):
         feature_set = spec.get("feature_set", None)
         if feature_set in FEATURE_LISTS:
             feature_set = FEATURE_LISTS[feature_set]
@@ -898,6 +898,10 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
     m = spec.get("model", "XGBoost")
     if m == "XGBoost":
         model = tm.PredBase(tm.XGBClassifier(**params))
+    if m == "RandomForest":
+        model = tm.PredBase(RandomForestClassifier(**params))
+    if m == "LogisticRegression":
+        model = tm.PredBase(LogisticRegression(**params))
     if with_predictor:
         return tm.Pipeline(steps=preprocessing, predictor=model)
     return tm.Pipeline(steps=preprocessing)

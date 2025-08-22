@@ -39,7 +39,6 @@ from too_predict.deep.evaluation import (
     train_test_split_torch,
 )
 from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
-from too_predict.deep.metrics import multitask_all_metrics, multitask_metrics2df
 from too_predict.deep.trainer import Trainer
 from too_predict.imputer import Imputer
 from torch import Generator, Tensor
@@ -91,13 +90,6 @@ res = base.predict_step(test_l.dataset[:][0])
 base_acc = multitask_acc(
     test_l.dataset[:][1],
     res,
-    task_names=["Sample_Type", "tumor_type"],
-    n_classes=n_classes,
-)
-proba = base.predict_proba(test_l.dataset[:][0])
-res2 = multitask_all_metrics(
-    y_true=test_l.dataset[:][1],
-    scores=proba,
     task_names=["Sample_Type", "tumor_type"],
     n_classes=n_classes,
 )
