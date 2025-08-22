@@ -75,7 +75,7 @@ class Filter:
         self.inplace: bool = inplace
         self.missing_features: list = []
         self.top: int = top
-        self.method: str = method
+        self.method: str | None = method
         self.label_col: str = label_col
         self.kwargs: dict = kwargs
         self.feat_metrics: pd.DataFrame | None = None  # Feature metrics computed during
@@ -129,6 +129,8 @@ class Filter:
             self.features = self.mutual_information(adata, **self.kwargs)
         elif self.method == "variance_threshold":
             self.features = self.variance_threshold(adata, **self.kwargs)
+        elif self.method is None and self.features:
+            print("Using existing feature set...")
 
     def fit_transform(self, adata: ad.AnnData, _=None) -> ad.AnnData:
         self.fit(adata)
