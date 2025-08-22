@@ -34,9 +34,6 @@ def parse_args():
     return args
 
 
-@ut.SaveOrLoad(
-    out=here(OUTDIR, "id_estimation.csv"), read_fn=pd.read_csv, logdir=here("log")
-)
 def get_id(f, x: ad.AnnData, filters: list[str]):
     results = {"feature_set": []}
     for est in ESTIMATORS.keys():
@@ -49,14 +46,11 @@ def get_id(f, x: ad.AnnData, filters: list[str]):
             current = x.copy()
         for name, e_fn in ESTIMATORS.items():
             E = e_fn()
-<<<<<<< HEAD
             E.fit(current)
             print(f"{name} complete")
             results[name].append(E.dimension_)
-=======
             results[name].append(E.fit_transform(current))
             print(f"{name} complete")
->>>>>>> 3fbdbe7 (chore: disable twonn)
         results["feature_set"].append(ref)
     df = pd.DataFrame(results)
     df.to_csv(f, index=False)
