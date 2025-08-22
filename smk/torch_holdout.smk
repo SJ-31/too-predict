@@ -1,4 +1,5 @@
 import yaml
+import pandas as pd
 
 
 include: "Snakefile"
@@ -8,9 +9,24 @@ outdir = f"{OUT}/deep/holdout/{config.get('date', TODAY)}-{RUN}"
 config["do_cv"] = False
 config["do_holdout"] = True
 
+if config["test"]:
+    splits = {
+        "test_2": {
+            "pipeline": "clr_edgeR_old",
+            "spec": {"RANDOM": {"5": "exact", "6": "exact"}},
+        },
+        "test_1": {
+            "pipeline": "clr_edgeR_old",
+            "spec": {"RANDOM": {"8": "exact", "3": "exact"}},
+        },
+    }
+    config["dl"]["trainer"]["accelerator"] = "cpu"
+
+else:
+    splits = config["dl"]["holdout"]["splits"]
+split_names = splits.keys()
 
 model_dict = config["models"]["dl"]
-split_names = config["dl"]["holdout"]["splits"].keys()
 
 print("----HOLDOUT----")
 if only := config.get("run_only", []):
@@ -71,6 +87,7 @@ rule preprocess:
         **train_test_files,
     params:
         outdir=REPOS,
+        split_dct=splits,
     script:
         "scripts/torch_main.py"
 
@@ -84,6 +101,7 @@ rule holdout:
         date=DATE,
     output:
         holdout=results["holdout"],
+        baseline=for_all["baseline"],
         log=log_paths["holdout"],
     script:
         "scripts/torch_main.py"

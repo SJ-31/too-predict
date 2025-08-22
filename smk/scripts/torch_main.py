@@ -235,12 +235,22 @@ if smk.rule == "preprocess" and ROUTINE == "holdout":
     adata = get_adata()
     feature_col = smk.config["shallow"]["filter"]["feature_col"]
     holdout_config = DL_CONFIG["holdout"]
-    outdir = Path(smk.params["outdir"])
-    for split_name, split_config in holdout_config["splits"].items():
-        train, test = ut.train_test_from_yaml(adata=adata, config=split_config["spec"])
-        pp_spec = split_config.get("pipeline", "clr_edgeR_old")
+    split_dct = smk.params["split_dct"]
+    for train_file in smk.output["train"]:
+        train_file = Path(train_file)
+        outdir = train_file.parent
+        if train_file.exists():
+            continue
+        split_name = train_file.stem.replace("_train", "")
+        split_config = split_dct.get(split_name)
+        if not split_config:
+            raise ValueError("split not defined in config!")
+        train, test = ut.train_test_from_yaml(adata=adata, spec=split_config["spec"])
+        print(split_name, train.shape, test.shape)
+        pipeline_name = split_config.get("pipeline", "clr_edgeR_old")
+        pipeline_spec = smk.config["models"]["shallow"][pipeline_name]
         preprocessing: Pipeline = tt.make_pipeline(
-            pp_spec, feature_col=feature_col, with_predictor=False
+            pipeline_spec, feature_col=feature_col, with_predictor=False
         )
         n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
         train = preprocessing.fit_transform(train)
