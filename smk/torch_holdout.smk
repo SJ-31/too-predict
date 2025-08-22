@@ -54,11 +54,12 @@ for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
         )
     ]
     results[out_file_type] = expand(
-        "{out}/{splits}/{model}{s}.csv",
+        "{out}/{splits}/{f}{model}{s}.csv",
         out=outdir,
         splits=split_names,
         s=suffix,
         model=models,
+        f=["", *expand("{lab}_cm-", lab=config["multi_labels"])],
     )
 
 
@@ -124,13 +125,16 @@ rule distillation:
 rule combine:
     input:
         rules.holdout.output.holdout,
+        rules.holdout.output.baseline,
     output:
         all_holdout,
     run:
         dfs = []
         for csv in input:
-            name = Path(csv).stem
-            df = pd.read_csv(csv).assign(model=name)
+            f = Path(csv)
+            split_name = f.absolute().parent.stem
+            model_name = f.stem
+            df = pd.read_csv(csv).assign(model=model_name, split=split_name)
             dfs.append(df)
         pd.concat(dfs).to_csv(output[0], index=False)
 

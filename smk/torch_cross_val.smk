@@ -25,6 +25,10 @@ print("------------------------")
 
 results = {}
 log_paths = {}
+output_files = [
+    "cv_results",
+    *expand("{lab}-{prefix}_cm", lab=config["multi_labels"], n=["average", "total"]),
+]
 for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
     log_paths[out_file_type] = [
         directory(d)
@@ -33,8 +37,9 @@ for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
         )
     ]
     results[out_file_type] = expand(
-        "{out}/{model}{s}/cv_results.csv", out=outpath, s=suffix, model=models
+        "{out}/{model}{s}/{f}.csv", out=outpath, s=suffix, model=models, f=output_files
     )
+
 
 models = models + ["baseline"]
 baseline_cv = f"{outpath}/baseline_cv.csv"
