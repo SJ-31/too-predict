@@ -423,25 +423,27 @@ def cross_validate(
                 )
                 dfs.append(train_acc.assign(fold=fold, context="train"))
         else:
-            test_metrics = multitask_metrics2df(
-                multitask_all_metrics(
-                    y_true=test_y,
-                    scores=model.predict_proba(test[:][0]),
+            test_metrics = multitask_all_metrics(
+                y_true=test_y,
+                scores=model.predict_proba(test[:][0]),
+                task_names=tasks,
+                n_classes=n_classes,
+            )
+            dfs.append(
+                multitask_metrics2df(test_metrics).assign(context="test", fold=fold)
+            )
+            if with_train_acc:
+                train_metrics = multitask_all_metrics(
+                    y_true=train_y,
+                    scores=model.predict_proba(train.dataset[:][0]),
                     task_names=tasks,
                     n_classes=n_classes,
                 )
-            ).assign(context="test", fold=fold)
-            dfs.append(test_metrics)
-            if with_train_acc:
-                train_metrics = multitask_metrics2df(
-                    multitask_all_metrics(
-                        y_true=train_y,
-                        scores=model.predict_proba(train.dataset[:][0]),
-                        task_names=tasks,
-                        n_classes=n_classes,
+                dfs.append(
+                    multitask_metrics2df(train_metrics).assign(
+                        context="train", fold=fold
                     )
-                ).assign(context="train", fold=fold)
-                dfs.append(train_metrics)
+                )
     if verbose:
         print("Cross validation completed")
     return pd.DataFrame(pd.concat(dfs))
