@@ -703,6 +703,18 @@ class Pipeline:
             x = step.fit_transform(x)
         self.predictor.fit(x, y)
 
+    @property
+    def score_fn(self) -> str:
+        return self.predictor.score_fn
+
+    @property
+    def had_inf(self) -> bool:
+        return self.predictor.had_inf
+
+    @property
+    def classes_(self):
+        return self.predictor.classes_
+
     def transform(self, x: ad.AnnData) -> ad.AnnData:
         for step in self.preprocessing:
             x = step.transform(x)
