@@ -877,8 +877,8 @@ class Robustness:
             self._validate_spec(**spec)
             model = spec["model_fn"]()
             from_saved: bool = False
+            name = spec.get("name", f"model_{i}")
             try:
-                name = spec.get("name", f"model_{i}")
                 if name not in baselines:
                     self._fit(model, spec)
                 else:
