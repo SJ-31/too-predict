@@ -122,6 +122,8 @@ rule combine_cvs:
     run:
         dfs = []
         for csv in input:
+            if csv.stem != "csv_results":
+                continue
             name = Path(csv).absolute().parent.stem
             df = pd.read_csv(csv).assign(model=name)
             dfs.append(df)

@@ -65,7 +65,12 @@ for out_file_type, suffix in zip(["holdout", "holdout_kd"], ["", "_kd"]):
         splits=split_names,
         s=suffix,
         model=models,
-        f=["", *expand("{lab}_cm-", lab=config["multi_labels"])],
+        f=[
+            "",
+            *expand(
+                "{lab}_{suf}-", lab=config["multi_labels"], suf=["cm", "label_score"]
+            ),
+        ],
     )
 
 
@@ -81,6 +86,7 @@ if config["do_kd"]:
 rule all:
     input:
         **for_all,
+        **evaluations,
         all_holdout=all_holdout,
 
 
@@ -140,6 +146,8 @@ rule combine:
             f = Path(csv)
             split_name = f.absolute().parent.stem
             model_name = f.stem
+            if "cm" in model_name or "label_score" in model_name:
+                continue
             df = pd.read_csv(csv).assign(model=model_name, split=split_name)
             dfs.append(df)
         pd.concat(dfs).to_csv(output[0], index=False)
