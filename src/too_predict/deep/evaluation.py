@@ -26,8 +26,9 @@ def train_test_split_torch(
     train_size: float | int | None = None,
     test_size: float | int = 0.25,
     valid: float | int | None | bool = None,
+    as_dataloader: bool = True,
     **kwargs,
-) -> tuple[DataLoader, ...]:
+) -> tuple[DataLoader, ...] | tuple[Dataset, ...]:
     """Get train, test and optionally validation splits from dataset
 
     Parameters
@@ -82,7 +83,9 @@ def train_test_split_torch(
     if np.sum(lengths) > 1:
         raise ValueError("Invalid split sizes provided!")
 
-    return tuple(DataLoader(d, **kwargs) for d in random_split(dataset, lengths))
+    if as_dataloader:
+        return tuple(DataLoader(d, **kwargs) for d in random_split(dataset, lengths))
+    return tuple(d for d in random_split(dataset, lengths))
 
 
 def train_test_wrapper_torch(
@@ -131,8 +134,6 @@ def train_test_wrapper_torch(
     logger_fn : callable, optional
         Callable that accepts a model label and returns a logger instance.
     validation : ad.AnnData, optional
-        Validation dataset, or if `pre_split=False`, fraction for
-        splitting validation from test set.
     module_config : d_ut.ModuleConfig, optional
         Configuration object for the model.
     scaler : d_ut.TorchScaler, optional
