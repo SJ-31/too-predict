@@ -37,6 +37,7 @@ except ImportError:
 
 torch.set_default_dtype(torch.float32)
 
+BACKED: bool = False
 
 LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["dl"]
@@ -113,15 +114,18 @@ def holdout(file, distillation: bool = False):
     test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
     cur_outdir = outdir.joinpath(split_name)
     train: d_ut.AnnDataset = d_ut.AnnDataset(
-        ad.read_h5ad(train_path), to_encode=LABELS, device=DEVICE
+        ad.read_h5ad(train_path, backed=BACKED), to_encode=LABELS, device=DEVICE
     )
+    encoders = train.encoders
     train, valid = train_test_split_torch(
         train,
         generator=torch.Generator().manual_seed(smk.config["random_state"]),
         as_dataloader=False,
     )
 
-    test = d_ut.AnnDataset(ad.read_h5ad(test_path), to_encode=LABELS, device=DEVICE)
+    test = d_ut.AnnDataset(
+        ad.read_h5ad(test_path, backed=BACKED), to_encode=LABELS, device=DEVICE
+    )
     baseline_eval(train, test, n_features, n_classes=n_classes, outdir=cur_outdir)
     if distillation:
         baseline = Baseline(
@@ -155,13 +159,19 @@ def holdout(file, distillation: bool = False):
             )
             df = multitask_metrics2df(result)
             for lab in LABELS:
-                cm_df = ConfusionMatrices.as_df(lab, encoder=train.encoders[lab])
-                cm_df.to_csv(cur_outdir.joinpath(f"{lab}-{outname}_cm.csv"))
+                cm_df = ConfusionMatrices.as_df(
+                    result[lab]["cm"], encoder=encoders[lab]
+                )
+                correctness = ConfusionMatrices.correctness(cm_df)
+                cm_df.to_csv(cur_outdir.joinpath(f"{lab}_cm-{outname}.csv"))
+                correctness.to_csv(
+                    cur_outdir.joinpath(f"{lab}_label_score-{outname}.csv"), index=False
+                )
             df.to_csv(output, index=False)
 
 
 def cross_val(in_file: str, distillation: bool = False):
-    adata = ad.read_h5ad(in_file, backed=True)
+    adata = ad.read_h5ad(in_file, backed=BACKED)
     model = Path(in_file).stem
     n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
     train, valid = ut.train_test_split_ad(
@@ -266,7 +276,6 @@ if smk.rule == "preprocess" and ROUTINE == "holdout":
         if not split_config:
             raise ValueError("split not defined in config!")
         train, test = ut.train_test_from_yaml(adata=adata, spec=split_config["spec"])
-        print(split_name, train.shape, test.shape)
         pipeline_name = split_config.get("pipeline", "clr_edgeR_old")
         pipeline_spec = smk.config["models"]["shallow"][pipeline_name]
         preprocessing: Pipeline = tt.make_pipeline(
@@ -302,7 +311,7 @@ if smk.rule == "distillation" and ROUTINE == "holdout":
 if smk.rule == "baseline" and smk.config["do_cv"]:
     baseline = [x for x in smk.input if "baseline" in str(x)][0]
     batch_size = DL_CONFIG["cv"]["batch_size"]
-    adata = ad.read_h5ad(baseline, backed=True)
+    adata = ad.read_h5ad(baseline, backed=BACKED)
     adset = d_ut.AnnDataset(adata, to_encode=LABELS)
     cv = KFold(
         n_splits=DL_CONFIG["cv"]["n_splits"], shuffle=True, random_state=ut.RANDOM_STATE
