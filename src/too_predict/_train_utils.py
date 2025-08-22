@@ -862,11 +862,13 @@ def get_callback_fn(name: str, config: dict | None = None) -> Callable:
 
 
 def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.Pipeline:
-    spec = config.get("config", {})
+    spec = config.get("spec", {})
+    if not spec:
+        print("WARNING: spec is empty!")
     params = config.get("params", {})
 
-    if f := spec.get("filter"):
-        feature_set = spec.get("feature_set", None)
+    feature_set = spec.get("feature_set", None)
+    if f := spec.get("filter") or feature_set:
         if feature_set in FEATURE_LISTS:
             feature_set = FEATURE_LISTS[feature_set]
         filter = Filter(
