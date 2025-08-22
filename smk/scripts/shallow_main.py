@@ -1,18 +1,14 @@
 #!/usr/bin/env ipython
 
-from functools import reduce
 from pathlib import Path
 
 import anndata as ad
-import numpy as np
 import pandas as pd
 import too_predict._train_utils as tt
 import too_predict.evaluation as te
-import too_predict.filter as fil
-import too_predict.model as tm
 import too_predict.utils as ut
 from snakemake.script import snakemake as smk
-from too_predict.transformer import Transformer
+from too_predict.deep.metrics import ConfusionMatrices
 
 REF, FEAT = ut.ref_feature_lists_internal()
 
@@ -24,6 +20,10 @@ S_CONFIG = smk.config["shallow"]
 def get_adata() -> ad.AnnData:
     if TEST:
         adata = ut.training_data_internal_test()
+        adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "recurrent"]), :]
+        adata.obs["RANDOM"] = ut.RNG.choice(
+            [str(s) for s in (range(8))], adata.shape[0]
+        )
     else:
         adata = ut.training_data_internal(**smk.config["training_data"])
     return adata
@@ -44,10 +44,13 @@ def write_results(results, result_dir, label_col, cm_prefix: str = ""):
 if smk.rule == "cross_validate":
     cv_kwargs = smk.config["shallow"]["cv"]
     adata = get_adata()
-    for i in smk.config["cv_n_repeats"]:
-        for model, config in smk.params["models"]["shallow"].items():
-            outdir: Path = Path(smk.params["outdir"].joinpath(model))
-            outdir.mkdir(exist_ok=True)
+    for model, config in smk.params["models"].items():
+        outdir: Path = Path(smk.params["outdir"]).joinpath(model)
+        outdir.mkdir(exist_ok=True)
+        misc_metrics = []
+        misses = []
+        matrices = []
+        for i in range(smk.config["cv_n_repeats"]):
             pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
             result = te.cross_validate(
                 model=pipeline,
@@ -58,15 +61,30 @@ if smk.rule == "cross_validate":
                 record_dir=outdir,
                 random_state=smk.config["random_state"],
             )
-            write_results(result, outdir, cm_prefix="fold_")
+            misc_metrics.append(result["misc"].assign(repeat=i))
+            misses.append(result["misses"].assign(repeat=i))
+            matrices.extend(result["cm"].values())
+        pd.concat(misc_metrics).to_csv(
+            outdir.joinpath(f"{LABEL_COL}-misc.csv"), index=False
+        )
+        pd.concat(misses).to_csv(
+            outdir.joinpath(f"{LABEL_COL}-misses.csv"), index=False
+        )
+        cm = ConfusionMatrices(matrices)
+        ut.write_pickle(cm, outdir.joinpath(f"{LABEL_COL}-cm.pkl"))
+        cm.mean().to_csv(outdir.joinpath(f"{LABEL_COL}-mean_cm.csv"), index=False)
+        cm.mean_correctness().to_csv(
+            outdir.joinpath(f"{LABEL_COL}-mean_cm_correctness.csv"), index=False
+        )
+# * Holdout
 elif smk.rule == "holdout":
     adata = get_adata()
     holdout_dct = smk.config["shallow"]["holdout"]
     for model_name, m_config in smk.params["models"]:
         outdir = Path(smk.params["outdir"].joinpath(model_name))
         outdir.mkdir(exist_ok=True)
-        pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
-        for split_name, split_config in holdout_dct["splits"].items():
+        pipeline = tt.make_pipeline(m_config, S_CONFIG["filter"]["feature_col"])
+        for split_name, split_config in smk.params["split_dct"].items():
             cur_outdir = outdir.joinpath(split_name)
             cur_outdir.mkdir(exist_ok=True)
             train, test = ut.train_test_from_yaml(adata=adata, config=split_config)
