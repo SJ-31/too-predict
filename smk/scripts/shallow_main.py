@@ -62,9 +62,12 @@ if smk.rule == "cross_validate":
             misc_metrics.append(result["misc"].assign(repeat=i))
             misses.append(result["misses"].assign(repeat=i))
             matrices.extend(result["cm"].values())
-        pd.concat(misc_metrics).to_csv(
-            outdir.joinpath(f"{LABEL_COL}-misc.csv"), index=False
+        misc_all = pd.concat(misc_metrics)
+        misc_all["fold"] = (
+            misc_all["fold"].astype(str) + "_" + misc_all["repeat"].astype(str)
         )
+        misc_all = misc_all.drop("repeat", axis="columns")
+        misc_all.to_csv(outdir.joinpath(f"{LABEL_COL}-misc.csv"), index=False)
         pd.concat(misses).to_csv(
             outdir.joinpath(f"{LABEL_COL}-misses.csv"), index=False
         )

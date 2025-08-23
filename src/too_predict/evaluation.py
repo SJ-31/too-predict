@@ -283,6 +283,8 @@ def cross_validate(
     others: dict = {
         "fold": [],
         "acc": [],
+        "auroc": [],
+        "aupr": [],
         "jaccard": [],
         "kappa": [],
         "balanced_acc": [],
