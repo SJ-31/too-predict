@@ -21,6 +21,8 @@ if config["test"]:
         },
     }
     config["dl"]["trainer"]["accelerator"] = "cpu"
+    config["dl"]["trainer"]["max_epochs"] = 2
+    config["do_kd"] = True
 
 else:
     splits = config["dl"]["holdout"]["splits"]
@@ -126,6 +128,7 @@ rule distillation:
         rules.preprocess.output.train,
     params:
         outdir=outdir,
+        models=models,
         date=DATE,
     output:
         holdout=results["holdout_kd"],
@@ -134,10 +137,14 @@ rule distillation:
         "scripts/torch_main.py"
 
 
+to_combine = [*rules.holdout.output.holdout, *rules.holdout.output.baseline]
+if config["do_kd"]:
+    to_combine.extend(rules.distillation.output.holdout)
+
+
 rule combine:
     input:
-        rules.holdout.output.holdout,
-        rules.holdout.output.baseline,
+        to_combine,
     output:
         all_holdout,
     run:
