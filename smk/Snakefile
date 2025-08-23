@@ -7,15 +7,26 @@ from datetime import date
 REPOS = config["out"]["repos"] if not config["test"] else config["out"]["test_repos"]
 OUT = config["out"]["root"] if not config["test"] else f"{config['out']['root']}/tests"
 TODAY = date.today().isoformat()
-DATE = config.get("date", TODAY)
-
-if config["test"] and not config.get("no_cpu"):
-    config["dl"]["device"] = "cpu"
+DATE = config.get("date")
 
 
-def dated(file):
-    date = config.get("date", "")
-    return f"{date}-{file}"
+onstart:
+    if not DATE:
+        raise ValueError(
+            f"""
+            Key-value pair `date` must be provided in the config! On cli: --config date=DATE
+            The current date is {TODAY}
+            """
+        )
+    try:
+        date.fromisoformat(DATE)
+    except ValueError:
+        raise ValueError(
+            f"""
+            `date` must be in the format YYYY-MM-DD
+            The current date is {TODAY}
+            """
+        )
 
 
 if RUN := config.get("run"):
@@ -33,3 +44,7 @@ else:
         "WARNING: no overriding config provided, pass one with --config override=<file>"
     )
     print("Using default configuration..")
+
+
+if config["test"] and not config.get("no_cpu"):
+    config["dl"]["device"] = "cpu"
