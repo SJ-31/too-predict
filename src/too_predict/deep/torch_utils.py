@@ -222,6 +222,7 @@ class AnnDataset(torch.utils.data.Dataset):
             )
         else:
             self.X = adata.X
+        self.is_numpy: bool = isinstance(self.X, np.ndarray)
         self.encoders: dict[str, sp.LabelEncoder] = {}
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
@@ -290,7 +291,10 @@ class AnnDataset(torch.utils.data.Dataset):
         val = self.X[index, :], self.labels[index, :]
         if not self.isbacked:
             return val
-        arr = val[0].toarray().astype(np.float32)
+        if self.is_numpy:
+            arr = val[0].astype(np.float32)
+        else:
+            arr = val[0].toarray().astype(np.float32)
         if arr.shape[0] == 1:
             arr = arr.flatten()
         as_tensor = torch.from_numpy(arr).to(device=self.device)
