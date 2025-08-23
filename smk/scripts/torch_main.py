@@ -69,9 +69,7 @@ def get_kwargs(model_name):
     model_cls = get_model_fn(model_name)
     trainer_kwargs = DL_CONFIG["trainer"].copy()
     trainer_kwargs["fast_dev_run"] = smk.config["dev_run"]
-    if TEST:
-        trainer_kwargs["log_every_n_steps"] = 1
-        trainer_kwargs["max_epochs"] = 3
+
     mconfig = d_ut.ModuleConfig(
         cache="val_acc",
         scheduler_fn=get_scheduler,
@@ -113,16 +111,15 @@ def holdout(file, distillation: bool = False):
         n_classes = tmp["n_classes"]
     test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
     cur_outdir = outdir.joinpath(split_name)
-    train: d_ut.AnnDataset = d_ut.AnnDataset(
-        ad.read_h5ad(train_path, backed=BACKED), to_encode=LABELS, device=DEVICE
-    )
+    train, valid = [
+        d_ut.AnnDataset(t, to_encode=LABELS, device=DEVICE)
+        for t in ut.train_test_split_ad(
+            ad.read_h5ad(train_path, backed=BACKED),
+            test_size=0.1,
+            random_state=ut.RANDOM_STATE,
+        )
+    ]
     encoders = train.encoders
-    train, valid = train_test_split_torch(
-        train,
-        generator=torch.Generator().manual_seed(smk.config["random_state"]),
-        as_dataloader=False,
-    )
-
     test = d_ut.AnnDataset(
         ad.read_h5ad(test_path, backed=BACKED), to_encode=LABELS, device=DEVICE
     )
@@ -131,8 +128,10 @@ def holdout(file, distillation: bool = False):
         baseline = Baseline(
             in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
         )
-        train = TeacherResponse(data=train, teacher=baseline)
-        valid = TeacherResponse(data=valid, teacher=baseline, is_fitted=True)
+        train = TeacherResponse(data=train, teacher=baseline, device=DEVICE)
+        valid = TeacherResponse(
+            data=valid, teacher=baseline, is_fitted=True, device=DEVICE
+        )
     for model_name in smk.params["models"]:
         outname = f"{model_name}_kd" if distillation else model_name
         output = cur_outdir.joinpath(f"{outname}.csv")
@@ -183,8 +182,10 @@ def cross_val(in_file: str, distillation: bool = False):
         baseline = Baseline(
             in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
         )
-        train_set = TeacherResponse(data=train_set, teacher=baseline)
-        valid_set = TeacherResponse(data=valid_set, teacher=baseline, is_fitted=True)
+        train_set = TeacherResponse(data=train_set, teacher=baseline, device=DEVICE)
+        valid_set = TeacherResponse(
+            data=valid_set, teacher=baseline, is_fitted=True, device=DEVICE
+        )
         outdir = Path(smk.params["outdir"]).joinpath(f"{model}_kd")
     else:
         outdir = Path(smk.params["outdir"]).joinpath(model)
@@ -215,7 +216,7 @@ def cross_val(in_file: str, distillation: bool = False):
         )
         cv.loc[:, "repeat"] = i
         dfs.append(cv)
-        for task, cm_list in cm:
+        for task, cm_list in cm.items():
             cms[task].extend(cm_list)
     for task, cm_list in cms.items():
         agg_cms = ConfusionMatrices(cm_list, encoder=train_set.encoders[task])

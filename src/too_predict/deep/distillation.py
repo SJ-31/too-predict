@@ -18,13 +18,16 @@ class TeacherResponse(torch.utils.data.Dataset):
         teacher: Baseline | MultiModule,
         is_fitted: bool = False,
         trainer: L.Trainer | None = None,
+        device: torch.device = "cpu",
         **kwargs,
     ) -> None:
         self.data: AnnDataset = data
         self.teacher: Baseline | MultiModule = teacher
         self.input: Tensor = self.data[:][0]
         self.response: Tensor
-        self.device: torch.device = data.device
+        self.device: torch.device = (
+            torch.device(device) if isinstance(device, str) else device
+        )
         self.label_cols: tuple = self.data.label_cols
         if isinstance(self.teacher, Baseline):
             if not is_fitted:
