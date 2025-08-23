@@ -30,3 +30,33 @@ colnames(obj) <- rownames(adata$obs)
 rownames(obj) <- rownames(adata$var)
 
 mm <- model.matrix(~ 0 + tumor_type, data = adata$obs)
+
+
+sample <- here(
+  "data",
+  "output",
+  "tests",
+  "deep",
+  "holdout",
+  "2025-08-22-",
+  "holdout_summary.csv"
+)
+
+task <- "tumor_type"
+
+holdout <- read_csv(sample)
+
+results <- holdout
+
+plot_metric_variation <- function(tb) {
+  tb |>
+    ggplot(aes(x = model, y = value, color = metric)) +
+    geom_boxplot() +
+    facet_wrap(~task)
+}
+
+unique_metrics <- results
+
+holdout |>
+  filter(metric == "acc", task == "tumor_type") |>
+  friedman_test_wrapper("metric", "split")

@@ -13,6 +13,8 @@ from too_predict._train_utils import (
 )
 from too_predict.imbalance import IMPLEMENTED_BALANCE, Balancer
 
+from snakemake.script import snakemake as smk
+
 # %%
 
 #
@@ -74,6 +76,3 @@ def test_get_subset():
         adata.obs["Sample_Type"].value_counts()["organoid"]
         == sub.obs["Sample_Type"].value_counts()["organoid"]
     )
-
-
-test_get_subset()

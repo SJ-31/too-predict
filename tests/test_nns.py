@@ -1,36 +1,15 @@
 #!/usr/bin/env ipython
 
-import json
-import os
-import tempfile
-import uuid
-from collections.abc import Callable, Sequence
-from functools import reduce
-from typing import override
-
-import anndata as ad
 import numpy as np
 import pandas as pd
-import scipy.spatial.distance as spd
-import sklearn.datasets as datasets
-import sklearn.linear_model as sl
-import sklearn.metrics as met
 import sklearn.model_selection as ms
-import sklearn.preprocessing as sp
 import too_predict.deep.evaluation as d_ev
 import too_predict.deep.nns as d_nn
 import too_predict.deep.torch_utils as d_ut
-import too_predict.filter as fil
-import too_predict.multitask as multi
 import too_predict.transformer as tt
 import too_predict.utils as ut
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.optim.lr_scheduler as schedule
 from pyhere import here
-from too_predict._train_utils import ADDITIONAL_SPLITS, get_model_fn
-from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.distillation import TeacherResponse, use_kd_criterion
 from too_predict.deep.evaluation import (
     init_test,
@@ -38,28 +17,17 @@ from too_predict.deep.evaluation import (
     random_softmax_loss,
     train_test_split_torch,
 )
-from too_predict.deep.logistic import DummyLR, MtcLr, MultiLevel
-from too_predict.deep.trainer import Trainer
+from too_predict.deep.metrics import multitask_all_metrics
 from too_predict.imputer import Imputer
-from torch import Generator, Tensor
 from torch.utils.data import (
     DataLoader,
-    RandomSampler,
-    Subset,
 )
-from xgboost import XGBClassifier
 
 import lightning as L
-from lightning.pytorch.callbacks import (
-    DeviceStatsMonitor,
-    GradientAccumulationScheduler,
-)
-from lightning.pytorch.callbacks.early_stopping import EarlyStopping
-from lightning.pytorch.loggers import CometLogger, WandbLogger
 
 cache = here("data", ".sklearn")
 # %%
-
+labels = ("Sample_Type", "tumor_type")
 
 torch.set_default_dtype(torch.float32)
 
@@ -68,6 +36,10 @@ adata1 = ut.training_data_internal_test(minimal=True)  # 1000 features
 adata = ut.training_data_internal_test(minimal=True, backed=True)
 transformer = tt.Transformer("clr", impute_fn=Imputer("plus_one"), inplace=False)
 # adata = transformer.fit_transform(adata)
+#
+toy = d_ut.AnnDataset(adata, to_encode=labels)
+
+train, test = train_test_split_torch(toy, as_dataloader=False)
 
 ad1 = d_ut.AnnDataset(adata1, to_encode=("Sample_Type", "tumor_type"))
 
@@ -77,7 +49,7 @@ adset = d_ut.AnnDataset(adata, to_encode=("Sample_Type", "tumor_type"))
 train_l, test_l = train_test_split_torch(adset, batch_size=32)
 
 train, test = ut.train_test_split_ad(adata)
-train_adset = d_ut.AnnDataset(train, to_encode=("Sample_Type", "tumor_type"))
+train_adset = d_ut.AnnDataset(train, to_encode=labels)
 valid_adset = d_ut.AnnDataset(test, to_encode=("Sample_Type", "tumor_type"))
 
 n_features, n_classes = d_ut.data_spec(train_l)
@@ -142,7 +114,10 @@ def test_lightning():
         model=model, train_dataloaders=DataLoader(train_adset_1), val_dataloaders=None
     )
     trainer.test(model=model, dataloaders=DataLoader(valid_adset_1))
-    return model, trainer
+    return (
+        model,
+        trainer,
+    )
 
 
 model, trainer = test_lightning()
@@ -166,10 +141,36 @@ def test_lightning_multi():
     model.set_cache("train_acc")
     trainer.fit(model=model, train_dataloaders=train_l, val_dataloaders=None)
     trainer.test(model=model, dataloaders=test_l)
-    return model, trainer
+    y_test = test_l.dataset[:][1]
+    x_test = test_l.dataset[:][0]
+    score = model.predict_proba(x_test)
+    metrics = multitask_all_metrics(y_true=y_test, scores=score, n_classes=n_classes)
+    return model, trainer, metrics
 
 
-model, trainer = test_lightning_multi()
+model, trainer, metrics = test_lightning_multi()
+
+
+def cm_correctness(cm: pd.DataFrame):
+    """Report the count of correct predictions for individual
+    labels in confusion matrix `cm`, as well as accuracy
+    Columns in `cm` are taken to be predictions, rows are truth
+    """
+    if cm.shape[0] != cm.shape[1]:
+        raise ValueError("Given confusion matrix is not square!")
+    total_counts = cm.sum(axis=1)
+    tp = np.diag(cm)
+    result = pd.DataFrame(
+        {
+            "label": list(cm.index),
+            "true_positives": tp,
+            "accuracy": tp / total_counts,
+            "total_count": total_counts,
+            "label_prop": total_counts / total_counts.sum(),
+        }
+    )
+    return pd.DataFrame(result).reset_index(drop=True)
+
 
 # %%
 
@@ -324,7 +325,7 @@ t = result["target"]
 def test_cross_val():
     cv: pd.DataFrame = d_ev.cross_validate(
         model_cls=d_nn.Disyak,
-        adset=adset,
+        adset=d_ut.AnnDataset(adata, to_encode=labels),
         **dict(
             cv_kwargs.copy(),
             **{
@@ -341,7 +342,7 @@ def test_cross_val():
     return cv
 
 
-cv = test_cross_val()
+cv, cm = test_cross_val()
 
 # %%
 
