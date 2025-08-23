@@ -153,7 +153,12 @@ rule combine:
         pd.concat(dfs).to_csv(output[0], index=False)
 
 
-rule evaluate:
+module evaluation:
+    snakefile:
+        "rules/evaluations.smk"
+
+
+use rule model_evaluation from evaluation as evaluate with:
     input:
         rules.combine.output,
     output:
@@ -161,15 +166,6 @@ rule evaluate:
     params:
         var="split",
         src=config["src"]["R"],
-    shell:
-        """
-        Rscript scripts/format_evaluation.R --var {params.var} \
-            --input {input} \
-            --post_hoc {output.post_hoc} \
-            --omnibus {output.omnibus} \
-            --plot {output.metric_plot} \
-            --src {params.src}
-        """
 
 
 onsuccess:
