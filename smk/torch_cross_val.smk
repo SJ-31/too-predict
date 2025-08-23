@@ -1,4 +1,6 @@
 import yaml
+import pandas as pd
+from pathlib import Path
 
 
 include: "Snakefile"
@@ -11,7 +13,9 @@ config["do_holdout"] = False
 if config["test"]:
     config["dl"]["trainer"]["accelerator"] = "cpu"
     config["dl"]["trainer"]["max_epochs"] = 2
+    config["cv_n_repeats"] = 2
     config["dl"]["trainer"]["log_every_n_steps"] = 1
+    config["do_kd"] = True
 
 
 model_dict = config["models"]["dl"]
@@ -50,7 +54,7 @@ for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
 
 models = models + ["baseline"]
 baseline_cv = f"{outdir}/baseline_cv.csv"
-all_cv = f"{output}/cv_all.csv"
+all_cv = f"{outdir}/cv_all.csv"
 
 for_all = {"cv": results["cv"]}
 if config["do_kd"]:
@@ -121,31 +125,41 @@ rule distillation:
         "scripts/torch_main.py"
 
 
+to_combine = [*rules.cross_validate.output.cv, rules.baseline.output.cv]
+if config["do_kd"]:
+    to_combine.extend(rules.distillation.output.cv)
+
+
 rule combine_cvs:
     input:
-        rules.cross_validate.output.cv,
+        to_combine,
     output:
         all_cv,
     run:
         dfs = []
         for csv in input:
-            if csv.stem != "csv_results":
+            csv = Path(csv)
+            if csv.stem != "cv_results":
                 continue
             name = Path(csv).absolute().parent.stem
             df = pd.read_csv(csv).assign(model=name)
             dfs.append(df)
-        pd.concat(dfs).to_csv(output[0])
+        pd.concat(dfs).to_csv(output[0], index=False)
 
 
-rule evaluate:
+module evaluation:
+    snakefile:
+        "rules/evaluations.smk"
+
+
+use rule model_evaluation from evaluation as evaluate with:
     input:
         rules.combine_cvs.output,
     output:
         **evaluations,
     params:
         var="fold",
-    script:
-        "scripts/format_evaluation.R"
+        src=config["src"]["R"],
 
 
 onsuccess:

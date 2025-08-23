@@ -50,6 +50,11 @@ source(glue("{args$src}/plotting.R"))
 result <- read_csv(args$input)
 var <- args$var
 
+if ("repeat" %in% colnames(result)) {
+  result[[var]] <- paste0(result[[var]], "_", result[["repeat"]])
+  result <- select(result, -`repeat`)
+}
+
 
 unique_metrics <- unique(result$metric)
 unique_tasks <- unique(result$task)
@@ -59,6 +64,9 @@ unique_tasks <- unique(result$task)
 omnibus_result <- lapply(unique_metrics, \(m) {
   lapply(unique_tasks, \(t) {
     current <- filter(result, metric == m, task == t)
+    if ("context" %in% colnames(current)) {
+      current <- filter(current, context == "test")
+    }
     test <- friedman_test_wrapper(current, "metric", var)
     tibble(metric = m, task = t, p_value = test$p_value_alt)
   }) |>
