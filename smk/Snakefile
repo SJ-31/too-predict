@@ -30,7 +30,7 @@ onstart:
 
 
 if RUN := config.get("run"):
-    pass
+    RUN = f"-{RUN}"
 else:
     RUN = ""
     print("WARNING: No run name provided, pass one with --config run=<name>")

@@ -4,9 +4,14 @@ import yaml
 include: "Snakefile"
 
 
-outdir = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}-{RUN}"
+outdir = f"{OUT}/deep/cross_validation/{config.get('date', TODAY)}{RUN}"
 config["do_cv"] = True
 config["do_holdout"] = False
+
+if config["test"]:
+    config["dl"]["trainer"]["accelerator"] = "cpu"
+    config["dl"]["trainer"]["max_epochs"] = 2
+    config["dl"]["trainer"]["log_every_n_steps"] = 1
 
 
 model_dict = config["models"]["dl"]
@@ -27,7 +32,9 @@ results = {}
 log_paths = {}
 output_files = [
     "cv_results",
-    *expand("{lab}-{prefix}_cm", lab=config["multi_labels"], n=["average", "total"]),
+    *expand(
+        "{lab}-{prefix}_cm", lab=config["multi_labels"], prefix=["average", "total"]
+    ),
 ]
 for out_file_type, suffix in zip(["cv", "cv_kd"], ["", "_kd"]):
     log_paths[out_file_type] = [

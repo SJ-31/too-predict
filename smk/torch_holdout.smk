@@ -5,7 +5,7 @@ import pandas as pd
 include: "Snakefile"
 
 
-outdir = f"{OUT}/deep/holdout/{config.get('date', TODAY)}-{RUN}"
+outdir = f"{OUT}/deep/holdout/{config.get('date', TODAY)}{RUN}"
 config["do_cv"] = False
 config["do_holdout"] = True
 

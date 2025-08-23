@@ -20,8 +20,8 @@ else:
 split_names = splits.keys()
 
 
-cv_outdir = f"{OUT}/shallow/cross_validation/{config.get('date', TODAY)}-{RUN}"
-holdout_outdir = f"{OUT}/shallow/holdout/{config.get('date', TODAY)}-{RUN}"
+cv_outdir = f"{OUT}/shallow/cross_validation/{config.get('date', TODAY)}{RUN}"
+holdout_outdir = f"{OUT}/shallow/holdout/{config.get('date', TODAY)}{RUN}"
 
 model_dct = config["models"]["shallow"]
 label = config["single_label"]
