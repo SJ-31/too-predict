@@ -2,4 +2,4 @@ cv:
   batch_size: -1 # Use entire train set
   n_splits: 3
 cv_n_repeats: 1
-run_only: ["Disyak", "BranchNet", "Parallel_Deep"]
+run_only: ["Disyak", "BranchNet", "Disyak_All"]

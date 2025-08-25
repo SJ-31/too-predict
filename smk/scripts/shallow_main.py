@@ -42,14 +42,29 @@ def write_results(results, result_dir, label_col):
 if smk.rule == "cross_validate":
     cv_kwargs = smk.config["shallow"]["cv"]
     adata = get_adata()
+    seen_preprocessing = {}
     for model, config in smk.params["models"].items():
         outdir: Path = Path(smk.params["outdir"]).joinpath(model)
         outdir.mkdir(exist_ok=True)
-        misc_metrics = []
-        misses = []
-        matrices = []
+        misc_metrics, misses, matrices = [], [], []
+        seen = False
+        pp = (config.get("filter"), config.get("transform"))
+
+        # Use previously-fit preprocessing defined on the same folds to avoid
+        # redundant computation
+        if pp in seen_preprocessing:
+            seen = True
+            cv_preprocessing: dict | None = seen_preprocessing[pp]
+            save_to: dict | None = None
+        else:
+            seen_preprocessing[pp] = {}
+            save_to = seen_preprocessing[pp]
+            cv_preprocessing = None
+
         for i in range(smk.config["cv_n_repeats"]):
             pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
+            if seen:
+                pipeline = pipeline.predictor
             result = te.cross_validate(
                 model=pipeline,
                 adata=adata,
@@ -58,6 +73,8 @@ if smk.rule == "cross_validate":
                 n_splits=cv_kwargs["n_splits"],
                 record_dir=outdir,
                 random_state=smk.config["random_state"],
+                preprocessing=cv_preprocessing,
+                save_model=save_to,
             )
             misc_metrics.append(result["misc"].assign(repeat=i))
             misses.append(result["misses"].assign(repeat=i))

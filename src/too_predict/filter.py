@@ -59,7 +59,10 @@ class Filter:
         """
         if not isinstance(features, Sequence) and features is not None:
             raise ValueError(
-                "Features must be a sequence object! Did you mean to pass to `method` instead?"
+                """
+                Features must be a sequence object!
+                Did you mean to pass to `method` instead?"
+                """
             )
         if features is None and method is None:
             raise ValueError("One of `features` or `method` must be given!")
