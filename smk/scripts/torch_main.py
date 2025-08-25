@@ -111,8 +111,11 @@ def holdout(file, distillation: bool = False):
         n_classes = tmp["n_classes"]
     test_path = train_path.parent.joinpath(f"{split_name}_test.h5ad")
     cur_outdir = outdir.joinpath(split_name)
+    encoders = d_ut.AnnDataset.fit_encoders(
+        ut.training_data_internal(**smk.config["training_data"], only_obs=True), LABELS
+    )
     train, valid = [
-        d_ut.AnnDataset(t, to_encode=LABELS, device=DEVICE)
+        d_ut.AnnDataset(t, to_encode=LABELS, device=DEVICE, encoders=encoders)
         for t in ut.train_test_split_ad(
             ad.read_h5ad(train_path, backed=BACKED),
             test_size=0.1,
@@ -121,9 +124,18 @@ def holdout(file, distillation: bool = False):
     ]
     encoders = train.encoders
     test = d_ut.AnnDataset(
-        ad.read_h5ad(test_path, backed=BACKED), to_encode=LABELS, device=DEVICE
+        ad.read_h5ad(test_path, backed=BACKED),
+        to_encode=LABELS,
+        device=DEVICE,
+        encoders=encoders,
     )
-    baseline_eval(train, test, n_features, n_classes=n_classes, outdir=cur_outdir)
+    baseline_eval(
+        train=train,
+        test=test,
+        n_features=n_features,
+        n_classes=n_classes,
+        outdir=cur_outdir,
+    )
     if distillation:
         baseline = Baseline(
             in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS
@@ -174,11 +186,16 @@ def cross_val(in_file: str, distillation: bool = False):
     adata = ad.read_h5ad(in_file, backed=BACKED)
     model = Path(in_file).stem
     n_features, n_classes = d_ut.data_spec(adata, y=LABELS)
+    encoders = d_ut.AnnDataset.fit_encoders(adata, LABELS)
     train, valid = ut.train_test_split_ad(
         adata, test_size=0.1, random_state=ut.RANDOM_STATE
     )
-    train_set = d_ut.AnnDataset(train, to_encode=LABELS, device=DEVICE)
-    valid_set = d_ut.AnnDataset(valid, to_encode=LABELS, device=DEVICE)
+    train_set = d_ut.AnnDataset(
+        train, to_encode=LABELS, device=DEVICE, encoders=encoders
+    )
+    valid_set = d_ut.AnnDataset(
+        valid, to_encode=LABELS, device=DEVICE, encoders=encoders
+    )
     if distillation:
         baseline = Baseline(
             in_features=n_features, n_classes_per_task=n_classes, **BASELINE_KWARGS

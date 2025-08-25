@@ -247,12 +247,16 @@ class AnnDataset(torch.utils.data.Dataset):
 
     @staticmethod
     def fit_encoders(
-        adata: ad.AnnData, to_encode: tuple[str]
+        data: ad.AnnData | pd.DataFrame, to_encode: tuple[str]
     ) -> dict[str, sp.LabelEncoder]:
+        if isinstance(data, ad.AnnData):
+            obs = data.obs
+        else:
+            obs = data
         encoders = {}
         for col in to_encode:
             encoder = sp.LabelEncoder()
-            encoders[col] = encoder.fit(adata.obs[col])
+            encoders[col] = encoder.fit(obs[col])
         return encoders
 
     def decode(
