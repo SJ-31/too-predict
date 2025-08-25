@@ -223,7 +223,6 @@ def train_test_wrapper_torch(
     return test_acc, train_acc
 
 
-# TODO: give this params for working with distillation
 def holdout(
     data: ad.AnnData | dict[str, tuple[ad.AnnData, ad.AnnData]],
     split_fns: dict[str, Callable[[ad.AnnData], tuple[ad.AnnData, ad.AnnData]]]

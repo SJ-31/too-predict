@@ -130,7 +130,7 @@ class HardSharer(d_ut.MultiModule):
         return tuple(result)
 
     @override
-    def criterion(self, y_pred, y_true, context: str | None = None):
+    def criterion(self, y_pred, y_true, context: str | None = None, **kwargs):
         total_loss: torch.Tensor = 0
         total_loss += multitask_cross_entropy_loss(
             y_pred,

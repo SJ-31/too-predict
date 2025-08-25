@@ -81,6 +81,7 @@ def get_kwargs(model_name):
         "model_kwargs": model_kwargs,
         "mconfig": mconfig,
         "trainer_kwargs": trainer_kwargs,
+        "loader_kwargs": DL_CONFIG["dataloader"].copy(),
     }
 
     # TODO: get backed anndata working with anndataset
@@ -142,6 +143,7 @@ def holdout(file, distillation: bool = False):
                 module_cls=kwargs["model_class"],
                 trainer_kwargs=trainer_kwargs,
                 device=DEVICE,
+                loader_kwargs=kwargs["loader_kwargs"],
                 train_test=(train, test),
                 to_encode=LABELS,
                 validation=valid,
@@ -204,6 +206,7 @@ def cross_val(in_file: str, distillation: bool = False):
                 platform="tensorboard",
                 save_dir=outdir.joinpath("tensorboard"),
             ),
+            random_state=ut.RANDOM_STATE,
             trainer_kwargs=kwargs["trainer_kwargs"],
             adset=train_set,
             in_features=n_features,
