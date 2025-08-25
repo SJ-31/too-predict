@@ -251,7 +251,8 @@ def cross_validate(
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
     record_dir: Path | None = None,
-    save_preprocessing: dict | None = None,
+    post_fit: Callable[[int, Pipeline | PredBase], None] | None = None,
+    preprocessing: Pipeline | None | dict[int, Pipeline] = None,
 ) -> dict:
     """Evaluate model performance with cross-validation
 
@@ -265,6 +266,11 @@ def cross_validate(
         the metric to `report` to the optuna trial. Metric will be used by the pruner
     balancer : Balancer instance that will transform the training data
     record_dir : directory to record fold metadata
+    preprocessing : Pipeline to preprocess data before model fitting. Can be a dictionary
+        to specify fold-specific Pipelines e.g. if using the earlier preprocessing fit
+        on the same splits, or a single Pipeline
+    post_fit : function to call on the model after fitting in cv round.
+        Takes two parameters: fold and model
     """
     N = adata.copy()
     labels = N.obs[label_col]
@@ -298,7 +304,16 @@ def cross_validate(
             x_train = balancer.fit_transform(x_train)  # Creates copy
         x_test: ad.AnnData = N[test_i]
 
+        if isinstance(preprocessing, Pipeline):
+            x_train = preprocessing.transform(x_train)
+            x_test = preprocessing.transform(x_test)
+        elif preprocessing is not None and preprocessing:
+            x_train = preprocessing[fold].transform(x_train)
+            x_test = preprocessing[fold].transform(x_test)
+
         model.fit(x_train, y=label_col)
+        if post_fit is not None:
+            post_fit(fold, model)
 
         y_true = labels.iloc[test_i]  # True values
         if record_dir is not None:
@@ -370,7 +385,7 @@ def train_test_wrapper(
     verbose: bool = False,
     minimal: bool = True,
     save_split_path: Path | None = None,
-):
+) -> tuple[dict, Pipeline | PredBase]:
     """Wrapper function for fitting PredBase model, testing it, and returning evaluation
     metrics
 
@@ -421,6 +436,7 @@ def train_test_wrapper(
         index=[0],
     )
     model.fit(x_train, y=label_col)
+
     y_true = x_test.obs[label_col]
     if not minimal:
         proba = model.predict_proba(x_test)
@@ -437,9 +453,9 @@ def train_test_wrapper(
 
         res["misses"] = get_misses(x_test, y_true, res["pred"])
         res["split_prop"] = split_prop
-        return res
+        return res, model
     pred = model.predict(x_test)
-    return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}
+    return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}, model
 
 
 def holdout(
@@ -452,6 +468,7 @@ def holdout(
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
     minimal: bool = False,
+    post_fit: Callable[[str, Pipeline | PredBase], None] | None = None,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
 
@@ -499,7 +516,7 @@ def holdout(
         iter_over = splitters
     for set_label, val in iter_over.items():
         try:
-            cur = train_test_wrapper(
+            cur, model = train_test_wrapper(
                 model=pipeline_fn(),
                 label_col=label_col,
                 maybe_split=val,
@@ -510,6 +527,8 @@ def holdout(
                 minimal=minimal,
                 save_split_path=save_split_path,
             )
+            if post_fit is not None:
+                post_fit(set_label, model)
             if minimal:
                 minimal_accs[set_label] = cur
         except RRuntimeError as e:

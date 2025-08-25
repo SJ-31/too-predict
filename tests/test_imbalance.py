@@ -29,7 +29,7 @@ train, test = ut.train_test_split_ad(adata)
 y = "tumor_type"
 
 model = tm.PredBase(tm.XGBEstimator(max_depth=1))
-result = te.train_test_wrapper(model, (train, test), y)
+result, _ = te.train_test_wrapper(model, (train, test), y)
 
 
 def test_sim_nb():
@@ -40,7 +40,7 @@ def test_sim_nb():
     balancer = tb.Balancer(method="nb_edgeR", sample_mus=False, blocking=False)
     # Seems to do better without sampling, and instead taking the mean
     new = balancer.fit_transform(tcga, y=y)
-    result = te.train_test_wrapper(model, (new, tcga), y)
+    result, _ = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
 
@@ -53,7 +53,7 @@ def test_sim_nb_block():
         method="nb_edgeR", blocking=True, sample_mus=False, sampling_strategy="none"
     )
     new = balancer.fit_transform(tcga, y=y)
-    result = te.train_test_wrapper(model, (new, tcga), y)
+    result, _ = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
 
@@ -70,7 +70,7 @@ def test_dirichlet():
     tcga = tb.dirichlet_sim(tcga, as_transform=True)
     balancer = tb.Balancer(method="dirichlet")
     new = balancer.fit_transform(tcga, y=y)
-    result = te.train_test_wrapper(model, (new, tcga), y)
+    result, _ = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
 
@@ -80,7 +80,7 @@ def test_empirical():
     train, test = ut.train_test_split_ad(tcga)
     balancer = tb.Balancer(method="empirical")
     new = balancer.fit_transform(tcga, y=y)
-    result = te.train_test_wrapper(model, (new, tcga), y)
+    result, _ = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
 
 
@@ -94,7 +94,7 @@ def test_splatter():
     print(tcga.obs[y].value_counts())
     balancer = tb.Balancer(method="splatter")
     new = balancer.fit_transform(tcga, y=y)
-    result = te.train_test_wrapper(model, (new, tcga), y)
+    result, _ = te.train_test_wrapper(model, (new, tcga), y)
     base = te.train_test_wrapper(model, (tcga, tcga), y)
     print(base, result)
 
@@ -123,7 +123,7 @@ def test_cvae():
     )
     trans = transformer.fit_transform(adata)
     new = balancer.fit_transform(trans, y=y)
-    result = te.train_test_wrapper(model, (new, trans), y)
+    result, _ = te.train_test_wrapper(model, (new, trans), y)
     base = te.train_test_wrapper(model, (trans, trans), y)
     print(base, result)
     return new

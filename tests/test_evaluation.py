@@ -51,14 +51,21 @@ def test_shapley():
 
 
 def test_holdout():
+    dct = {}
     result = te.holdout(
         pipeline_fn=lambda: Pipeline(
             [*default_filter_transform()], predictor=PredBase(RandomForestClassifier())
         ),
         data={"foo": ut.train_test_split_ad(ADATA)},
         label_col="tumor_type",
+        save_models=dct,
     )
+    print(dct)
     return result
 
 
 result = test_holdout()
+
+this = Pipeline(
+    [*default_filter_transform()], predictor=PredBase(RandomForestClassifier())
+)
