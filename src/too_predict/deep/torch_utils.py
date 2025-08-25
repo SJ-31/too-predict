@@ -230,10 +230,8 @@ class AnnDataset(torch.utils.data.Dataset):
                     "An encoder must be provided for each value of `to_encode`!"
                 )
             self.encoders: dict[str, sp.LabelEncoder] = encoders
-            given_encoders = True
         else:
-            self.encoders = {}
-            given_encoders = False
+            self.encoders = AnnDataset.fit_encoders(adata, to_encode)
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
         ).to(self.device)
@@ -244,13 +242,18 @@ class AnnDataset(torch.utils.data.Dataset):
         for i, col in enumerate(to_encode):
             labs = adata.obs[col]
             self.n_classes[col] = len(labs.unique())
-            if not given_encoders:
-                encoder = sp.LabelEncoder()
-                self.labels[:, i] = torch.as_tensor(encoder.fit_transform(labs))
-                self.encoders[col] = encoder
-            else:
-                encoder = self.encoders[col]
-                self.labels[:, i] = torch.as_tensor(encoder.transform(labs))
+            encoder = self.encoders[col]
+            self.labels[:, i] = torch.as_tensor(encoder.transform(labs))
+
+    @staticmethod
+    def fit_encoders(
+        adata: ad.AnnData, to_encode: tuple[str]
+    ) -> dict[str, sp.LabelEncoder]:
+        encoders = {}
+        for col in to_encode:
+            encoder = sp.LabelEncoder()
+            encoders[col] = encoder.fit(adata.obs[col])
+        return encoders
 
     def decode(
         self,
