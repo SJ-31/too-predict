@@ -196,6 +196,7 @@ class AnnDataset(torch.utils.data.Dataset):
         adata: ad.AnnData,
         device: str = "cpu",
         to_encode: tuple[str] | str = ("Sample_Type", "tumor_type", "primary_site"),
+        encoders: dict[str, sp.LabelEncoder] | None = None,
     ) -> None:
         """__init__.
 
@@ -223,7 +224,16 @@ class AnnDataset(torch.utils.data.Dataset):
         else:
             self.X = adata.X
         self.is_numpy: bool = isinstance(self.X, np.ndarray)
-        self.encoders: dict[str, sp.LabelEncoder] = {}
+        if encoders:
+            if set(encoders.keys()) != set(to_encode):
+                raise ValueError(
+                    "An encoder must be provided for each value of `to_encode`!"
+                )
+            self.encoders: dict[str, sp.LabelEncoder] = encoders
+            given_encoders = True
+        else:
+            self.encoders = {}
+            given_encoders = False
         self.labels: torch.Tensor = torch.zeros(
             self.X.shape[0], len(to_encode), dtype=int
         ).to(self.device)
@@ -232,11 +242,15 @@ class AnnDataset(torch.utils.data.Dataset):
         if isinstance(to_encode, str):
             to_encode = (to_encode,)
         for i, col in enumerate(to_encode):
-            encoder = sp.LabelEncoder()
             labs = adata.obs[col]
             self.n_classes[col] = len(labs.unique())
-            self.labels[:, i] = torch.as_tensor(encoder.fit_transform(labs))
-            self.encoders[col] = encoder
+            if not given_encoders:
+                encoder = sp.LabelEncoder()
+                self.labels[:, i] = torch.as_tensor(encoder.fit_transform(labs))
+                self.encoders[col] = encoder
+            else:
+                encoder = self.encoders[col]
+                self.labels[:, i] = torch.as_tensor(encoder.transform(labs))
 
     def decode(
         self,
