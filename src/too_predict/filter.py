@@ -135,6 +135,22 @@ class Filter:
         elif self.method is None and self.features:
             print("Using existing feature set...")
 
+    def transfer_features(self, other: Filter) -> None:
+        """Try to update `other` Filter object to have the feature set of self
+        self must be fitted
+
+        Parameters
+        ----------
+        source : fitted `Filter` object, with defined method and features
+        target : unfitted `Filter` object, with defined method
+        """
+        if self.features:
+            if self.method == other.method:
+                other.features = self.features
+                other.method = None  # So nothing happens if you call `target.fit`
+        else:
+            raise ValueError("`self` object must be fitted before tranfering features!")
+
     def fit_transform(self, adata: ad.AnnData, _=None) -> ad.AnnData:
         self.fit(adata)
         return self.transform(adata)
