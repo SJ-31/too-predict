@@ -17,7 +17,6 @@ from too_predict._train_utils import get_model_fn, smk_callbacks
 from too_predict.deep.distillation import TeacherResponse
 from too_predict.deep.evaluation import (
     cross_validate,
-    train_test_split_torch,
     train_test_wrapper_torch,
 )
 from too_predict.deep.metrics import (
@@ -43,8 +42,8 @@ LABELS = smk.config["multi_labels"]
 DL_CONFIG = smk.config["dl"]
 TEST: bool = smk.config["test"]
 N_REPEATS = smk.config["cv_n_repeats"] if not TEST else 2
-BASELINE_KWARGS = {"max_depth": 2}
 DEVICE = "cpu" if TEST else DL_CONFIG["device"]
+BASELINE_KWARGS = {"max_depth": 2, "device": DEVICE}
 ROUTINE = "cv" if smk.config["do_cv"] and not smk.config["do_holdout"] else "holdout"
 
 if (mlp := DL_CONFIG["matmul_precision"].lower()) != "none":

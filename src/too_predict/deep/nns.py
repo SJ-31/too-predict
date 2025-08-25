@@ -278,19 +278,27 @@ class Baseline:
     trained independently on each task
     """
 
-    def __init__(self, in_features: int, n_classes_per_task: list[int], **kwargs):
-        """ """
+    def __init__(
+        self,
+        in_features: int,
+        n_classes_per_task: list[int],
+        device: str | torch.device = "cpu",
+        **kwargs,
+    ):
         self.models: list = [
             XGBClassifier(**kwargs, num_class=n) for n in n_classes_per_task
         ]
+        self.device: torch.device = (
+            device if isinstance(device, torch.device) else torch.device(device)
+        )
 
     def fit(self, X, y=None):
         if isinstance(X, Tensor):
-            X = X.numpy()
+            X = X.cpu().numpy()
         elif isinstance(X, Dataset):
             x_tensor, y_tensor = X[:]
-            X = x_tensor.numpy()
-            y = y_tensor.numpy()
+            X = x_tensor.cpu().numpy()
+            y = y_tensor.cpu().numpy()
         for model, y in zip(self.models, d_ut.iter_cols(y)):
             model.fit(X, y)
 
@@ -300,8 +308,11 @@ class Baseline:
         except ValueError:
             x = batch
         if isinstance(x, Tensor):
-            x = x.numpy()
-        return torch.tensor(np.column_stack(tuple(m.predict(x) for m in self.models)))
+            x = x.cpu().numpy()
+        return torch.tensor(
+            np.column_stack(tuple(m.predict(x) for m in self.models)),
+            device=self.device,
+        )
 
     def predict_proba(self, batch):
         try:
@@ -309,5 +320,7 @@ class Baseline:
         except ValueError:
             x = batch
         if isinstance(x, Tensor):
-            x = x.numpy()
-        return tuple(torch.tensor(m.predict_proba(x)) for m in self.models)
+            x = x.cpu().numpy()
+        return tuple(
+            torch.tensor(m.predict_proba(x), device=self.device) for m in self.models
+        )
