@@ -2,7 +2,7 @@
 import pickle
 from collections.abc import Sequence
 from functools import partial
-from typing import Callable, Literal, override
+from typing import Any, Callable, Literal, override
 
 import anndata as ad
 import numpy as np
@@ -697,11 +697,26 @@ class Pipeline:
     def __init__(self, steps: Sequence, predictor: PredBase | None = None) -> None:
         self.preprocessing: Sequence = [s for s in steps if s is not None]
         self.predictor: PredBase | None = predictor
+        self.dct: dict = {"Predictor": self.predictor}
+        repeat_counter = {}
+        self.dct = {}
+        for step in self.preprocessing:
+            cls_name = type(step).__name__
+            count = repeat_counter.get(cls_name, -1) + 1
+            repeat_counter[cls_name] = count
+            if count > 0:
+                self.dct[f"{cls_name}.{count}"] = step
+            else:
+                self.dct[cls_name] = step
 
     def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
         for step in self.preprocessing:
             x = step.fit_transform(x)
         self.predictor.fit(x, y)
+
+    @override
+    def __repr__(self) -> str:
+        return repr(self.dct)
 
     @property
     def score_fn(self) -> str:
