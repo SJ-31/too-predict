@@ -203,7 +203,7 @@ class ConfusionMatrices:
         labels = [i for i in range(n_classes)]
         labels = encoder.inverse_transform(labels) if encoder is not None else labels
         if isinstance(cm, Tensor):
-            cm = cm.numpy()
+            cm = cm.cpu().numpy()
         return pd.DataFrame(cm, columns=labels, index=labels)
 
     @staticmethod
