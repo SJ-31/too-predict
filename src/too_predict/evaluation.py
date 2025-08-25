@@ -1,4 +1,5 @@
 #!/usr/bin/env ipython
+import itertools
 import pickle
 from collections.abc import Sequence
 from pathlib import Path
@@ -16,10 +17,8 @@ from sklearn.linear_model import LinearRegression
 from torch.utils.data import Dataset
 from torchmetrics.functional.classification import accuracy
 
-from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
 from too_predict.model import Pipeline, PredBase
-from too_predict.transformer import Transformer
 from too_predict.utils import RANDOM_STATE
 
 
@@ -252,6 +251,7 @@ def cross_validate(
     trial: optuna.Trial | None = None,
     get_report_val: Callable = lambda x: x["kappa"],
     record_dir: Path | None = None,
+    save_preprocessing: dict | None = None,
 ) -> dict:
     """Evaluate model performance with cross-validation
 
@@ -910,3 +910,63 @@ class Robustness:
             metric_file = save_to.parent.joinpath(f"{save_to.stem}.csv")
             metrics.to_csv(metric_file, index=False)
         return beta
+
+
+def make_grid(
+    options: dict,
+    disallowed: Sequence[dict] | None = None,
+    named: bool = False,
+    name_fn: Callable[[dict], str] | None = None,
+) -> list[dict] | dict[str, dict]:
+    """Return a list of dictionaries containing different orderings of values in
+        `options`
+
+    Parameters
+    ----------
+    options : Dictionary mapping parameter names to lists of values that will be used to
+        to create the combinations.
+    disallowed : sequence of dictionaries specifying disallowed option values.
+        Any combinations containing these values together will not be added
+        Elements of `disallowed` are dictionaries
+        EX: [{"model": "RandomForest", "k": 9}, ...] will disallow all combinations having
+            with model = RandomForest and k = 9
+    named : Return a dictionary instead of a list
+    name_fn : Callable taking option dictionary and returning a unique string for the name
+        of that combination. If None, default is to concatenate the values of the combination,
+            joining with "-"
+
+    Notes
+    -------
+    the order of keys in `options` is important, specifying how each combination dictionary
+        will be constructed from the ordered sequence
+    Raises value error if `named`=True and non-unique names are found
+
+    Returns
+    -------
+    list or dictionary where keys are names of combinations
+    """
+    result = {} if named else []
+    keys = list(options.keys())
+    for comb in itertools.product(*options.values()):
+        current = {}
+        keep: bool = True
+        for val, key in zip(comb, keys):
+            current[key] = val
+        if disallowed:
+            for blacklisted in disallowed:
+                if all(current[k] == v for k, v in blacklisted.items()):
+                    keep = False
+                    break
+        if keep and not named:
+            result.append(current)
+        if keep and named:
+            if name_fn is not None:
+                name = name_fn(current)
+            else:
+                name = "-".join(str(v) for v in current.values())
+            if name in result:
+                raise ValueError(
+                    f"Couldn't produce unique name for combination {current}!"
+                )
+            result[name] = current
+    return result

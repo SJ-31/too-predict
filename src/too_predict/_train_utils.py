@@ -889,7 +889,7 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
     else:
         transform = None
 
-    filter_before = config.get("filter_before", False)
+    filter_before = spec.get("filter_before", False)
     if filter is None and transform is None:
         preprocessing = []
     elif filter_before:
