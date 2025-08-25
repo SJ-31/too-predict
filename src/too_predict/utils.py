@@ -440,7 +440,8 @@ def training_data_internal(
     backed=None,
     as_dask: bool = False,
     subset_p: float = 0.4,  # Subset this proportion from every tumor type (excluding organoid samples)
-) -> ad.AnnData:
+    only_obs: bool = False,
+) -> ad.AnnData | pd.DataFrame:
     root: Path = res.files(too_predict)
     dir = (
         root.parent.parent.joinpath("remote")
@@ -453,12 +454,19 @@ def training_data_internal(
     subset_file = dir.joinpath(
         f"all_tumors_rnaseq-{label}_subset-{subset_converted}.h5ad"
     )
+    subset_obs_file = subset_file.with_suffix(".csv")
     if subset:
         print(f"Subset of {label} at proportion {subset_p}")
-    if subset and subset_file.exists():
+    if subset and subset_file.exists() and not only_obs:
         if as_dask:
             return adata_as_dask(subset_file)
         return ad.read_h5ad(subset_file, backed=backed)
+    elif subset and subset_file.exists() and only_obs:
+        if not subset_obs_file.exists():
+            obs = ad.read_h5ad(subset_file, backed=True).obs
+            obs.to_csv(subset_obs_file)
+            return obs
+        return pd.read_csv(subset_obs_file)
     elif backed and subset and not subset_file.exists():
         raise ValueError(
             "`backed` must be set False for the initial creation of the subset file"
@@ -516,6 +524,9 @@ def training_data_internal(
         )
         adata = ad.concat([organoids, adata], axis="obs", merge="same")
         adata.write_h5ad(subset_file)
+        adata.obs.to_csv(subset_obs_file, index=False)
+    if only_obs:
+        return adata.obs
     return adata
 
 
