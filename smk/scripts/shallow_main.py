@@ -9,6 +9,7 @@ import too_predict.evaluation as te
 import too_predict.utils as ut
 from snakemake.script import snakemake as smk
 from too_predict.deep.metrics import ConfusionMatrices
+from too_predict.model import Pipeline, PredBase
 
 REF, FEAT = ut.ref_feature_lists_internal()
 
@@ -20,6 +21,7 @@ S_CONFIG = smk.config["shallow"]
 def get_adata() -> ad.AnnData:
     if TEST:
         adata = ut.training_data_internal_test()
+        adata = adata[:, :5000]
         adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "recurrent"]), :]
         adata.obs["RANDOM"] = ut.RNG.choice(
             [str(s) for s in (range(8))], adata.shape[0]
@@ -38,28 +40,33 @@ def write_results(results, result_dir, label_col):
                 cm.to_csv(result_dir.joinpath(f"{label_col}_cm.csv"))
 
 
+def save_preprocessing(label, pipeline: Pipeline, save_to, override=False):
+    "Extract preprocessing from fitted pipeline as a new pipeline and record in `save_to`"
+    if override or (label not in save_to):
+        save_to[label] = Pipeline(steps=pipeline.preprocessing)
+
+
 # * Cross validation
 if smk.rule == "cross_validate":
     cv_kwargs = smk.config["shallow"]["cv"]
     adata = get_adata()
-    seen_preprocessing = {}
+    seen_preprocessing: dict[tuple, dict[int, Pipeline]] = {}
     for model, config in smk.params["models"].items():
+        spec = config.get("spec")
+        if not spec:
+            print(f"WARNING: pipeline spec not given for {model}")
         outdir: Path = Path(smk.params["outdir"]).joinpath(model)
         outdir.mkdir(exist_ok=True)
         misc_metrics, misses, matrices = [], [], []
         seen = False
-        pp = (config.get("filter"), config.get("transform"))
+        pp = (spec.get("filter"), spec.get("transform"))
 
         # Use previously-fit preprocessing defined on the same folds to avoid
         # redundant computation
         if pp in seen_preprocessing:
             seen = True
-            cv_preprocessing: dict | None = seen_preprocessing[pp]
-            save_to: dict | None = None
         else:
             seen_preprocessing[pp] = {}
-            save_to = seen_preprocessing[pp]
-            cv_preprocessing = None
 
         for i in range(smk.config["cv_n_repeats"]):
             pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
@@ -73,12 +80,14 @@ if smk.rule == "cross_validate":
                 n_splits=cv_kwargs["n_splits"],
                 record_dir=outdir,
                 random_state=smk.config["random_state"],
-                preprocessing=cv_preprocessing,
-                save_model=save_to,
+                preprocessing=seen_preprocessing[pp],
+                post_fit=lambda f, m: save_preprocessing(f, m, seen_preprocessing[pp]),
             )
+
             misc_metrics.append(result["misc"].assign(repeat=i))
             misses.append(result["misses"].assign(repeat=i))
             matrices.extend(result["cm"].values())
+
         misc_all = pd.concat(misc_metrics)
         misc_all["fold"] = (
             misc_all["fold"].astype(str) + "_" + misc_all["repeat"].astype(str)
@@ -98,17 +107,37 @@ if smk.rule == "cross_validate":
 elif smk.rule == "holdout":
     adata = get_adata()
     holdout_dct = smk.config["shallow"]["holdout"]
+    seen_preprocessing = {}  # Map of preprocessing combinations to dict of split names ->
+    # pipeline
     for model_name, m_config in smk.params["models"].items():
         outdir = Path(smk.params["outdir"]).joinpath(model_name)
         outdir.mkdir(exist_ok=True)
+        pp = (m_config.get("filter"), m_config.get("transform"))
+        if pp not in seen_preprocessing:
+            seen_preprocessing[pp] = {}
+            seen = False
+        else:
+            seen = True
+
         pipeline = tt.make_pipeline(m_config, S_CONFIG["filter"]["feature_col"])
         for split_name, split_config in smk.params["split_dct"].items():
+            preprocessing: Pipeline | None = seen_preprocessing[pp].get(split_name)
             train, test = ut.train_test_from_yaml(adata=adata, spec=split_config)
+            if seen:
+                cur_model = pipeline.predictor
+                train, test = (
+                    preprocessing.transform(train),
+                    preprocessing.transform(test),
+                )
+            else:
+                cur_model = pipeline
+
             result = te.holdout(
-                pipeline_fn=lambda: pipeline,
+                pipeline_fn=lambda: cur_model,
                 data={split_name: (train, test)},
                 label_col=LABEL_COL,
                 save_split_path=outdir,
+                post_fit=lambda s, m: save_preprocessing(s, m, seen_preprocessing[pp]),
             )
             write_results(result, outdir, label_col=split_name)
         if holdout_dct["organoid_test_task"]["do"]:
