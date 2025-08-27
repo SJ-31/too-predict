@@ -308,8 +308,9 @@ def cross_validate(
             x_train = preprocessing.transform(x_train)
             x_test = preprocessing.transform(x_test)
         elif preprocessing is not None and preprocessing:
-            x_train = preprocessing[fold].transform(x_train)
-            x_test = preprocessing[fold].transform(x_test)
+            if fold in preprocessing:
+                x_train = preprocessing[fold].transform(x_train)
+                x_test = preprocessing[fold].transform(x_test)
 
         model.fit(x_train, y=label_col)
         if post_fit is not None:
