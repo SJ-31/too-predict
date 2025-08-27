@@ -24,7 +24,7 @@ from too_predict.deep.branchnet import MultiBranch
 from too_predict.deep.callbacks import AverageBest
 from too_predict.deep.nns import Disyak, HardSharer
 from too_predict.deep.torch_utils import MultiModule
-from too_predict.filter import Filter
+from too_predict.filter import FILTER_BEFORE, Filter
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.model import Pipeline, PredBase, RandomForestClassifier, XGBEstimator
@@ -889,10 +889,9 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
     else:
         transform = None
 
-    filter_before = spec.get("filter_before", False)
     if filter is None and transform is None:
         preprocessing = []
-    elif filter_before:
+    elif f in FILTER_BEFORE:
         preprocessing = [filter, transform]
     else:
         preprocessing = [transform, filter]

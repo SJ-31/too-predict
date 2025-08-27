@@ -28,6 +28,8 @@ from too_predict.model import PredBase
 
 # * Filter class
 
+FILTER_BEFORE = ["edgeR"]  # edgeR must always filter before
+
 
 class Filter:
     """Class for filtering features (genes) in adata objects to a requested subset
