@@ -154,11 +154,10 @@ class Balancer:
             y=adata.obs[self.label_col], type="over-sampling"
         )
         if not kwargs.get("blocking", False):
-            n = np.sum(list(group_counts.values()))
+            n = np.sum(list(group_counts.values())).item()
             prop = {k: (v / n) for k, v in group_counts.items()}
             return nb_edgeR(adata=adata, n=n, targets=dict(prop), **kwargs)
-        else:
-            return nb_edgeR(adata=adata, targets=group_counts, **kwargs)
+        return nb_edgeR(adata=adata, targets=group_counts, **kwargs)
 
     def splatter_wrapper(self, adata: ad.AnnData, **kwargs) -> ad.AnnData:
         counts = self.get_sampling_strategy(
@@ -252,7 +251,7 @@ def nb_edgeR(
     y: str,
     n: int | None = None,
     targets: dict[str, int] | None = None,
-    blocking: bool = True,
+    blocking: bool = False,
     sample_mus: bool = False,
 ) -> ad.AnnData:
     ro.r("library(edgeR)")
