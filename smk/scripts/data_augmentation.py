@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import copy
 from functools import reduce
 from pathlib import Path
 
@@ -87,6 +88,7 @@ if smk.rule == "generate_datasets":
     shallow_models: dict = smk.config["models"]["shallow"]
     if TEST:
         adata = ut.training_data_internal_test()
+        adata = adata[:, :5000]
     else:
         adata = ut.training_data_internal(subset=False)
     for subset_name, config in smk.params["subsets"].items():
@@ -103,11 +105,9 @@ if smk.rule == "generate_datasets":
         for method, conf in DA_CONFIG["augmentations"].items():
             # Different augmentations may require a different preprocessing method
             # e.g. nb_edgeR can't take CLR
-            pipeline_name = (
-                DA_CONFIG["augmentations"]
-                .get(subset_name, {})
-                .get("pipeline", "clr_edgeR_old")
-            )
+            pipeline_name = ut.if_none(
+                DA_CONFIG["augmentations"].get(method, {}), {}
+            ).get("pipeline", "clr_edgeR_old")
             if pipeline_name in fitted_pipelines:
                 pipeline = fitted_pipelines[pipeline_name]
             else:
@@ -122,7 +122,9 @@ if smk.rule == "generate_datasets":
             cur_train = pipeline.transform(train)
             cur_test = pipeline.transform(test)
 
-            in_features, _ = d_ut.data_spec(cur_train)
+            in_features, _ = d_ut.data_spec(
+                cur_train, y=train.obs[LABEL_COL].astype(str)
+            )
 
             if method in TORCH_METHODS:
                 dl_config: dict = smk.config["dl"]
@@ -179,16 +181,14 @@ if smk.rule == "evaluate":
 
     for subset_path, train_paths in subset2train.items():
         subset_name = subset_path.stem
-        test = ad.read_h5ad(subset_path.joinpath("test.h5ad"))
         cur_outdir = outdir.joinpath(subset_name)
-        if USE_TORCH:
-            test = d_ut.AnnDataset(test, to_encode=LABEL_COL, encoders=encoders)
         for train_path in train_paths:
             name = train_path.stem.replace("_train", "")
             cur_outfile = cur_outdir.joinpath(f"{name}_result.csv")
             if cur_outfile.exists():
                 df = pd.read_csv(cur_outfile)
             else:
+                test = ad.read_h5ad(subset_path.joinpath(f"{name}_test.h5ad"))
                 adata = ad.read_h5ad(train_path)
                 train, valid = ut.train_test_split_ad(
                     adata,
@@ -200,7 +200,8 @@ if smk.rule == "evaluate":
                         d_ut.AnnDataset(train, to_encode=LABEL_COL, encoders=encoders),
                         d_ut.AnnDataset(valid, to_encode=LABEL_COL, encoders=encoders),
                     )
-                current = results.copy()
+                    test = d_ut.AnnDataset(test, to_encode=LABEL_COL, encoders=encoders)
+                current = copy.deepcopy(results)
                 current["dataset"].append(subset_name)
                 current["augmentation"].append(name)
                 metrics = evaluate(

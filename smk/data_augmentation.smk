@@ -33,7 +33,7 @@ rule all:
 
 gd_results_dict = {
     "train": expand("{d}/{a}_train.h5ad", d=dataset_dirs, a=augmentations),
-    "test": expand("{d}/test.h5ad", d=dataset_dirs),
+    "test": expand("{d}/{a}_test.h5ad", d=dataset_dirs, a=augmentations),
     "dirs": [directory(d) for d in dataset_dirs],
 }
 if len((torch_augmentations := TORCH_METHODS) & set(augmentations)) > 1:
