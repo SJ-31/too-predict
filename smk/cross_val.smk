@@ -1,6 +1,7 @@
 import yaml
 import pandas as pd
 from pathlib import Path
+from too_predict.evaluation import make_grid
 
 
 include: "Snakefile"
@@ -24,18 +25,35 @@ cv_outdir = f"{OUT}/shallow/cross_validation/{config.get('date', TODAY)}{RUN}"
 holdout_outdir = f"{OUT}/shallow/holdout/{config.get('date', TODAY)}{RUN}"
 
 model_dct = config["models"]["shallow"]
+del model_dct["nothing"]
 label = config["single_label"]
 
 print("----CROSS VALIDATION----")
-if only := config.get("run_only", []):
-    if isinstance(only, str):
-        only = only.split(",")
-    models = list(set(model_dct.keys()) & set(only))
-    print(f"Running with {models}")
+if config.get("do_grid"):
+    print("Running grid search...")
+    try_opt = config.get("grid_search")
+    if not try_opt:
+        print("Using default options. Override with config parameter `grid_search`")
+        grid_vals = config["shallow"]["grid"]["spec"]
+    else:
+        grid_vals = try_opt
+    disallowed = config["shallow"]["grid"].get("disallowed")
+    disallowed = disallowed if disallowed is not None else []
+    model_dct = {
+        m: {"spec": v}
+        for m, v in make_grid(grid_vals, disallowed=disallowed, named=True).items()
+    }
+    models = list(model_dct.keys())
 else:
-    models = [k for k in model_dct.keys() if not model_dct[k].get("skip")]
-    print("Running with models defined in yaml")
-    print("Use the run_only key to run specific models")
+    if only := config.get("run_only", []):
+        if isinstance(only, str):
+            only = only.split(",")
+        models = list(set(model_dct.keys()) & set(only))
+        print(f"Running with {models}")
+    else:
+        models = [k for k in model_dct.keys() if not model_dct[k].get("skip")]
+        print("Running with models defined in yaml")
+        print("Use the run_only key to run specific models")
 print("------------------------")
 
 
