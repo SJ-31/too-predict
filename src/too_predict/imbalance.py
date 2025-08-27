@@ -86,6 +86,7 @@ class Balancer:
         self.inv_ecdfs: dict[str, stats.interp1d] | None = None
 
     def _torch_model(self, model) -> Callable[[], BaseNN]:
+        print("Using torch...")
         if model == "cvae":
             return cVAE.new
         raise ValueError("Model name not recognized!")

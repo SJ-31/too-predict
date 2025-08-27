@@ -24,6 +24,7 @@
     "reportUnnecessaryIsInstance": false,
     "extraPaths": [
         "/home/shannc/Bio_SDD/miniforge3/envs/too-predict/lib/python3.12/site-packages",
-        "/home/shannc/Bio_SDD/too-predict/scripts"
+        "/home/shannc/Bio_SDD/too-predict/scripts",
+        "src"
     ]
 }

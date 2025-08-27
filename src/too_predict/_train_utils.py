@@ -896,6 +896,8 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
         preprocessing = [filter, transform]
     else:
         preprocessing = [transform, filter]
+    if not with_predictor:
+        return tm.Pipeline(steps=preprocessing)
 
     m = spec.get("model", "XGBoost")
     model: PredBase | None = None
@@ -905,9 +907,7 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
         model = tm.PredBase(RandomForestClassifier(**params))
     if m == "LogisticRegression":
         model = tm.PredBase(LogisticRegression(**params))
-    if with_predictor:
-        return tm.Pipeline(steps=preprocessing, predictor=model)
-    return tm.Pipeline(steps=preprocessing)
+    return tm.Pipeline(steps=preprocessing, predictor=model)
 
 
 # * Snakemake
