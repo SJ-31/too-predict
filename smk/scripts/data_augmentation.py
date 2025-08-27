@@ -12,7 +12,10 @@ import too_predict.deep.torch_utils as d_ut
 import too_predict.model as tm
 import too_predict.utils as ut
 from snakemake.script import snakemake as smk
-from too_predict._train_utils import default_filter_transform, get_model_fn
+from too_predict._train_utils import (
+    get_model_fn,
+    make_pipeline,
+)
 from too_predict.deep.nns import Disyak
 from too_predict.evaluation import train_test_wrapper
 from too_predict.imbalance import TORCH_METHODS, Balancer
@@ -63,7 +66,7 @@ def evaluate(
             to_encode=LABEL_COL,
             validation=validation,
             n_classes=outpath.joinpath("n_classes.txt").read_text(),
-            in_features=outpath.joinpath("in_features.txt").read_text(),
+            in_features=outpath.joinpath(f"{name}_in_features.txt").read_text(),
             set_label=name,
             trainer_kwargs=DL_CONFIG["trainer"],
             loader_kwargs=DL_CONFIG["dataloader"],
@@ -81,6 +84,7 @@ if smk.rule == "generate_datasets":
     subsets = []
     storage: Path = Path(smk.params["store"])
     result_dir: Path = Path(smk.params["result_dir"])
+    shallow_models: dict = smk.config["models"]["shallow"]
     if TEST:
         adata = ut.training_data_internal_test()
     else:
@@ -88,26 +92,38 @@ if smk.rule == "generate_datasets":
     for subset_name, config in smk.params["subsets"].items():
         outpath = storage.joinpath(subset_name)
         subset_ad = get_subset_from_yaml(adata, config)
-        preprocess = tm.Pipeline(steps=[*default_filter_transform(smk.config)])
-        adata, test = ut.train_test_split_ad(
+
+        train, test = ut.train_test_split_ad(
             subset_ad, random_state=smk.config["random_state"]
         )
-        adata = preprocess.fit_transform(adata)
-        test = preprocess.transform(test)
-        in_features, n_classes = d_ut.data_spec(
-            adata, y=adata.obs[LABEL_COL].astype(str)
-        )
-        adata.write_h5ad(outpath.joinpath("baseline_train.h5ad"))
-        test.write_h5ad(outpath.joinpath("test.h5ad"))
-
-        outpath.joinpath("in_features.txt").write_text(str(in_features))
+        _, n_classes = d_ut.data_spec(train, y=train.obs[LABEL_COL].astype(str))
         outpath.joinpath("n_classes.txt").write_text(str(n_classes))
 
+        fitted_pipelines = {}
         for method, conf in DA_CONFIG["augmentations"].items():
-            if method == "baseline" or (
-                conf is not None and not conf.get("skip", True)
-            ):
-                continue
+            # Different augmentations may require a different preprocessing method
+            # e.g. nb_edgeR can't take CLR
+            pipeline_name = (
+                DA_CONFIG["augmentations"]
+                .get(subset_name, {})
+                .get("pipeline", "clr_edgeR_old")
+            )
+            if pipeline_name in fitted_pipelines:
+                pipeline = fitted_pipelines[pipeline_name]
+            else:
+                pipeline = make_pipeline(
+                    shallow_models[pipeline_name],
+                    feature_col=smk.config["shallow"]["filter"]["feature_col"],
+                    with_predictor=False,
+                )
+                pipeline.fit(train)
+                fitted_pipelines[pipeline_name] = pipeline
+
+            cur_train = pipeline.transform(train)
+            cur_test = pipeline.transform(test)
+
+            in_features, _ = d_ut.data_spec(cur_train)
+
             if method in TORCH_METHODS:
                 dl_config: dict = smk.config["dl"]
                 trainer_kwargs = dl_config["trainer"]
@@ -117,23 +133,27 @@ if smk.rule == "generate_datasets":
                     "platform": "tensorboard",
                     "save_dir": result_dir.joinpath(subset_name),
                 }
-            else:
+            elif method != "baseline":
                 trainer_kwargs = None
                 loader_kwargs = None
                 logger_kwargs = None
-            conf = ut.if_none(conf, {})
-            params: dict = ut.if_none(conf.get("params", {}), {})
-            balancer = Balancer(
-                method,
-                trainer_kwargs=trainer_kwargs,
-                logger_kwargs=logger_kwargs,
-                loader_kwargs=loader_kwargs,
-                sampling_strategy=conf.get("sampling_strategy", "auto"),
-                n=conf.get("n", None),
-                **params,
-            )
-            augmented = balancer.fit_transform(adata, y=LABEL_COL)
-            augmented.write_h5ad(outpath.joinpath(f"{method}_train.h5ad"))
+                conf = ut.if_none(conf, {})
+                params: dict = ut.if_none(conf.get("params", {}), {})
+                balancer = Balancer(
+                    method,
+                    trainer_kwargs=trainer_kwargs,
+                    logger_kwargs=logger_kwargs,
+                    loader_kwargs=loader_kwargs,
+                    sampling_strategy=conf.get("sampling_strategy", "auto"),
+                    n=conf.get("n", None),
+                    **params,
+                )
+                cur_train = balancer.fit_transform(cur_train, y=LABEL_COL)
+
+            cur_train.write_h5ad(outpath.joinpath(f"{method}_train.h5ad"))
+            cur_test.write_h5ad(outpath.joinpath(f"{method}_test.h5ad"))
+            outpath.joinpath(f"{method}_in_features.txt").write_text(str(in_features))
+
 
 # ** Evaluate
 if smk.rule == "evaluate":

@@ -712,7 +712,8 @@ class Pipeline:
     def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
         for step in self.preprocessing:
             x = step.fit_transform(x)
-        self.predictor.fit(x, y)
+        if self.predictor is not None:
+            self.predictor.fit(x, y)
 
     @override
     def __repr__(self) -> str:
