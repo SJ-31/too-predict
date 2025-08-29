@@ -128,14 +128,21 @@ class Filter:
             print("ignoring...")
 
     def fit(self, adata: ad.AnnData) -> None:
+        adata = adata.copy()
         if self.method == "edgeR":
-            self.features = self.edgeR(adata, **self.kwargs)
+            features = self.edgeR(adata, **self.kwargs)
         elif self.method == "mutual_information":
-            self.features = self.mutual_information(adata, **self.kwargs)
+            features = self.mutual_information(adata, **self.kwargs)
         elif self.method == "variance_threshold":
-            self.features = self.variance_threshold(adata, **self.kwargs)
+            features = self.variance_threshold(adata, **self.kwargs)
         elif self.method is None and self.features:
             print("Using existing feature set...")
+            return
+        else:
+            raise ValueError("Method combination not supported!")
+        self.features = list(
+            filter(lambda x: x in adata.var[self.feature_col], features)
+        )
 
     def transfer_features(self, other: Filter) -> None:
         """Try to update `other` Filter object to have the feature set of self
@@ -158,6 +165,7 @@ class Filter:
         return self.transform(adata)
 
     def transform(self, adata: ad.AnnData) -> ad.AnnData:
+        adata = adata.copy()
         if self.features is None:
             raise ValueError(
                 "No features! Either pass a list of features during init or call fit to find features with the chosen method"
@@ -207,7 +215,7 @@ class Filter:
 
     def variance_threshold(self, adata, threshold=0) -> list:
         vt = fs.VarianceThreshold(threshold=threshold)
-        counts = ut.xarray_if_sparse(adata)
+        counts = ut.xarray_if_sparse(adata, copy=False)  # Copy during fit or transform
         vt.fit(counts)
         support = vt.get_support(indices=True)
         variance = np.nanvar(counts, axis=0)[support]
@@ -223,7 +231,7 @@ class Filter:
         return list(df[self.feature_col])
 
     def mutual_information(self, adata, **kwargs) -> list:
-        counts = ut.xarray_if_sparse(adata)
+        counts = ut.xarray_if_sparse(adata, copy=False)
         y = adata.obs[self.label_col]
         minfo = fs.mutual_info_classif(counts, y, **kwargs)
         info_df = (
@@ -247,7 +255,7 @@ class Filter:
     ) -> list:
         ro.r("library(edgeR)")
         ro.r("library(tidyverse)")
-        ru.np_to_r(np.transpose(ut.xarray_if_sparse(adata)), "mat")
+        ru.np_to_r(np.transpose(ut.xarray_if_sparse(adata, copy=False)), "mat")
         ru.df_to_r(adata.obs, "obs")
         ru.df_to_r(adata.var, "var")
         ru.source("utils.R", in_r=True)

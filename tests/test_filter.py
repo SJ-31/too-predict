@@ -35,6 +35,20 @@ def test_variance():
 
 var = test_variance()
 
+
+# %%
+def test_mutual_info():
+    filter = fil.Filter(
+        method="mutual_information",
+        feature_col="GENEID",
+        label_col="tumor_type",
+    )
+    changed = filter.fit_transform(adata)
+    return changed
+
+
+var = test_mutual_info()
+
 # %%
 
 

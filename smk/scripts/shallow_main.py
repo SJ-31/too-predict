@@ -16,18 +16,19 @@ REF, FEAT = ut.ref_feature_lists_internal()
 TEST = smk.config["test"]
 LABEL_COL = smk.config["single_label"]
 S_CONFIG = smk.config["shallow"]
+FEATURE_COL = S_CONFIG["filter"]["feature_col"]
 
 
 def get_adata() -> ad.AnnData:
     if TEST:
-        adata = ut.training_data_internal_test()
-        adata = adata[:, :5000]
+        adata: ad.AnnData = ut.training_data_internal_test()
         adata = adata[~adata.obs["Sample_Type"].isin(["organoid", "recurrent"]), :]
         adata.obs["RANDOM"] = ut.RNG.choice(
             [str(s) for s in (range(8))], adata.shape[0]
         )
     else:
         adata = ut.training_data_internal(**smk.config["training_data"])
+    adata = adata[:, ~adata.var[FEATURE_COL].isna()]
     return adata
 
 
@@ -69,7 +70,7 @@ if smk.rule == "cross_validate":
             seen_preprocessing[pp] = {}
 
         for i in range(smk.config["cv_n_repeats"]):
-            pipeline = tt.make_pipeline(config, S_CONFIG["filter"]["feature_col"])
+            pipeline = tt.make_pipeline(config, FEATURE_COL)
             if seen:
                 pipeline = pipeline.predictor
             result = te.cross_validate(
@@ -119,16 +120,14 @@ elif smk.rule == "holdout":
         else:
             seen = True
 
-        pipeline = tt.make_pipeline(m_config, S_CONFIG["filter"]["feature_col"])
+        pipeline = tt.make_pipeline(m_config, FEATURE_COL)
         for split_name, split_config in smk.params["split_dct"].items():
             preprocessing: Pipeline | None = seen_preprocessing[pp].get(split_name)
             train, test = ut.train_test_from_yaml(adata=adata, spec=split_config)
             if seen:
                 cur_model = pipeline.predictor
-                train, test = (
-                    preprocessing.transform(train),
-                    preprocessing.transform(test),
-                )
+                train = preprocessing.transform(train)
+                test = preprocessing.transform(test)
             else:
                 cur_model = pipeline
 

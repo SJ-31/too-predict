@@ -37,11 +37,14 @@ def test_sim_nb():
     counts = tcga.obs[y].value_counts()
     valid = counts[counts > 10]
     tcga = tcga[tcga.obs[y].isin(list(valid.index)), :]
-    balancer = tb.Balancer(method="nb_edgeR", sample_mus=False, blocking=False)
+    balancer = tb.Balancer(method="nb_edgeR", blocking=True, sampling_strategy="auto")
     # Seems to do better without sampling, and instead taking the mean
     new = balancer.fit_transform(tcga, y=y)
     result, _ = te.train_test_wrapper(model, (new, tcga), y)
     print(result)
+
+
+test_sim_nb()
 
 
 def test_sim_nb_block():
