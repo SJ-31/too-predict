@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 import too_predict.filter as fil
 import too_predict.utils as ut
+from sklearn.linear_model import LogisticRegression
 from too_predict._train_utils import default_filter_transform
 
 if "/home/shannc" in str(Path.home()):
@@ -61,3 +62,29 @@ def test_edger():
 
 
 edger, filter = test_edger()
+
+
+def test_sequential():
+    filter = fil.Filter(
+        method=["mutual_information", "Lasso"],
+        feature_col="GENEID",
+        label_col="tumor_type",
+        method_kwargs={"Lasso": {"remove_zeros": True}},
+    )
+    changed = filter.fit_transform(adata)
+
+
+test_sequential()
+
+
+def test_sequential_1():
+    filter = fil.Filter(
+        method=["mutual_information", "Lasso"],
+        top=[300, 100],
+        feature_col="GENEID",
+        label_col="tumor_type",
+    )
+    changed = filter.fit_transform(adata)
+
+
+test_sequential_1()

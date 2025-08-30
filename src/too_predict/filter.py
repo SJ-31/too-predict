@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable, Sequence
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -18,6 +19,7 @@ import sklearn.feature_selection as fs
 import sklearn.neighbors as sn
 from matplotlib.figure import Figure
 from scipy import sparse
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 
 import too_predict._rust_helpers as rh
 import too_predict.explanation as te
@@ -30,6 +32,10 @@ from too_predict.model import PredBase
 
 FILTER_BEFORE = ["edgeR"]  # edgeR must always filter before
 
+DEFINED_FILTERS: TypeAlias = Literal[
+    "edgeR", "mutual_information", "variance_threshold", "Lasso"
+]
+
 
 class Filter:
     """Class for filtering features (genes) in adata objects to a requested subset
@@ -40,24 +46,29 @@ class Filter:
     def __init__(
         self,
         features: Sequence | None = None,
-        method: Literal["edgeR", "mutual_information", "variance_threshold"]
-        | None = None,
+        method: Sequence[DEFINED_FILTERS] | None | DEFINED_FILTERS = None,
         feature_col="GENENAME",
         inplace=False,
         blacklist=None,
-        top: int = 500,
+        top: int | Sequence[int] = 500,
         label_col="tumor_type",
+        method_kwargs: dict[str, dict] | None = None,
         **kwargs,
     ) -> None:
         """Filter genes from adata object
 
         Parameters
         ----------
-        top : int
-            Number of features to keep in feature selection
+        top : int | Sequence[int]
+            Number of top features to keep in feature selection. Can be passed as a sequence
+            to specify the number of features wanted by each method
+            Usually interpreted as the top features ranked according to the method
         features : Sequence of pre-selected features to use
             Recommended to specify a method and call `fit` to perform automatic
             feature selection with an adata object
+        method : Feature selection method, or sequence of methods to apply. If a sequence,
+            the methods will be applied in the specified order to select features
+        method_kwargs : dictionary of method_name->kwargs
         """
         if not isinstance(features, Sequence) and features is not None:
             raise ValueError(
@@ -79,8 +90,19 @@ class Filter:
         )
         self.inplace: bool = inplace
         self.missing_features: list = []
-        self.top: int = top
-        self.method: str | None = method
+        self.top: tuple[int] = (top,) if not isinstance(top, Sequence) else top
+        if isinstance(method, str):
+            self.methods = [method]
+        elif isinstance(method, Sequence):
+            self.methods: Sequence[DEFINED_FILTERS] | None = method
+        else:
+            self.methods = None
+        if len(self.top) != len(self.methods):
+            raise ValueError(
+                "The sequence of n features to get does not match the number of methods given!"
+            )
+        self.method_kwargs: dict[str, dict] | None = method_kwargs
+
         self.label_col: str = label_col
         self.kwargs: dict = kwargs
         self.feat_metrics: pd.DataFrame | None = None  # Feature metrics computed during
@@ -127,22 +149,68 @@ class Filter:
             print("WARNING: the passed model has no feature importances")
             print("ignoring...")
 
-    def fit(self, adata: ad.AnnData) -> None:
+    # TODO: this needs to be multi-step
+
+    def fit(self, adata: ad.AnnData):
+        if self.methods is not None:
+            features = None
+            print("Beginning feature selection...")
+            print("Original n features:", adata.shape[1])
+            for m, n in zip(self.methods, self.top):
+                features = self._get_features(m, n, adata)
+                adata = adata[:, adata.var[self.feature_col].isin(features)]
+                print(f"n features after {m}:", adata.shape[1])
+            self.features = features
+
+    def _get_features(
+        self, method: DEFINED_FILTERS, n: int, adata: ad.AnnData
+    ) -> Sequence:
         adata = adata.copy()
-        if self.method == "edgeR":
-            features = self.edgeR(adata, **self.kwargs)
-        elif self.method == "mutual_information":
-            features = self.mutual_information(adata, **self.kwargs)
-        elif self.method == "variance_threshold":
-            features = self.variance_threshold(adata, **self.kwargs)
-        elif self.method is None and self.features:
-            print("Using existing feature set...")
-            return
-        else:
-            raise ValueError("Method combination not supported!")
-        self.features = list(
-            filter(lambda x: x in adata.var[self.feature_col], features)
+        kwargs = (
+            self.method_kwargs.get(method, {}) if self.method_kwargs is not None else {}
         )
+        if method == "edgeR":
+            features = self.edgeR(adata, n=n, **self.kwargs, **kwargs)
+        elif method == "mutual_information":
+            features = self.mutual_information(adata, n=n, **self.kwargs, **kwargs)
+        elif method == "variance_threshold":
+            features = self.variance_threshold(adata, n=n, **self.kwargs, **kwargs)
+        elif method == "Lasso":
+            features = self.lasso(adata, n=n, **self.kwargs, **kwargs)
+        return tuple(filter(lambda x: x in adata.var[self.feature_col], features))
+
+    def lasso(
+        self,
+        adata: ad.AnnData,
+        n: int,
+        remove_zeros: bool = False,
+        n_per: int | None = None,
+        cv=False,
+        **kwargs,
+    ) -> Sequence:
+        kwargs = copy.deepcopy(kwargs)
+        kwargs.update({"penalty": "l1", "solver": "saga"})
+        lasso = LogisticRegressionCV(**kwargs) if cv else LogisticRegression(**kwargs)
+        lasso.fit(ut.xarray_if_sparse(adata, copy=False), y=adata.obs[self.label_col])
+        fmat = pd.DataFrame(
+            np.absolute(lasso.coef_),
+            index=lasso.classes_,
+            columns=adata.var["GENEID"],
+        ).transpose()
+        features = []
+        if remove_zeros:
+            for i in fmat:
+                cur = fmat.loc[:, i]
+                cur = cur[cur != 0]
+                features.extend(cur.index)
+        elif n_per is not None:  # Take top n features for each class
+            for i in fmat:
+                sorted = fmat.loc[:, i].sort_values(ascending=False)
+                features.extend(sorted.index[:n_per])
+        else:
+            sorted = fmat.mean(axis=1).sort_values(ascending=False)
+            features.extend(sorted.index[:n])
+        return features
 
     def transfer_features(self, other: Filter) -> None:
         """Try to update `other` Filter object to have the feature set of self
@@ -154,7 +222,7 @@ class Filter:
         target : unfitted `Filter` object, with defined method
         """
         if self.features:
-            if self.method == other.method:
+            if self.methods == other.methods:
                 other.features = self.features
                 other.method = None  # So nothing happens if you call `target.fit`
         else:
@@ -213,24 +281,24 @@ class Filter:
 
     # ** Selection functions
 
-    def variance_threshold(self, adata, threshold=0) -> list:
+    def variance_threshold(self, adata, n: int, threshold=0) -> list:
         vt = fs.VarianceThreshold(threshold=threshold)
         counts = ut.xarray_if_sparse(adata, copy=False)  # Copy during fit or transform
         vt.fit(counts)
         support = vt.get_support(indices=True)
         variance = np.nanvar(counts, axis=0)[support]
         kept = list(adata.var[self.feature_col][support])
-        if len(kept) <= self.top:
+        if len(kept) <= n:
             return kept
         df = pd.DataFrame({self.feature_col: kept, "variance": variance}).sort_values(
             "variance",
             ascending=False,
         )
-        df = df.iloc[: self.top, :]
+        df = df.iloc[:n, :]
         self.feat_metrics = df
         return list(df[self.feature_col])
 
-    def mutual_information(self, adata, **kwargs) -> list:
+    def mutual_information(self, adata, n: int, **kwargs) -> list:
         counts = ut.xarray_if_sparse(adata, copy=False)
         y = adata.obs[self.label_col]
         minfo = fs.mutual_info_classif(counts, y, **kwargs)
@@ -239,15 +307,16 @@ class Filter:
                 {self.feature_col: adata.var[self.feature_col], "mutual_info": minfo}
             )
             .sort_values("mutual_info", ascending=False)
-            .iloc[: self.top, :]
+            .iloc[:n, :]
         )
         self.feat_metrics = info_df
-        return list(info_df[self.feature_col][: self.top])
+        return list(info_df[self.feature_col][:n])
 
     @ru.r_cleanup
     def edgeR(
         self,
         adata: ad.AnnData,
+        n: int,
         n_per: int | None = None,
         fc_cutoff: float = 1.5,
         treat: bool = True,
@@ -276,7 +345,7 @@ class Filter:
         print(sig_results)
         kept = set()
         if n_per is None:
-            n_per = self.top // len(adata.obs[self.label_col].unique())
+            n_per = n // len(adata.obs[self.label_col].unique())
         dfs = []
         for i in list(ro.r("names(result$top)")):
             current = ru.df_from_r(ro.r(f"result$top${i}"))
