@@ -86,7 +86,6 @@ class Balancer:
         self.inv_ecdfs: dict[str, stats.interp1d] | None = None
 
     def _torch_model(self, model) -> Callable[[], BaseNN]:
-        print("Using torch...")
         if model == "cvae":
             return cVAE.new
         raise ValueError("Model name not recognized!")
@@ -192,6 +191,7 @@ class Balancer:
         if self.is_imblearn:
             self.model.fit(adata.X, adata.obs[y])
         elif self.is_torch:
+            print("Fitting pytorch model...")
             self._fit_torch(adata=adata, y=y, _=_)
         elif self.method == "nb_edgeR":
             # TODO: you could rewrite this so that the params are saved as python

@@ -868,7 +868,7 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
     params = config.get("params", {})
 
     feature_set = spec.get("feature_set", None)
-    if f := spec.get("filter") or feature_set:
+    if (f := spec.get("filter")) or feature_set:
         if feature_set in FEATURE_LISTS:
             feature_set = FEATURE_LISTS[feature_set]
         filter = Filter(

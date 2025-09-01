@@ -97,7 +97,7 @@ class Filter:
             self.methods: Sequence[DEFINED_FILTERS] | None = method
         else:
             self.methods = None
-        if len(self.top) != len(self.methods):
+        if self.methods is not None and (len(self.top) != len(self.methods)):
             raise ValueError(
                 "The sequence of n features to get does not match the number of methods given!"
             )
