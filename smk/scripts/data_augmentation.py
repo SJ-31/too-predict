@@ -7,11 +7,13 @@ from pathlib import Path
 import anndata as ad
 import numpy as np
 import pandas as pd
+import scanpy as sc
 import sklearn.preprocessing as sp
 import too_predict.deep.evaluation as d_ev
 import too_predict.deep.torch_utils as d_ut
 import too_predict.model as tm
 import too_predict.utils as ut
+import torch
 from snakemake.script import snakemake as smk
 from too_predict._train_utils import (
     get_model_fn,
@@ -91,6 +93,7 @@ if smk.rule == "generate_datasets":
         adata = adata[:, :5000]
     else:
         adata = ut.training_data_internal(subset=False)
+    sc.pp.filter_genes(adata, min_counts=2000)
     for subset_name, config in smk.params["subsets"].items():
         outpath = storage.joinpath(subset_name)
         subset_ad = get_subset_from_yaml(adata, config)
@@ -103,6 +106,12 @@ if smk.rule == "generate_datasets":
 
         fitted_pipelines = {}
         for method, conf in DA_CONFIG["augmentations"].items():
+            # Don't use torch unless GPU is available
+            if method in TORCH_METHODS and not TEST and not torch.cuda.is_available():
+                print(f"WARNING: skipping torch method {method}, GPU not available")
+                print("Rerun with GPU")
+                continue
+
             # Different augmentations may require a different preprocessing method
             # e.g. nb_edgeR can't take CLR
             pipeline_name = ut.if_none(
@@ -126,6 +135,7 @@ if smk.rule == "generate_datasets":
                 cur_train, y=train.obs[LABEL_COL].astype(str)
             )
 
+            params: dict = ut.if_none(conf, {}).get("params", {})
             if method in TORCH_METHODS:
                 dl_config: dict = smk.config["dl"]
                 trainer_kwargs = dl_config["trainer"]
@@ -135,12 +145,11 @@ if smk.rule == "generate_datasets":
                     "platform": "tensorboard",
                     "save_dir": result_dir.joinpath(subset_name),
                 }
-            elif method != "baseline":
+            else:
                 trainer_kwargs = None
                 loader_kwargs = None
                 logger_kwargs = None
-                conf = ut.if_none(conf, {})
-                params: dict = ut.if_none(conf.get("params", {}), {})
+            if method != "baseline":
                 balancer = Balancer(
                     method,
                     trainer_kwargs=trainer_kwargs,
