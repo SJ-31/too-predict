@@ -1081,10 +1081,14 @@ def xgb_complexity(model: XGBClassifier) -> pd.DataFrame:
 
 
 def train_test_from_yaml(
-    adata: ad.AnnData, spec: dict
+    adata: ad.AnnData, spec: dict, mask_or: bool = True
 ) -> tuple[ad.AnnData, ad.AnnData]:
     """Subset adata into train, test sets. The parameters in the config are interpreted
     as the specification for the TEST set. The train set is the inverse of that
+
+    :param: mask_or
+        If True, then the test masks are reduced by a boolean OR operation. Otherwise,
+        AND
     """
     test_masks = []
     for obs, val_list in spec.items():
@@ -1095,7 +1099,10 @@ def train_test_from_yaml(
                 test_masks.append(adata.obs[obs].str.contains(value))
             else:
                 raise ValueError(f"`{match_type}` is an invalid match type!")
-    test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks)
+    if mask_or:
+        test_mask: np.ndarray = reduce(lambda x, y: x | y, test_masks)
+    else:
+        test_mask = reduce(lambda x, y: x & y, test_masks)
     test = adata[test_mask, :]
     train = adata[~test_mask, :]
     return train, test
