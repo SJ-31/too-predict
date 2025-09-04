@@ -3,7 +3,7 @@ import itertools
 import pickle
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 import anndata as ad
 import numpy as np
@@ -323,12 +323,7 @@ def cross_validate(
             )
             x_test.obs.to_csv(record_dir.joinpath(f"test_set_{fold}.csv"), index=False)
 
-        if model.score_fn == "predict_proba":
-            score = model.predict_proba(x_test)
-        elif model.score_fn == "decision_function":
-            score = model.decision_function(x_test)
-        else:
-            raise AttributeError("Model has no way of getting scores!")
+        score = model_score(model, x_test)
 
         if model.had_inf and record_dir is not None:
             record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
@@ -440,12 +435,12 @@ def train_test_wrapper(
 
     y_true = x_test.obs[label_col]
     if not minimal:
-        proba = model.predict_proba(x_test)
+        score = model_score(model, x_test)
         y_uniques = y_true.unique()
         classes = (
             model.predictor.classes_ if isinstance(model, Pipeline) else model.classes_
         )
-        res: dict = get_all_metrics(true=y_true, score=proba, classes=classes)
+        res: dict = get_all_metrics(true=y_true, score=score, classes=classes)
         for k, v in res.items():
             if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
                 if k == "cm":
@@ -576,8 +571,8 @@ def fit_train_write(
     y: str = "tumor_type",
 ) -> None:
     model.fit(train, y)
-    proba = model.predict_proba(test)
-    perf = get_all_metrics(test.obs[y], proba, model.classes_)
+    score = model_score(model, test)
+    perf = get_all_metrics(test.obs[y], score, model.classes_)
     test.obs.assign(prediction=perf["pred"]).to_csv(
         outdir.joinpath(f"{name}.csv"), index=False
     )
@@ -990,3 +985,14 @@ def make_grid(
                 )
             result[name] = current
     return result
+
+
+def model_score(model: PredBase | Any, x):
+    methods = dir(model.model) if isinstance(model, PredBase) else dir(model)
+    if "predict_proba" in methods:
+        score = model.predict_proba(x)
+    elif "decision_function" in methods:
+        score = model.decision_function(x)
+    else:
+        raise AttributeError("Model has no way of getting scores!")
+    return score
