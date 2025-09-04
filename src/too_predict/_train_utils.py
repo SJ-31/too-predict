@@ -12,6 +12,7 @@ from interpret.glassbox import ExplainableBoostingClassifier
 from lightning.pytorch.callbacks import EarlyStopping
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import ShuffleSplit
+from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
 import too_predict.deep.logistic as d_log
@@ -659,79 +660,6 @@ ADDITIONAL_SPLITS: dict = {
 
 
 # * Helper functions
-#
-def organoid_test_task(
-    adata: ad.AnnData,
-    model: Pipeline | PredBase,
-    outdir: Path | None = None,
-    organoid_col: str = "is_organoid",
-    label_col: str = "tumor_type",
-    with_randoms: bool = True,
-    shuffle_kwargs: dict | None = None,
-    prefix: str = "",
-    save_split_path: Path | None = None,
-    verbose: bool = True,
-) -> dict:
-    """Test model's ability to generalize to organoid samples
-
-    For a given tumor type `A`, which has both primary and organoid samples available,
-        train the model on a train set that excludes the organoid samples of `A`, then
-        test on the organoid samples of `A`
-    We want the model to learn to separate tumor types in primary samples, AND to
-        distinguish between organoid and primary samples such that if it finds
-        an organoid sample, it alters the tumor type separation criteria
-
-    Parameters
-    ----------
-    organoid_col : Boolean column that is True if a sample is an organoid sample
-    label_col : Factor/string column containing the tumor types
-    with_randoms : True if the test set should include some random other samples, and
-        not just the organoid samples for the given tumor type
-    """
-    if shuffle_kwargs is None:
-        shuffle_kwargs = {}
-    crosses = pd.crosstab(adata.obs[label_col], adata.obs[organoid_col])
-    n: int = adata.shape[0]
-    filtered = crosses.loc[crosses[True] > 0, :]
-    split_masks: dict = {}
-    for ttype in filtered.index.tolist():
-        mask = (adata.obs[label_col] == ttype) & adata.obs[organoid_col]
-        if with_randoms:
-            splitter = ShuffleSplit(n_splits=1, **shuffle_kwargs)
-            tmp = adata[~mask, :]
-            train, test = next(splitter.split(np.zeros(tmp.shape)))
-            train_mask, test_mask = np.array(
-                [
-                    list(map(lambda x: x in t, range(adata.shape[0])))
-                    for t in [train, test]
-                ]
-            )
-            train_mask = np.logical_xor(train_mask, mask)  # Ensure that the random
-            # train indices don't include organoids we want to test
-            split_masks[f"{ttype}_excluded"] = (
-                np.logical_or(train_mask.copy(), (~mask).copy()),
-                np.logical_or(
-                    mask.copy(), test_mask
-                ),  # Test set contains organoids and
-                # the random splits
-            )
-        else:
-            split_masks[f"{ttype}_excluded"] = ((~mask).copy(), mask.copy())
-        p_train = (~mask).sum() / n
-        p_test = mask.sum() / n
-        split_prop = (p_train, p_test, p_train + p_test)
-        print(f"{ttype} {split_prop=}")
-    result: dict = te.holdout(
-        model,
-        adata,
-        split_masks=split_masks,
-        label_col=label_col,
-        save_split_path=save_split_path,
-        verbose=verbose,
-    )
-    if outdir is not None:
-        te.write_cross_val(result, outdir=outdir, prefix=prefix)
-    return result
 
 
 def read_model_spec(
@@ -906,6 +834,10 @@ def make_pipeline(config, feature_col: str, with_predictor: bool = True) -> tm.P
         model = tm.PredBase(RandomForestClassifier(**params))
     if m == "LogisticRegression":
         model = tm.PredBase(LogisticRegression(**params))
+    if m == "DecisionTreeClassifier":
+        model = tm.PredBase(DecisionTreeClassifier(**params))
+    if m == "LinearSVC":
+        model = tm.PredBase(LinearSVC(**params))
     return tm.Pipeline(steps=preprocessing, predictor=model)
 
 

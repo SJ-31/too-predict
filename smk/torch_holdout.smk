@@ -25,7 +25,20 @@ if config["test"]:
     config["do_kd"] = True
 
 else:
-    splits = config["dl"]["holdout"]["splits"]
+    splits = config["dl"]["holdout"]
+
+if config["do_organoid"]:
+    organoid_types = ["COAD-READ", "CHOL", "LIHC", "PAAD"]
+    pipeline = "clr_edgeR_old"
+    org_dict = {}
+    for org in organoid_types:
+        org_dict[f"organoid_{org}"] = {
+            "pipeline": pipeline,
+            "mask_or": False,
+            "spec": {"Project_ID": {"CHULA": "contains"}, "tumor_type": {org: "exact"}},
+        }
+    splits.update(org_dict)
+
 split_names = splits.keys()
 
 model_dict = config["models"]["dl"]

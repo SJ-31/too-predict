@@ -295,7 +295,11 @@ if smk.rule == "preprocess" and ROUTINE == "holdout":
         split_config = split_dct.get(split_name)
         if not split_config:
             raise ValueError("split not defined in config!")
-        train, test = ut.train_test_from_yaml(adata=adata, spec=split_config["spec"])
+        train, test = ut.train_test_from_yaml(
+            adata=adata,
+            spec=split_config["spec"],
+            mask_or=split_config.get("mask_or", True),
+        )
         pipeline_name = split_config.get("pipeline", "clr_edgeR_old")
         pipeline_spec = smk.config["models"]["shallow"][pipeline_name]
         preprocessing: Pipeline = tt.make_pipeline(

@@ -17,8 +17,19 @@ if config["test"]:
     config["do_holdout"] = True
 
 else:
-    splits = config["dl"]["holdout"]["splits"]
-split_names = splits.keys()
+    splits = config["shallow"]["holdout"]
+
+if config["do_organoid"]:
+    organoid_types = ["COAD-READ", "CHOL", "LIHC", "PAAD"]
+    pipeline = "clr_edgeR_old"
+    org_dict = {}
+    for org in organoid_types:
+        org_dict[f"organoid_{org}"] = {
+            "pipeline": pipeline,
+            "mask_or": False,
+            "spec": {"Project_ID": {"CHULA": "contains"}, "tumor_type": {org: "exact"}},
+        }
+    splits.update(org_dict)
 
 
 cv_outdir = f"{OUT}/shallow/cross_validation/{config.get('date', TODAY)}{RUN}"
