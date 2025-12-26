@@ -43,9 +43,10 @@ class PredBase:
         self.var = None
         self.balancer: None | Balancer = balancer  # Address class imbalance ONLY during
         # fitting
-        if "predict_proba" in dir(model):
+        methods = dir(model)
+        if "predict_proba" in methods:
             self.score_fn: str = "predict_proba"
-        elif "decision_function" in dir(model):
+        elif "decision_function" in methods:
             self.score_fn = "decision_function"
         else:
             self.score_fn = None
@@ -558,6 +559,8 @@ class SimEstimator:
     def _predict_score(self, X, score_method: str) -> np.ndarray:
         if score_method == "predict_proba":
             score_fn = self.model.predict_proba
+        elif score_method == "predict_proba_lr":
+            score_fn = self.model.predict_proba_lr
         elif score_method == "decision_function":
             score_fn = self.model.decision_function
         else:
