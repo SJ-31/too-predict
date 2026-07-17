@@ -77,6 +77,54 @@ def plot_local_consistency(cons: dict, label):
     go.Figure(plots)
 
 
+def dotplot(
+    adata: ad.AnnData,
+    features: list | dict[str, list],
+    groupby: str,
+    gene_symbols: str | None = None,
+    reverse_axes: bool = False,
+) -> gg.ggplot:
+    adata = adata.copy()
+    if not isinstance(adata.X, np.ndarray):
+        adata.X = adata.X.toarray()
+    all_features = (
+        features
+        if isinstance(features, list)
+        else [f for flist in features.values() for f in flist]
+    )
+    if gene_symbols:
+        adata = adata[:, adata.var[gene_symbols].isin(all_features)]
+    else:
+        adata = adata[:, adata.var.index.isin(all_features)]
+    agg = sc.get.aggregate(adata, groupby, ["mean", "count_nonzero"])
+    feat_index = list(agg.var[gene_symbols] if gene_symbols else agg.index)
+    # TODO: add the grouping for features
+    means = (
+        pd.DataFrame(agg.layers["mean"], columns=feat_index, index=agg.obs[groupby])
+        .T.reset_index()
+        .melt(value_name="mean", id_vars="index")
+    )
+    nz = (
+        pd.DataFrame(
+            agg.layers["count_nonzero"]
+            / adata.obs[groupby].value_counts().values.reshape([-1, 1]),
+            columns=feat_index,
+            index=agg.obs[groupby],
+        )
+        .T.reset_index()
+        .melt(value_name="nonzero", id_vars="index")
+    )
+    df = means.merge(
+        nz, left_on=["index", groupby], right_on=["index", groupby]
+    ).rename(columns={"index": "gene"})
+    if reverse_axes:
+        aes_kws = {"x": groupby, "y": "gene", "fill": "mean", "size": "nonzero"}
+    else:
+        aes_kws = {"x": "gene", "y": groupby, "fill": "mean", "size": "nonzero"}
+    plot = gg.ggplot(df, gg.aes(**aes_kws)) + gg.geom_point() + gg.theme_minimal()
+    return plot
+
+
 def plot_adata(
     adata: ad.AnnData,
     colors: list[str] | str,
