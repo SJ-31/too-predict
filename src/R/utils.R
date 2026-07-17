@@ -925,7 +925,9 @@ bisque_reference_wrapper <- function(
   mode(counts) <- "integer"
   mode(reference) <- "integer"
   shared_genes <- intersect(rownames(counts), rownames(ref))
-  if (!is.null(markers)) shared_genes <- intersect(shared_genes, markers)
+  if (!is.null(markers)) {
+    shared_genes <- intersect(shared_genes, markers)
+  }
   counts <- counts[rownames(counts) %in% shared_genes, ]
   reference <- reference[rownames(reference) %in% shared_genes, ]
   mask <- colSums(reference) != 0
@@ -1172,7 +1174,9 @@ gene_set_analysis <- function(
     p_threshold = 0.05,
     ...) {
   # TODO: write more methods for this
-  if (class(data) == "list" || class(data) == "numeric") preranked <- TRUE
+  if (class(data) == "list" || class(data) == "numeric") {
+    preranked <- TRUE
+  }
   dnames <- c("pos", "neg")
   if (class(data) == "list") {
     if (length(intersect(dnames, names(data))) != 2) {
