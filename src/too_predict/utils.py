@@ -682,13 +682,11 @@ def write_feat_ref_metadata():
 
 def adata_sample_by(
     adata,
-    label_spec: dict[str, list[tuple[str, int]]],
+    label_spec: dict[str, int | list[tuple[str, int]]],
     rng: np.random.Generator = RNG,
     replace: bool = False,
 ) -> np.ndarray:
-    """Split adata into train and test sets, then randomly draw training
-    examples from train and add to test
-
+    """
     Parameters
     ----------
     label_spec : dictionary of
@@ -703,11 +701,13 @@ def adata_sample_by(
     indices = []
     for label, targets in label_spec.items():
         candidates = adata.obs[label]
+        if isinstance(targets, int):
+            targets = [(c, targets) for c in set(candidates)]
         for name, n in targets:
             choices = np.where(candidates == name)[0]
             if not replace and n >= len(choices):
                 print(
-                    f"WARNING: n for target {name} >= the n of target in training data. Taking all samples from trainin..."
+                    f"WARNING: n for target `{name}` ({n}) >= the n of target in training data ({len(choices)}). Taking all samples from training..."
                 )
                 n = len(choices)
             chosen = rng.choice(choices, size=n, replace=replace)
