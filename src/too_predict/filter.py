@@ -17,6 +17,7 @@ import scipy.spatial.distance as spd
 import seaborn as sns
 import sklearn.feature_selection as fs
 import sklearn.neighbors as sn
+from icecream import ic
 from matplotlib.figure import Figure
 from scipy import sparse
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
@@ -177,7 +178,12 @@ class Filter:
             features = self.variance_threshold(adata, n=n, **self.kwargs, **kwargs)
         elif method == "Lasso":
             features = self.lasso(adata, n=n, **self.kwargs, **kwargs)
-        return tuple(filter(lambda x: x in adata.var[self.feature_col], features))
+        return tuple(
+            filter(
+                lambda x: x and x in set(adata.var[self.feature_col]),
+                features,
+            )
+        )
 
     def lasso(
         self,
@@ -310,7 +316,7 @@ class Filter:
             .iloc[:n, :]
         )
         self.feat_metrics = info_df
-        return list(info_df[self.feature_col][:n])
+        return list(info_df[self.feature_col])
 
     @ru.r_cleanup
     def edgeR(
