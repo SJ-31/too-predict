@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from pyhere import here
+from sklearn.linear_model import LogisticRegression
+from too_predict.cache import NamedCache
 from too_predict.evaluation import cross_validate
 from too_predict.filter import Filter
 from too_predict.imputer import Imputer
@@ -50,9 +52,6 @@ def get_data(f):
     return all
 
 
-WORKDIR: Path = here("scripts", "pdac_crc")
-
-
 MODELS = {
     "xgboost_clr": Pipeline(
         [
@@ -66,7 +65,7 @@ MODELS = {
             Transformer(method="clr", impute_fn=Imputer("plus_one")),
             Filter(method="mutual_information", top=500),
         ],
-        PredBase(model=XGBEstimator()),
+        PredBase(model=LogisticRegression(solver="saga")),
     ),
 }
 
@@ -84,9 +83,22 @@ def do_cross_val(adata: ad.AnnData, outdir: Path):
     for_train = adata[~adata.obs["Case_ID"].isin(EXCLUDED_FOR_TRAIN), :]
     all_results = []
     misses = []
+    cache = NamedCache(
+        outdir / ".cv_cache",
+        writer=lambda x: x.to_csv(index=False),
+        reader=pd.read_csv,
+        suffix=".csv",
+    )
     for mname, pipeline in MODELS.items():
         logger.info("Starting cross validation for {}", mname)
-        cv_result = cross_validate(pipeline, for_train, random_state=RANDOM_STATE)
+        cv_result = cache(
+            cross_validate,
+            name=mname,
+            pkl=True,
+            model=pipeline,
+            adata=for_train,
+            random_state=RANDOM_STATE,
+        )
         all_results.append(cv_result["misc"].assign(model=mname))
         misses.append(cv_result["misses"].assign(model=mname))
     pd.concat(all_results).to_csv(outdir / "cross_validation.csv", index=False)
@@ -112,7 +124,8 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     d = args["date"] or date.today().isoformat()
-    results_dir = WORKDIR / f"results_{d}"
+    workdir: Path = here("scripts", "pdac_crc")
+    results_dir = workdir / f"results_{d}"
     adata: ad.AnnData = read_existing(
         here("remote", "repos", "too-predict", "training", "crc-pdac.h5ad"),
         get_data,
