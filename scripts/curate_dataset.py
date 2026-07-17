@@ -46,11 +46,10 @@ def fitness(model, adata) -> float:
     accs = []
     for _ in range(5):  # avg for stability
         results = te.holdout(
-            model,
-            adata=adata,
+            lambda: model,  # No need for a pipeline because what you've selected are
+            # sample-independent
+            data=adata,
             split_fns={"CHULA": split_fn},
-            transformer=None,  # No need
-            # because CLR is sample-independent
         )
         accs.append(results["misc"].iloc[0]["balanced_acc"])
     return float(np.mean(accs))
@@ -84,10 +83,10 @@ def simple_selection(
     result_tracker["iter"].append(0)
     result_tracker["keep"].append(True)
 
-    def updater(value, soln) -> np.ndarray:
+    def updater(value, soln, iteration) -> np.ndarray:
         try_soln = soln.copy()
         if mode == "case":
-            try_soln[i] = True
+            try_soln[value] = True
         elif mode == "prefix":
             indices = to_verify.obs["Project_ID"].str.startswith(value)
             try_soln[indices] = True
@@ -98,31 +97,46 @@ def simple_selection(
             ad.concat([kept, masked], join="inner", axis="obs", merge="first"),
         )
         result_tracker["score"].append(cur_fitness)
-        result_tracker["iter"].append(i + 1)
+        result_tracker["iter"].append(iteration + 1)
         if did_keep := cur_fitness > prev_fitness:
             return try_soln
         result_tracker["keep"].append(did_keep)
         return soln
 
     if mode == "case":
+        print(kept.shape[0], to_verify.shape[0])
         for i in range(kept.shape[0]):  # Verify each sample individually
             print(f"Current samples added: {solution.sum()}")
-            solution = updater(i, solution)
+            solution = updater(i, solution, i)
     elif mode == "prefix":
-        for p in PREFIXES:  # Verify groups of samples for large projects where
+        for i, p in enumerate(
+            PREFIXES
+        ):  # Verify groups of samples for large projects where
             # the above is infeasible
             print(f"Current samples added: {solution.sum()}")
-            solution = updater(p, solution)
+            solution = updater(p, solution, i)
 
     return kept.obs[solution, :], pd.DataFrame(result_tracker)
+
+
+def subsample(adata: ad.AnnData) -> ad.AnnData:
+    """Subsample adata for memory concerns
+    Will keep samples from the projects to check, as well as all chula samples
+    """
+    keep_vector = adata.obs["Project_ID"].isin(PROJECTS_TO_CHECK) | adata.obs[
+        "Project_ID"
+    ].str.startswith("CHULA")
+    to_keep = adata[keep_vector, :]
+    others = adata[~keep_vector, :]
+    others = ut.preserving_sample(others, key="tumor_type", fraction=0.5)
+    return ad.concat([to_keep, others], join="inner", axis="obs", merge="first")
 
 
 def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-i", "--input")
-    parser.add_argument("-o", "--output")
+    parser.add_argument("-t", "--test", action="store_true", default=False)
     args = vars(parser.parse_args())  # convert to dict
     return args
 
@@ -131,11 +145,14 @@ if __name__ == "__main__":
     args = parse_args()
     chosen = tt.MODELS["clr_xgb1_edger"]
     filter, model, transform, _, _, _ = tt.read_model_spec(chosen)
-    if str(Path.home()) != "/home/shannc":
+    outdir: Path = here("data", "output", "dataset_curation")
+    if not args["test"]:
         adata = ut.training_data_internal()
     else:
-        adata = ut.training_data_internal_test()
-    outdir: Path = here("data", "output", "dataset_curation")
+        adata = ut.training_data_internal_test(minimal=True)
+        outdir = outdir.joinpath("test")
+        outdir.mkdir(exist_ok=True)
+    adata = subsample(adata)
     adata = filter.fit_transform(adata)
     adata = transform.fit_transform(adata)
     case_df, case_tracker = simple_selection(model, adata, "case")

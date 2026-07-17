@@ -1,5 +1,6 @@
 #!/usr/bin/env ipython
 
+import traceback
 from pathlib import Path
 
 import anndata as ad
@@ -73,17 +74,26 @@ if smk.rule == "cross_validate":
             pipeline = tt.make_pipeline(config, FEATURE_COL)
             if seen:
                 pipeline = pipeline.predictor
-            result = te.cross_validate(
-                model=pipeline,
-                adata=adata,
-                label_col=LABEL_COL,
-                trial=None,
-                n_splits=cv_kwargs["n_splits"],
-                record_dir=outdir,
-                random_state=smk.config["random_state"],
-                preprocessing=seen_preprocessing[pp],
-                post_fit=lambda f, m: save_preprocessing(f, m, seen_preprocessing[pp]),
-            )
+            try:
+                result = te.cross_validate(
+                    model=pipeline,
+                    adata=adata,
+                    label_col=LABEL_COL,
+                    trial=None,
+                    n_splits=cv_kwargs["n_splits"],
+                    record_dir=outdir,
+                    random_state=smk.config["random_state"],
+                    preprocessing=seen_preprocessing[pp],
+                    post_fit=lambda f, m: save_preprocessing(
+                        f, m, seen_preprocessing[pp]
+                    ),
+                )
+            except ValueError as e:
+                print("Command failed with exception", e)
+                print("Pipeline:", pipeline)
+                print("Configuration:", config)
+                print(traceback.format_exc())
+                continue
 
             misc_metrics.append(result["misc"].assign(repeat=i))
             misses.append(result["misses"].assign(repeat=i))
@@ -123,7 +133,11 @@ elif smk.rule == "holdout":
         pipeline = tt.make_pipeline(m_config, FEATURE_COL)
         for split_name, split_config in smk.params["split_dct"].items():
             preprocessing: Pipeline | None = seen_preprocessing[pp].get(split_name)
-            train, test = ut.train_test_from_yaml(adata=adata, spec=split_config)
+            train, test = ut.train_test_from_yaml(
+                adata=adata,
+                spec=split_config["spec"],
+                mask_or=split_config.get("mask_or", True),
+            )
             if seen:
                 cur_model = pipeline.predictor
                 train = preprocessing.transform(train)
@@ -139,16 +153,3 @@ elif smk.rule == "holdout":
                 post_fit=lambda s, m: save_preprocessing(s, m, seen_preprocessing[pp]),
             )
             write_results(result, outdir, label_col=split_name)
-        if holdout_dct["organoid_test_task"]["do"]:
-            adata.obs.loc[:, "is_organoid"] = adata.obs["Sample_Type"] == "organoid"
-            org_outdir = outdir.joinpath("organoid_test")
-            org_outdir.mkdir(exist_ok=True)
-            _ = tt.organoid_test_task(
-                adata=adata,
-                model=pipeline,
-                organoid_col="is_organoid",
-                label_col=LABEL_COL,
-                with_randoms=holdout_dct["organoid_test_task"]["with_randoms"],
-                save_split_path=org_outdir,
-                outdir=org_outdir,
-            )

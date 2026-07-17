@@ -50,8 +50,8 @@ DIRS <- list.files(
   keep(\(x) dir.exists(x) & (length(list.files(x)) > 0)) |>
   discard(
     \(x)
-      basename_no_ext(x) %in%
-        c("test", "confusion_matrices", "additional_splits")
+    basename_no_ext(x) %in%
+      c("test", "confusion_matrices", "additional_splits")
   )
 
 
@@ -59,9 +59,9 @@ DIRS <- list.files(
 
 #' Aggregate the cross validation results across all folds
 #'
-summarize_sets <- function(tb, how = "mean") {
+summarize_sets <- function(tb, var = "fold", how = "mean") {
   tb |>
-    select(-!!as.symbol(VAR)) |>
+    select(-!!as.symbol(var)) |>
     group_by(model, class, step) |>
     summarize(
       var_auc = var(auc),
@@ -291,12 +291,6 @@ roc_plot <- local({
     xlab("False positive rate (FPR)")
 })
 
-dir <- "/home/shannc/Bio_SDD/too-predict/data/output/cross_validation/alr_random_forest_edger_lfc/additional_splits"
-m_files <- list.files(
-  dir,
-  pattern = glue("{LABEL}.*cm.*csv"),
-  full.names = TRUE
-)
 
 ## * Confusion matrices
 

@@ -69,9 +69,9 @@ METRICS = {
 
 CLUSTERINGS: tuple = (KMeans, AgglomerativeClustering)
 MODELS: tuple = (
-    (XGBEstimator, {}),
-    (LogisticRegression, {"solver": "saga"}),
-    (RandomForestClassifier, {}),
+    ("xgboost", XGBEstimator, {}),
+    ("logistic regression", LogisticRegression, {"solver": "saga"}),
+    ("random forest", RandomForestClassifier, {}),
 )
 
 
@@ -151,10 +151,10 @@ def main(iter: int, adata: ad.AnnData, per_type: int, n_genes: int):
         train_idx, test_idx = next(ShuffleSplit().split(x))
         x_train, x_test = x[train_idx, :], x[test_idx, :]
         y_train, y_test = (
-            y_true[train_idx, :],
-            y_true[test_idx, :],
+            y_true[train_idx],
+            y_true[test_idx],
         )
-        for cls, kws in MODELS:
+        for name, cls, kws in MODELS:
             model = cls(**kws)
             model.fit(x_train, y_train)
             # Since labels are balanced, accuracy is fine here
@@ -163,7 +163,7 @@ def main(iter: int, adata: ad.AnnData, per_type: int, n_genes: int):
             )
             test_acc = met.accuracy_score(y_true=y_test, y_pred=model.predict(x_test))
             for t, score in zip(["train", "test"], [train_acc, test_acc]):
-                eval_results["model"].append(model.__name__)
+                eval_results["model"].append(name)
                 eval_results["dataset"].append(t)
                 eval_results["accuracy"].append(score)
                 eval_results["iteration"].append(iter)

@@ -55,7 +55,7 @@ class FullyConnected(nn.Module):
 
 
 class HardSharer(d_ut.MultiModule):
-    """Implementation of [1]
+    """
 
     Notes
     -----
