@@ -1,6 +1,7 @@
 #!/usr/bin/env ipython
 import colorsys
 from collections.abc import Iterable
+from functools import reduce
 from typing import Literal, Sequence, overload
 
 import anndata as ad
@@ -11,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotnine as gg
 import scanpy as sc
 import scipy.sparse as sparse
 import seaborn as sns
@@ -77,124 +79,55 @@ def plot_local_consistency(cons: dict, label):
 
 def plot_adata(
     adata: ad.AnnData,
-    y: str,
-    subset: Iterable | None = None,
-    style: str | None | list[str] = None,
-    plot_together: bool = False,
-    plot_mode: str = "pca",
-    colors: list[str] | None = None,
-    **kwargs,
-) -> Figure:
+    colors: list[str] | str,
+    plot_mode: Literal["pca", "umap"] = "pca",
+) -> gg.ggplot:
     if "pca" not in adata.uns and plot_mode == "pca":
         sc.pp.pca(adata)
     elif "distances" not in adata.obsp and plot_mode == "umap":
         sc.pp.neighbors(adata)
         sc.tl.umap(adata)
+    colors = colors if isinstance(colors, list) else [colors]
 
-    show_axes: bool = True
-    match plot_mode:
-        case "pca":
-            obsm_key = "X_pca"
-            xlab, ylab = "PC1", "PC2"
-            var_ratio = adata.uns["pca"]["variance_ratio"]
-            pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
-            subtitle = f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}"
-        case "umap":
-            obsm_key = "X_umap"
-            xlab, ylab = "UMAP1", "UMAP2"
-            subtitle = "UMAP"
-            show_axes = False
-        case _:
-            raise ValueError(f"Plotting mode {plot_mode} not supported!")
-
-    keys = adata.obs[y] if subset is None else subset
-    ncols = 1 if plot_together else len(keys)
-    nrows = len(colors) if colors is not None else 1
-
-    if style is not None and plot_together:
-        ncols = len(style)
-    elif style is None and plot_together:
-        style = [None]
-    elif plot_together and isinstance(style, str):
-        style = [style]
-    elif style is not None and not plot_together and not isinstance(style, str):
-        raise ValueError("Multiple styles not supported when !`plot_together`")
-
-    if ncols == 1 and nrows > 1:
-        fig, axes = plt.subplots(ncols=nrows, sharey=True, sharex=True)
-    else:
-        fig, axes = plt.subplots(ncols=ncols, nrows=nrows, sharey=True, sharex=True)
-
-    multiple = ncols > 1
-    pts: np.ndarray = adata.obsm[obsm_key]
-    data = adata.obs
-    if colors is None:
-        colors = [y]
-    if subset is not None and plot_together:
-        mask = adata.obs[y].isin(subset)
-        type_map = {y: str}
-        if style is not None:
-            for s in style:
-                type_map[s] = str
-        data = data.loc[mask, :].astype(type_map)
-        pts = pts[mask, :]
-
-    def get_ax(j, i):
-        if len(colors) == 1 and not multiple:
-            return axes
-        elif len(colors) == 1 and multiple:
-            return axes[i]
-        elif len(colors) > 1 and multiple:
-            return axes[j, i]
-        elif len(colors) > 1 and not multiple:
-            return axes[j]
-
-    def set_labels(ax: Axes):
-        if show_axes:
-            ax.set_xlabel(xlab)
-            ax.set_ylabel(ylab)
-        else:
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
-
-    if not plot_together:
-        for j, color in enumerate(colors):
-            for i, label in enumerate(keys):
-                ax: Axes = get_ax(j, i)
-                mask = adata.obs[y] == label
-                pt1 = pts[mask, 0]
-                pt2 = pts[mask, 1]
-                sns.scatterplot(
-                    data=data.loc[mask, :],
-                    x=pt1,
-                    y=pt2,
-                    ax=ax,
-                    hue=color,
-                    style=style,
-                    **kwargs,
-                )
-                set_labels(ax)
-                ax.set_title(label)
-                if i != len(keys) - 1:
-                    ax.get_legend().remove()
-    else:
-        for j, color in enumerate(colors):
-            for i, s in enumerate(style):
-                ax: Axes = get_ax(j, i)
-                pt1 = pts[:, 0]
-                pt2 = pts[:, 1]
-                sns.scatterplot(
-                    data=data,
-                    x=pt1,
-                    y=pt2,
-                    ax=ax,
-                    hue=color,
-                    style=s,
-                    **kwargs,
-                )
-                set_labels(ax)
-    fig.suptitle(subtitle)
-    return fig
+    if plot_mode == "pca":
+        obsm_key = "X_pca"
+        xlab, ylab = "PC1", "PC2"
+        var_ratio = adata.uns["pca"]["variance_ratio"]
+        pc1_var, pc2_var = round(var_ratio[0], 2), round(var_ratio[1], 2)
+        subtitle = f"PC1, PC2 variance explained: {pc1_var}, {pc2_var}"
+    elif plot_mode == "umap":
+        obsm_key = "X_umap"
+        xlab, ylab = "UMAP1", "UMAP2"
+        subtitle = "UMAP"
+    df: pd.DataFrame = pd.concat(
+        [
+            pd.DataFrame(
+                adata.obsm[obsm_key][:, [0, 1]], columns=[xlab, ylab]
+            ).reset_index(),
+            adata.obs.loc[:, colors].reset_index(),
+        ],
+        axis="columns",
+    )
+    plots = []
+    for i, color_key in enumerate(colors):
+        plot = (
+            gg.ggplot(df, gg.aes(x=xlab, y=ylab, color=color_key))
+            + gg.geom_point()
+            + gg.theme(figure_size=(15, 10))
+        )
+        if plot_mode == "umap":
+            plot = plot + gg.theme(
+                axis_text_y=gg.element_blank(),
+                axis_text_x=gg.element_blank(),
+                axis_title_x=gg.element_blank(),
+                axis_title_y=gg.element_blank(),
+            )
+        if i == 0:
+            plot = plot + gg.ggtitle(subtitle=subtitle)
+        plots.append(plot)
+    if len(plots) == 1:
+        return plots[0]
+    return reduce(lambda x, y: x / y, plots)
 
 
 def scanpy_plot_gs(
