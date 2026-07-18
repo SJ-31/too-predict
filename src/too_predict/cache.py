@@ -27,6 +27,8 @@ class NamedCache:
                 obj = pickle.load(f)
             return obj
         with open(file, "wb") as f:
+            if obj is None:
+                raise ValueError(f"obj being saved to {file} is None")
             pickle.dump(obj, f)
 
     def __call__(
@@ -42,7 +44,7 @@ class NamedCache:
         suffix = suffix or self.suffix
         if pkl:
             writer = self.pickle
-            reader = lambda x: self.pickle(x, True)
+            reader = lambda x: self.pickle(x, obj=None, load=True)
             suffix = ".pkl"
         else:
             writer = self.writer if writer is None else writer
