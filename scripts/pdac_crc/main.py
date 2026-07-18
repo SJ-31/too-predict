@@ -2,6 +2,7 @@
 
 import pickle
 import sys
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -144,7 +145,7 @@ def deep_eval(
     device = config.get("device", "cpu")
     labels = (LABEL_COL,)
     n_features, n_classes = d_ut.data_spec(adata, y=labels)
-    encoders = d_ut.AnnDataset.fit_encoders(adata, LABELS)
+    encoders = d_ut.AnnDataset.fit_encoders(adata, labels)
     valid_split_kws = {"test_size": 0.1, "random_state": RANDOM_STATE}
     if not holdout:
         train, valid = train_test_split_ad(adata, **valid_split_kws)
@@ -153,13 +154,13 @@ def deep_eval(
         train, test = split_fn(adata)
         train, valid = train_test_split_ad(adata, **valid_split_kws)
         test_set = d_ut.AnnDataset(
-            train, to_encode=LABELS, device=device, encoders=encoders
+            train, to_encode=labels, device=device, encoders=encoders
         )
     train_set = d_ut.AnnDataset(
-        train, to_encode=LABELS, device=device, encoders=encoders
+        train, to_encode=labels, device=device, encoders=encoders
     )
     valid_set = d_ut.AnnDataset(
-        valid, to_encode=LABELS, device=device, encoders=encoders
+        valid, to_encode=labels, device=device, encoders=encoders
     )
     mcfg = d_ut.ModuleConfig(
         cache="val_acc",
@@ -192,6 +193,7 @@ def deep_eval(
         result = cache(
             train_test_wrapper_torch,
             name=mname,
+            pkl=True,
             module_cls=get_model_fn(model_class),
             trainer_kwargs=trainer_kws,
             device=device,
