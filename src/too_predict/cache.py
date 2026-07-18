@@ -24,7 +24,8 @@ class NamedCache:
     def pickle(file, obj, load: bool = False):
         if load:
             with open(file, "rb") as f:
-                return pickle.load(f)
+                obj = pickle.load(f)
+            return obj
         with open(file, "wb") as f:
             pickle.dump(obj, f)
 

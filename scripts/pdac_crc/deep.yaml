@@ -1,0 +1,42 @@
+device: "cuda:0"
+model_kws:
+  mlp_three:
+    n_shared_layers: 2
+dataloader:
+  batch_size: 256
+  shuffle: True
+trainer:
+  max_epochs: 200 # From personal communication
+  # Gradient clipping
+  gradient_clip_val: 0 # 0 = no clip
+  gradient_clip_algorithm: norm # Either norm or value
+  enable_progress_bar: False
+  log_every_n_steps: 10
+  accelerator: "cuda"
+  precision: "32-true"
+  num_sanity_val_steps: 0 # Required by BranchNet or any other model that needs
+# an "on_train_start" callback that uses the training data
+# precision: "16-mixed"
+optimizer:
+  lr: 0.001
+
+callbacks:
+  early_stop:
+    enabled: False
+    params:
+      monitor: val_loss
+      patience: 40
+      mode: min # When "min", training stops when the quantity in "monitor"
+  # stops decreasing. Vice versa for "max"
+  average_best:
+    enabled: False
+    params:
+      n_best: 5
+      target: val_acc
+cv:
+  init_bias: False # TODO: You can make this a hyperparam
+  batch_size: 512
+  n_splits: 3
+  grad_accumulation: False # WARNING: [2025-08-15 Fri] only use this as  a last resort,
+  # it looked to have made a difference when testing with small datasets
+  grad_accumulation_batch_size: 256
