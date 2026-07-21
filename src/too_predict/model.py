@@ -837,5 +837,8 @@ class Pipeline:
             x = step.transform(x)
         if isinstance(self.predictor, d_ut.MultiModule):
             x = self.prepare_adata_nn(x, self.y, loader=False)
-            return self.predictor.predict_step(x[:]).cpu().numpy()
+            pred = self.predictor.predict_proba(x[:][0])
+            if isinstance(pred, tuple):
+                return pred[0].cpu().numpy()
+            return pred.cpu().numpy()
         return self.predictor.predict_proba(x)
