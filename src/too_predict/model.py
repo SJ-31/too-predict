@@ -1,25 +1,32 @@
 #!/usr/bin/env ipython
+import copy
 import pickle
 from collections.abc import Sequence
 from functools import partial
 from typing import Any, Callable, Literal, override
 
 import anndata as ad
+import lightning as L
 import numpy as np
 import pandas as pd
 import sklearn.metrics as sm
+import torch
+from attrs import Factory, define, field
+from lightning.pytorch.loggers import Logger
 from scipy import sparse
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import RFECV
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from torch.utils.data import DataLoader
 from xgboost import XGBClassifier
 
+import too_predict.deep.torch_utils as d_ut
 from too_predict.corrector import Corrector
 from too_predict.imbalance import Balancer
 from too_predict.imputer import Imputer
 from too_predict.transformer import Transformer
-from too_predict.utils import RNG, adata_to_df
+from too_predict.utils import RNG, adata_to_df, train_test_split_ad
 
 
 class PredBase:
@@ -696,13 +703,28 @@ class PredWithCorrection(PredBase):
 # * Pipeline
 
 
+@define
 class Pipeline:
-    def __init__(self, steps: Sequence, predictor: PredBase | None = None) -> None:
-        self.preprocessing: Sequence = [s for s in steps if s is not None]
-        self.predictor: PredBase | None = predictor
-        self.dct: dict = {"Predictor": self.predictor}
+    preprocessing: Sequence
+    predictor: PredBase | None | d_ut.MultiModule = None
+    callbacks: list[Callable[[], L.Callback]] | None = None
+    dct: dict = field(
+        init=False,
+        default=Factory(lambda x: {"Predictor": x.predictor}, takes_self=True),
+    )
+    trainer_kws: dict | None = None
+    device: str = "cpu"
+    loader_kws: dict = field(default_factory=dict)
+    callbacks: list[Callable[[], L.Callback]] | None = None
+    logger_fn: Callable[[str], Logger] | None = None
+    mcfg: d_ut.ModuleConfig = field(default_factory=d_ut.ModuleConfig)
+    model_kws: dict = field(default_factory=dict)
+    encoders: dict[str, LabelEncoder] | None = field(None, init=False)
+    val_kws: dict | None = None
+    y: str | None = field(None, init=False)
+
+    def __attrs_post_init__(self):
         repeat_counter = {}
-        self.dct = {}
         for step in self.preprocessing:
             cls_name = type(step).__name__
             count = repeat_counter.get(cls_name, -1) + 1
@@ -712,10 +734,54 @@ class Pipeline:
             else:
                 self.dct[cls_name] = step
 
-    def fit(self, x: ad.AnnData, y: str = "tumor_type") -> None:
+    def prepare_adata_nn(
+        self, x: ad.AnnData, y, loader: bool = True
+    ) -> DataLoader | d_ut.AnnDataset:
+        dset = d_ut.AnnDataset(
+            x, to_encode=[y], device=self.device, encoders=self.encoders
+        )
+        if not loader:
+            return dset
+        return DataLoader(dset, **self.loader_kws)
+
+    def fit(
+        self,
+        x: ad.AnnData,
+        y: str = "tumor_type",
+        context: str = "",
+    ) -> None:
+        self.y = y
         for step in self.preprocessing:
             x = step.fit_transform(x)
-        if self.predictor is not None:
+        if self.trainer_kws is not None:
+            trainer_kws = copy.deepcopy(self.trainer_kws)
+            self.encoders = d_ut.AnnDataset.fit_encoders(x, [y])
+            n_features, n_classes = d_ut.data_spec(x, y=x.obs[y])
+            if self.logger_fn is not None:
+                trainer_kws["logger"] = self.logger_fn(context)
+            if self.callbacks:
+                trainer_kws["callbacks"] = [c() for c in self.callbacks]
+            with self.trainer.init_module():
+                self.predictor = self.predictor.new(
+                    in_features=n_features,
+                    n_classes_per_task=n_classes,
+                    conf=self.mcfg,
+                    **self.model_kws,
+                )
+                d_ut.init_lazy(self.predictor, loader=x)
+                self.predictor.init_out_bias()
+            if self.val_kws:
+                x, val = train_test_split_ad(x, **self.val_kws)
+                val = self.prepare_adata_nn(val, y)
+            else:
+                val = None
+            x = self.prepare_adata_nn(x, y)
+
+            self.trainer.fit(
+                model=self.predictor, train_dataloaders=x, val_dataloaders=val
+            )
+            self.predictor = self.predictor.to(torch.device(self.device))
+        elif self.predictor is not None:
             self.predictor.fit(x, y)
 
     @override
@@ -724,10 +790,14 @@ class Pipeline:
 
     @property
     def score_fn(self) -> str:
+        if isinstance(self.predictor, d_ut.MultiModule):
+            raise ValueError("score_fn not defined on module")
         return self.predictor.score_fn
 
     @property
     def had_inf(self) -> bool:
+        if isinstance(self.predictor, d_ut.MultiModule):
+            raise ValueError("had_inf not defined on module")
         return self.predictor.had_inf
 
     @property
@@ -749,6 +819,9 @@ class Pipeline:
         return self.predict(x)
 
     def predict(self, x) -> np.ndarray:
+        if isinstance(self.predictor, d_ut.MultiModule):
+            scores = self.predict_proba(x).argmax(axis=1)
+            return self.encoders[self.y].inverse_transform(scores)
         if self.predictor is None:
             raise ValueError("predictor object not passed during init!")
         for step in self.preprocessing:
@@ -758,4 +831,7 @@ class Pipeline:
     def predict_proba(self, x) -> np.ndarray:
         for step in self.preprocessing:
             x = step.transform(x)
+        if isinstance(self.predictor, d_ut.MultiModule):
+            x = self.prepare_adata_nn(x, self.y, loader=False)
+            return self.predictor.predict_step(x[:]).cpu().numpy()
         return self.predictor.predict_proba(x)

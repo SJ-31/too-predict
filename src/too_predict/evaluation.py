@@ -312,7 +312,10 @@ def cross_validate(
                 x_train = preprocessing[fold].transform(x_train)
                 x_test = preprocessing[fold].transform(x_test)
 
-        model.fit(x_train, y=label_col)
+        if isinstance(model, Pipeline):
+            model.fit(x_train, y=label_col, context=fold)
+        else:
+            model.fit(x_train, y=label_col)
         if post_fit is not None:
             post_fit(fold, model)
 
@@ -431,7 +434,10 @@ def train_test_wrapper(
         },
         index=[0],
     )
-    model.fit(x_train, y=label_col)
+    if isinstance(model, Pipeline):
+        model.fit(x_train, y=label_col, context=set_label)
+    else:
+        model.fit(x_train, y=label_col)
 
     y_true = x_test.obs[label_col]
     if not minimal:
