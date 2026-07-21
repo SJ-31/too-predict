@@ -13,6 +13,10 @@ import torch.nn as nn
 import torchmetrics.functional.classification as tmet
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
+from torchmetrics.functional.regression.mse import mean_squared_error
+from torchmetrics.functional.regression.nrmse import normalized_root_mean_squared_error
+from torchmetrics.functional.regression.pearson import pearson_corrcoef
+from torchmetrics.functional.regression.spearman import spearman_corrcoef
 
 
 def multitask_acc(
@@ -67,7 +71,7 @@ def multitask_metrics2df(metrics: dict) -> pd.DataFrame:
     to_df = {"task": [], "metric": [], "value": []}
     for task, dct in metrics.items():
         for metric, value in dct.items():
-            if metric != "cm":
+            if metric not in {"cm", "misses"}:
                 to_df["task"].append(task)
                 to_df["metric"].append(metric)
                 to_df["value"].append(value.item())
@@ -108,6 +112,39 @@ def multitask_all_metrics(
         result[task]["cm"] = tmet.confusion_matrix(
             preds=score, target=truth, num_classes=n, task="multiclass"
         )
+        pred = torch.argmax(score, dim=1)
+        miss_indices = torch.argwhere(pred == truth).reshape(-1).numpy()
+        score_df = pd.DataFrame(score).rename(lambda x: f"score_{x}", axis=1)
+        miss_df = pd.DataFrame(
+            {"index": miss_indices, "prediction": pred, "truth": truth}
+        )
+        result[task]["misses"] = pd.concat([score_df, miss_df], axis=1)
+    return result
+
+
+def multitask_all_reg(
+    pred: Tensor,
+    y_true: Tensor,
+    task_names: Sequence[str] | None = None,
+    metrics: tuple = ("mse", "pearson", "spearman", "nrmse"),
+) -> dict:
+    result = {}
+    if task_names is None:
+        task_names = [str(i) for i in range(pred.shape[1])]
+    for p, truth, task in zip(iter_cols(pred), iter_cols(y_true), task_names):
+        result[task] = {}
+        for m in metrics:
+            if m == "mse":
+                score = mean_squared_error(preds=p, target=truth)
+            elif m == "spearman":
+                score = spearman_corrcoef(preds=p, target=truth)
+            elif m == "pearson":
+                score = pearson_corrcoef(preds=p, target=truth)
+            elif m == "nrmse":
+                score = normalized_root_mean_squared_error(preds=p, target=truth)
+            else:
+                raise ValueError(f"Metric {m} not supported")
+            result[task][m] = score
     return result
 
 
