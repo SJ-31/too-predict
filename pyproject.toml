@@ -17,10 +17,10 @@ dependencies = [
   "polars>=1.22.0",
   "optuna",
   "obonet",
-  "numpy<2",
+  "numpy",
   "pyarrow>=19.0.0",
-  "pyhere>=1.0.3",
-  "torch==2.7",
+  "pyhere",
+  "torch",
   "pyod>=2.0.3",
   "pypalettes",
   "marsilea",
@@ -35,10 +35,7 @@ dependencies = [
   "scikit-bio>=0.6.3",
   "scikit-learn>=1.6.1",
   "xgboost>=2.1.4",
-  "shap>=0.47.1",
-  "interpret>=0.6.9",
-  "setuptools>=77.0.3",
-  "wheel>=0.45.1",
+  "interpret",
 ]
 
 [build-system]

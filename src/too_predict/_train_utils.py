@@ -770,6 +770,8 @@ def get_model_fn(name: str) -> MultiModule:
         model = Disyak
     elif "MultiBranch" in name:
         model = MultiBranch
+    else:
+        raise ValueError("Model name not recognized!")
 
     return model
 
