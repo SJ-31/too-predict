@@ -714,14 +714,15 @@ class Pipeline:
     )
     trainer_kws: dict | None = None
     device: str = "cpu"
-    loader_kws: dict = field(default_factory=dict)
+    loader_kws: dict = field(factory=dict)
     callbacks: list[Callable[[], L.Callback]] | None = None
     logger_fn: Callable[[str], Logger] | None = None
-    mcfg: d_ut.ModuleConfig = field(default_factory=d_ut.ModuleConfig)
-    model_kws: dict = field(default_factory=dict)
-    encoders: dict[str, LabelEncoder] | None = field(None, init=False)
+    mcfg: d_ut.ModuleConfig = field(factory=d_ut.ModuleConfig)
+    model_kws: dict = field(factory=dict)
+    encoders: dict[str, LabelEncoder] | None = field(default=None, init=False)
     val_kws: dict | None = None
-    y: str | None = field(None, init=False)
+    trainer: L.Trainer | None = field(default=None, init=False)
+    y: str | None = field(default=None, init=False)
 
     def __attrs_post_init__(self):
         repeat_counter = {}
@@ -761,6 +762,14 @@ class Pipeline:
                 trainer_kws["logger"] = self.logger_fn(context)
             if self.callbacks:
                 trainer_kws["callbacks"] = [c() for c in self.callbacks]
+            self.trainer = L.Trainer(**trainer_kws)
+            if self.val_kws:
+                x, val = train_test_split_ad(x, **self.val_kws)
+                val = self.prepare_adata_nn(val, y)
+            else:
+                val = None
+            x = self.prepare_adata_nn(x, y)
+
             with self.trainer.init_module():
                 self.predictor = self.predictor.new(
                     in_features=n_features,
@@ -769,13 +778,6 @@ class Pipeline:
                     **self.model_kws,
                 )
                 d_ut.init_lazy(self.predictor, loader=x)
-                self.predictor.init_out_bias()
-            if self.val_kws:
-                x, val = train_test_split_ad(x, **self.val_kws)
-                val = self.prepare_adata_nn(val, y)
-            else:
-                val = None
-            x = self.prepare_adata_nn(x, y)
 
             self.trainer.fit(
                 model=self.predictor, train_dataloaders=x, val_dataloaders=val
@@ -797,11 +799,13 @@ class Pipeline:
     @property
     def had_inf(self) -> bool:
         if isinstance(self.predictor, d_ut.MultiModule):
-            raise ValueError("had_inf not defined on module")
+            return False
         return self.predictor.had_inf
 
     @property
     def classes_(self):
+        if isinstance(self.predictor, d_ut.MultiModule):
+            return self.encoders[self.y].classes_
         return self.predictor.classes_
 
     def transform(self, x: ad.AnnData) -> ad.AnnData:
