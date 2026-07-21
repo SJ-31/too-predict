@@ -56,12 +56,6 @@ def train_test_split_ad(adata: ad.AnnData, **kwargs) -> tuple[ad.AnnData, ad.Ann
     return adata[train, :], adata[test, :]
 
 
-def read_pickle(path):
-    with open(path, "rb") as f:
-        obj = pickle.load(f)
-    return obj
-
-
 def get_data(path: str, must_exist: bool = True) -> Path:
     """Retrieve the path of a file in this package's `data` directory
     :param: path relative path to the desired file
@@ -591,6 +585,9 @@ def load_pickle(filename):
     with open(filename, "rb") as pck:
         obj = pickle.load(pck)
     return obj
+
+
+read_pickle = load_pickle
 
 
 def take_from_ad(
