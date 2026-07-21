@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 import yaml
+from icecream import ic
 from loguru import logger
 from pyhere import here
 from sklearn.linear_model import LogisticRegression
@@ -25,7 +26,6 @@ from too_predict.utils import (
     adata_sample_by,
     read_existing,
     read_pickle,
-    train_test_split_ad,
     training_data_internal,
 )
 
@@ -83,26 +83,18 @@ def get_data(f):
     return all
 
 
-def get_default_filter():
-    return Filter(method="mutual_information", top=500, feature_col="GENEID")
+TRANSFORMS: dict[str, list] = {
+    "clr_minfo": [
+        Transformer(method="clr", impute_fn=Imputer("plus_one")),
+        Filter(method="mutual_information", top=500, feature_col="GENEID"),
+    ]
+}
 
 
 MODELS = {
-    "xgboost_clr": lambda: Pipeline(
-        [
-            Transformer(method="clr", impute_fn=Imputer("plus_one")),
-            get_default_filter(),
-        ],
-        PredBase(model=XGBEstimator()),
-    ),
-    "mlp_three": "Parallel",
-    "logistic_clr": lambda: Pipeline(
-        [
-            Transformer(method="clr", impute_fn=Imputer("plus_one")),
-            get_default_filter(),
-        ],
-        PredBase(model=LogisticRegression(solver="saga")),
-    ),
+    "xgboost_clr": ("clr_minfo", PredBase(model=XGBEstimator())),
+    "mlp_three": ("clr_minfo", "Parallel"),
+    "logistic_clr": ("clr_minfo", PredBase(model=LogisticRegression(solver="saga"))),
 }
 
 EXCLUDED_FOR_TRAIN = [
@@ -127,90 +119,60 @@ def deep_eval(
     adata,
     mname: str,
     model_class: str,
+    transforms: str,
     cache: NamedCache,
     config: dict,
     holdout: bool = False,
-    split_name: str | None = None,
-    split_fn: Callable | None = None,
 ):
-    import too_predict.deep.evaluation as d_ev
     import too_predict.deep.torch_utils as d_ut
     import torch.optim as optim
     import torch.optim.lr_scheduler as schedule
-    from lightning.pytorch.callbacks import EarlyStopping
     from too_predict._train_utils import get_model_fn, smk_callbacks
-    from too_predict.deep.metrics import multitask_metrics2df
-    from too_predict.deep.nns import HardSharer
 
     device = config.get("device", "cpu")
-    labels = (LABEL_COL,)
-    n_features, n_classes = d_ut.data_spec(adata, y=labels)
-    encoders = d_ut.AnnDataset.fit_encoders(adata, labels)
     valid_split_kws = {"test_size": 0.1, "random_state": RANDOM_STATE}
-    if not holdout:
-        train, valid = train_test_split_ad(adata, **valid_split_kws)
-        test_set = None
-    else:
-        train, test = split_fn(adata)
-        train, valid = train_test_split_ad(adata, **valid_split_kws)
-        test_set = d_ut.AnnDataset(
-            train, to_encode=labels, device=device, encoders=encoders
-        )
-    train_set = d_ut.AnnDataset(
-        train, to_encode=labels, device=device, encoders=encoders
-    )
-    valid_set = d_ut.AnnDataset(
-        valid, to_encode=labels, device=device, encoders=encoders
-    )
     mcfg = d_ut.ModuleConfig(
         cache="val_acc",
-        scheduler_fn=lambda x: schedule.ReduceLROnPlateau(x, **config.get("schedule")),
+        scheduler_fn=lambda x: schedule.ReduceLROnPlateau(
+            x, **config.get("schedule", {})
+        ),
         optimizer_fn=lambda x: optim.Adam(x, **config.get("optimizer", {})),
     )
     kws = config.get("model_kws")
     trainer_kws = config.get("trainer", {}) or {}
+    pf = lambda: Pipeline(
+        TRANSFORMS[transforms],
+        predictor=get_model_fn(model_class),
+        trainer_kws=trainer_kws,
+        callbacks=smk_callbacks(config),
+        logger_fn=lambda x: d_ut.lightning_logger(
+            f"crc-pdac_cv: {mname}", **config["logger_kws"]
+        ),
+        device=device,
+        mcfg=mcfg,
+        model_kws=kws,
+        val_kws=valid_split_kws,
+    )
+
     if not holdout:
-        cv_result = cache(
-            d_ev.cross_validate,
+        return cache(
+            cross_validate,
             name=mname,
             pkl=True,
-            model_cls=get_model_fn(model_class),
-            model_kwargs=kws.get(mname, {}) or {},
-            callbacks=smk_callbacks(config),
-            logger_fn=lambda x: d_ut.lightning_logger(f"crc-pdac_cv: {mname}", "wandb"),
-            trainer_kwargs=trainer_kws,
-            adset=train_set,
-            model_config=mcfg,
-            n_classes=n_classes,
-            in_features=n_features,
-            validation=valid_set,
-            device=device,
-            minimal=False,
-            **config.get("cv", {}) or {},
+            model=pf(),
+            label_col=LABEL_COL,
+            adata=adata,
+            random_state=RANDOM_STATE,
         )
-        return {"misc": cv_result[0], "cm": cv_result[1]}
-    else:
-        result = cache(
-            train_test_wrapper_torch,
-            name=mname,
-            pkl=True,
-            module_cls=get_model_fn(model_class),
-            trainer_kwargs=trainer_kws,
-            device=device,
-            loader_kwargs=kwargs["loader_kwargs"],
-            train_test=(train_set, test_set),
-            to_encode=labels,
-            validation=valid_set,
-            n_classes=n_classes,
-            in_features=n_features,
-            logger_fn=lambda x: d_ut.lightning_logger(
-                f"crc-pdac_holdout_{split_name}: {mname}", "wandb"
-            ),
-            module_config=mcfg,
-            set_label=mname,
-        )
-        df = multitask_metrics2df(result)
-        return {"misc": df}
+    return cache(
+        holdout,
+        name=mname,
+        pkl=True,
+        split_fns=SPLITS,
+        pipeline_fn=pf,
+        label_col=LABEL_COL,
+        data=adata,
+    )
 
 
 def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
@@ -222,23 +184,26 @@ def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
         reader=pd.read_csv,
         suffix=".csv",
     )
-    for mname, pipeline in MODELS.items():
+    for mname, spec in MODELS.items():
+        transforms, predictor = spec
         logger.info("Starting cross validation for {}", mname)
-        if isinstance(pipeline, str):
+        if isinstance(predictor, str):
             cv_result = deep_eval(
                 adata,
-                model_class=pipeline,
+                model_class=predictor,
+                transforms=transforms,
                 cache=cache,
                 mname=mname,
                 config=dl_config,
                 holdout=False,
             )
         else:
+            pipeline = Pipeline(TRANSFORMS[transforms], predictor=predictor)
             cv_result = cache(
                 cross_validate,
                 name=mname,
                 pkl=True,
-                model=pipeline(),
+                model=pipeline,
                 label_col=LABEL_COL,
                 adata=adata,
                 random_state=RANDOM_STATE,
@@ -257,9 +222,11 @@ def do_holdout(adata: ad.AnnData, outdir: Path, dl_config):
         reader=pd.read_csv,
         suffix=".csv",
     )
-    for mname, pipeline in MODELS.items():
+    for mname, spec in MODELS.items():
         logger.info("Starting holdout for {}", mname)
-        if not isinstance(pipeline, str):
+        transforms, predictor = spec
+        if not isinstance(predictor, str):
+            pipeline = lambda: Pipeline(TRANSFORMS[transforms], predictor=predictor)
             holdout_result = cache(
                 holdout,
                 split_fns=SPLITS,
@@ -269,22 +236,17 @@ def do_holdout(adata: ad.AnnData, outdir: Path, dl_config):
                 label_col=LABEL_COL,
                 data=adata,
             )
-            all_results.append(holdout_result["misc"].assign(model=mname))
         else:
-            for split_name, fn in SPLITS.items():
-                holdout_result = deep_eval(
-                    adata,
-                    mname=mname,
-                    model_class=pipeline,
-                    cache=cache,
-                    config=dl_config,
-                    holdout=True,
-                    split_name=split_name,
-                    split_fn=fn,
-                )
-                all_results.append(
-                    holdout_result["misc"].assign(model=mname, split=split_name)
-                )
+            holdout_result = deep_eval(
+                adata,
+                mname=mname,
+                transforms=transforms,
+                model_class=predictor,
+                cache=cache,
+                config=dl_config,
+                holdout=True,
+            )
+        all_results.append(holdout_result["misc"].assign(model=mname))
     pd.concat(all_results).to_csv(outdir / "holdout.csv", index=False)
 
 
@@ -303,6 +265,7 @@ def inspect_model(adata, name: str, model: Pipeline, outdir: Path):
 
     if isinstance(model.predictor.model, LogisticRegression):
         # TODO: generalize this into a method that extracts feature importance and visualizes the top features by clustering
+        # https://xgboosting.com/xgboost-feature_importances_-property/
         weights: pd.DataFrame = pd.DataFrame(model.predictor.model.coef_).T
         weights.columns = [f"lr_weight_{c}" for c in model.predictor.model.classes_]
         weights.index = transformed.var[VAR_COL]
@@ -392,8 +355,13 @@ if __name__ == "__main__" or INTERACTIVE:
     results_dir = workdir / f"{'test_' if args['test'] else ''}results_{d}"
     with open(workdir / "deep.yaml") as dc:
         dl_config = yaml.safe_load(dc)
-    if not torch.cuda.is_available():
-        dl_config["devic"] = "cpu"
+    if not torch.cuda.is_available() or args["test"]:
+        dl_config["device"] = "cpu"
+        dl_config["logger_kws"] = {"platform": "tensorboard", "save_dir": results_dir}
+        if "accelerator" in dl_config.get("trainer", {}):
+            del dl_config["trainer"]["accelerator"]
+    else:
+        dl_config["logger_kws"] = {"platform": "wandb"}
     adata: ad.AnnData = read_existing(
         here("remote", "repos", "too-predict", "training", "crc-pdac.h5ad"),
         get_data,

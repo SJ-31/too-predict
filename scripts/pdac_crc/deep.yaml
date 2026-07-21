@@ -2,7 +2,6 @@ device: "cuda:0"
 model_kws:
   mlp_three:
     n_shared_layers: 2
-    n_hidden: 500
 logger: "wandb"
 dataloader:
   batch_size: 256
