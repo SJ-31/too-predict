@@ -5,6 +5,12 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Any, Callable, Literal, override
 
+try:
+    from icecream import ic
+
+    ic.configureOutput("dbg: ", includeContext=True)
+except ImportError:  # Graceful fallback if IceCream isn't installed.
+    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 import anndata as ad
 import lightning as L
 import numpy as np

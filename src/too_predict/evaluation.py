@@ -5,6 +5,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+try:
+    from icecream import ic
+
+    ic.configureOutput("dbg: ", includeContext=True)
+except ImportError:  # Graceful fallback if IceCream isn't installed.
+    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 import anndata as ad
 import numpy as np
 import optuna
@@ -214,6 +220,7 @@ def get_all_metrics(
     return {
         "cm": cm,
         "pred": list(pred_vals),
+        "score": predictions.rename(lambda x: f"score_{x}", axis=1),
         "balanced_acc": me.balanced_accuracy_score(true, pred_vals),
         "acc": acc,
         "kappa": me.cohen_kappa_score(true, pred_vals),
@@ -327,12 +334,11 @@ def cross_validate(
             x_test.obs.to_csv(record_dir.joinpath(f"test_set_{fold}.csv"), index=False)
 
         score = model_score(model, x_test)
-
         if model.had_inf and record_dir is not None:
             record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
 
         res: dict = get_all_metrics(true=y_true, score=score, classes=model.classes_)
-        misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"])
+        misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"], res["score"])
         if misses.shape[0] > 0:
             misses.loc[:, "fold"] = fold
             misclassified.append(misses)
@@ -362,7 +368,12 @@ def cross_validate(
     } | {k: pd.concat(v) for k, v in main_metrics.items() if v}
 
 
-def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.DataFrame:
+def get_misses(
+    adata: ad.AnnData,
+    true: np.ndarray,
+    pred: np.ndarray,
+    scores: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     if isinstance(true, pd.Series):
         true = true.values
     if isinstance(pred, pd.Series):
@@ -371,7 +382,16 @@ def get_misses(adata: ad.AnnData, true: np.ndarray, pred: np.ndarray) -> pd.Data
         raise ValueError("The shapes of the adata object and true values don't match!")
     copy = adata.obs.copy()
     copy["prediction"] = pred
-    return copy.loc[true != pred, :]
+    result = copy.loc[true != pred, :]
+    if scores is None:
+        return result
+    return pd.concat(
+        [
+            result.reset_index(drop=True),
+            scores.loc[true != pred, :].reset_index(drop=True),
+        ],
+        axis=1,
+    )
 
 
 def train_test_wrapper(
@@ -443,17 +463,14 @@ def train_test_wrapper(
     if not minimal:
         score = model_score(model, x_test)
         y_uniques = y_true.unique()
-        classes = (
-            model.predictor.classes_ if isinstance(model, Pipeline) else model.classes_
-        )
+        classes = model.classes_
         res: dict = get_all_metrics(true=y_true, score=score, classes=classes)
         for k, v in res.items():
             if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
-                if k == "cm":
+                if k in {"cm", "score"}:
                     continue
                 res[k] = v.loc[v["class"].isin(y_uniques), :]
-
-        res["misses"] = get_misses(x_test, y_true, res["pred"])
+        res["misses"] = get_misses(x_test, y_true, res["pred"], res["score"])
         res["split_prop"] = split_prop
         return res, model
     pred = model.predict(x_test)
