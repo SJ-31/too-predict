@@ -2,7 +2,6 @@
 
 import pickle
 import sys
-from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -54,7 +53,8 @@ def get_data(f):
     all: ad.AnnData = training_data_internal()
     all.obs = all.obs.loc[:, ["Case_ID", "Project_ID", "tumor_type"]]
     others = all[~all.obs["tumor_type"].isin(["PAAD", "COAD-READ"]), :].copy()
-    others = others[adata_sample_by(others, {"tumor_type": 50}, rng=RNG),]
+    # others = others[adata_sample_by(others, {"tumor_type": 50}, rng=RNG),]
+    # [2026-07-22 Wed] Don't bother undersampling, it will worsen calibration
     others.obs["tumor_type"] = "other"
     all = all[all.obs["tumor_type"].isin(["PAAD", "COAD-READ"]), :]
     all.obs = all.obs.replace({"tumor_type": {"COAD-READ": "CRC", "PAAD": "PDAC"}})
@@ -87,7 +87,11 @@ TRANSFORMS: dict[str, list] = {
     "clr_minfo": [
         Transformer(method="clr", impute_fn=Imputer("plus_one")),
         Filter(method="mutual_information", top=500, feature_col="GENEID"),
-    ]
+    ],
+    "clr_minfo_1000": [
+        Transformer(method="clr", impute_fn=Imputer("plus_one")),
+        Filter(method="mutual_information", top=1000, feature_col="GENEID"),
+    ],
 }
 
 
@@ -102,6 +106,7 @@ EXCLUDED_FOR_TRAIN = [
     "PHcase_11",
     "PHcase_18",
     "PHcase_19",
+    "PHcase_4",
     "PHcase_1",
     "PHcase_2",
 ]
@@ -122,7 +127,7 @@ def deep_eval(
     transforms: str,
     cache: NamedCache,
     config: dict,
-    holdout: bool = False,
+    do_holdout: bool = False,
 ):
     import too_predict.deep.torch_utils as d_ut
     import torch.optim as optim
@@ -140,6 +145,8 @@ def deep_eval(
     )
     kws = config.get("model_kws")
     trainer_kws = config.get("trainer", {}) or {}
+    if device == "cpu":
+        trainer_kws["max_epochs"] = 50
     pf = lambda: Pipeline(
         TRANSFORMS[transforms],
         predictor=get_model_fn(model_class),
@@ -150,11 +157,11 @@ def deep_eval(
         ),
         device=device,
         mcfg=mcfg,
-        model_kws=kws,
+        model_kws=kws.get(mname, {}) or {},
         val_kws=valid_split_kws,
     )
 
-    if not holdout:
+    if not do_holdout:
         return cache(
             cross_validate,
             name=mname,
@@ -175,7 +182,7 @@ def deep_eval(
     )
 
 
-def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
+def do_cross_val(models: dict, adata: ad.AnnData, outdir: Path, dl_config: dict):
     all_results = []
     misses = []
     cache = NamedCache(
@@ -184,7 +191,7 @@ def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
         reader=pd.read_csv,
         suffix=".csv",
     )
-    for mname, spec in MODELS.items():
+    for mname, spec in models.items():
         transforms, predictor = spec
         logger.info("Starting cross validation for {}", mname)
         if isinstance(predictor, str):
@@ -195,7 +202,7 @@ def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
                 cache=cache,
                 mname=mname,
                 config=dl_config,
-                holdout=False,
+                do_holdout=False,
             )
         else:
             pipeline = Pipeline(TRANSFORMS[transforms], predictor=predictor)
@@ -214,15 +221,15 @@ def do_cross_val(adata: ad.AnnData, outdir: Path, dl_config: dict):
     pd.concat(misses).to_csv(outdir / "misses.csv", index=False)
 
 
-def do_holdout(adata: ad.AnnData, outdir: Path, dl_config):
-    all_results = []
+def do_holdout(models: dict, adata: ad.AnnData, outdir: Path, dl_config):
+    all_results, misses = [], []
     cache = NamedCache(
         outdir / ".holdout_cache",
         writer=lambda x: x.to_csv(index=False),
         reader=pd.read_csv,
         suffix=".csv",
     )
-    for mname, spec in MODELS.items():
+    for mname, spec in models.items():
         logger.info("Starting holdout for {}", mname)
         transforms, predictor = spec
         if not isinstance(predictor, str):
@@ -244,10 +251,12 @@ def do_holdout(adata: ad.AnnData, outdir: Path, dl_config):
                 model_class=predictor,
                 cache=cache,
                 config=dl_config,
-                holdout=True,
+                do_holdout=True,
             )
         all_results.append(holdout_result["misc"].assign(model=mname))
+        misses.append(holdout_result["misses"].assign(model=mname))
     pd.concat(all_results).to_csv(outdir / "holdout.csv", index=False)
+    pd.concat(misses).to_csv(outdir / "holdout_misses.csv", index=False)
 
 
 def inspect_model(adata, name: str, model: Pipeline, outdir: Path):
@@ -324,19 +333,20 @@ def parse_args():
     return args
 
 
-def main(adata, args, dir: Path, dl_config: dict):
+def main(models, adata, args, dir: Path, dl_config: dict):
     if args["test"]:
         adata = adata[adata_sample_by(adata, {"tumor_type": 100}), :]
     if not dir.exists():
         dir.mkdir()
     if not args["no_cv"]:
         do_cross_val(
+            models,
             adata[~adata.obs["Case_ID"].isin(EXCLUDED_FOR_TRAIN), :].copy(),
             dir,
             dl_config=dl_config,
         )
     if args["holdout"]:
-        do_holdout(adata, dir, dl_config=dl_config)
+        do_holdout(models, adata, dir, dl_config=dl_config)
     if args["model"]:
         model_out = dir / "full"
         model_out.mkdir(exist_ok=True)
@@ -355,7 +365,9 @@ if __name__ == "__main__" or INTERACTIVE:
     results_dir = workdir / f"{'test_' if args['test'] else ''}results_{d}"
     with open(workdir / "deep.yaml") as dc:
         dl_config = yaml.safe_load(dc)
-    if not torch.cuda.is_available() or args["test"]:
+    if not torch.cuda.is_available() and not args["test"]:
+        MODELS = {k: v for k, v in MODELS.items() if not isinstance(v[1], str)}
+    elif not torch.cuda.is_available() or args["test"]:
         dl_config["device"] = "cpu"
         dl_config["logger_kws"] = {"platform": "tensorboard", "save_dir": results_dir}
         if "accelerator" in dl_config.get("trainer", {}):
@@ -368,4 +380,4 @@ if __name__ == "__main__" or INTERACTIVE:
         ad.read_h5ad,
     )
     if not INTERACTIVE:
-        main(adata, args, results_dir, dl_config)
+        main(MODELS, adata, args, results_dir, dl_config)
