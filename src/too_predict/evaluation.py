@@ -392,7 +392,7 @@ def cross_validate(
             misclassified.append(misses)
 
         if trial is not None:
-            trial.report(get_report_val(res), fold)
+            trial.report(get_report_val(), fold)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
@@ -439,8 +439,9 @@ def train_test_wrapper(
     pre_split: bool = True,
     set_label: str = "0",
     verbose: bool = False,
-    minimal: bool = True,
     save_split_path: Path | None = None,
+    metric_kws: dict | None = None,
+    stratify_metrics: str | None = None,
 ) -> tuple[dict, Pipeline | PredBase]:
     """Wrapper function for fitting PredBase model, testing it, and returning evaluation
     metrics
@@ -497,21 +498,23 @@ def train_test_wrapper(
         model.fit(x_train, y=label_col)
 
     y_true = x_test.obs[label_col]
-    if not minimal:
-        score = model_score(model, x_test)
-        y_uniques = y_true.unique()
-        classes = model.classes_
-        res: dict = get_all_metrics(true=y_true, score=score, classes=classes)
-        for k, v in res.items():
-            if isinstance(v, pd.DataFrame) and v.shape[0] > 0:
-                if k in {"cm", "score"}:
-                    continue
-                res[k] = v.loc[v["class"].isin(y_uniques), :]
-        res["misses"] = get_misses(x_test, y_true, res["pred"], res["score"])
-        res["split_prop"] = split_prop
-        return res, model
-    pred = model.predict(x_test)
-    return {"acc": met.accuracy_score(y_true=y_true, y_pred=pred)}, model
+    metric_kws = metric_kws or {"selection": ["acc", "mcc"]}
+    score = model_score(model, x_test)
+    classes = model.classes_
+    m = Metrics(**metric_kws)
+    if not stratify_metrics:
+        m.record(y_true, score=score, classes=classes)
+    else:
+        m.record(
+            y_true, score=score, classes=classes, stratify_by=x_test[stratify_metrics]
+        )
+    df, cm = m.to_df()
+    res: dict = get_all_metrics(true=y_true, score=score, classes=classes)
+    res["misc"] = df
+    res["cm"] = cm
+    res["misses"] = get_misses(x_test, y_true, score, classes)
+    res["split_prop"] = split_prop
+    return res, model
 
 
 def holdout(
@@ -523,7 +526,6 @@ def holdout(
     save_split_path: Path | None = None,
     split_masks: dict[str, tuple] | None = None,
     verbose: bool = False,
-    minimal: bool = False,
     post_fit: Callable[[str, Pipeline | PredBase], None] | None = None,
 ) -> dict:
     """Wrapper function for doing the classic holdout method (train-test-split)
@@ -533,7 +535,7 @@ def holdout(
     split_fn: A dictionary of function that splits adata into a tuple of train, test
     split_indices: A dictionary of mapping test set names to (train, test) boolean indices
 
-    Return
+    Returns
     ------
     A dictionary containing model evaluation results for each unique instance of
         `group_col`
@@ -551,20 +553,7 @@ def holdout(
     else:
         pre_split = False
 
-    dfs = {"report": [], "roc": [], "prec_recall": [], "split_prop": [], "misses": []}
-    misc_tmp = {
-        "test_set": [],
-        "acc": [],
-        "balanced_acc": [],
-        "kappa": [],
-        "jaccard": [],
-        "fowlkes_mallows": [],
-        "auroc": [],
-        "aupr": [],
-        "mcc": [],
-    }
-    cms = {}
-    minimal_accs = {}
+    dfs = {"misc": [], "cm": [], "split_prop": [], "misses": []}
     if split_fns is None and split_masks is None:
         iter_over = data
     else:
@@ -580,36 +569,20 @@ def holdout(
                 adata=data if not pre_split else None,
                 pre_split=pre_split,
                 verbose=verbose,
-                minimal=minimal,
                 save_split_path=save_split_path,
             )
             if post_fit is not None:
                 post_fit(set_label, model)
-            if minimal:
-                minimal_accs[set_label] = cur
         except RRuntimeError as e:
             print("Error in R runtime: ", e)
             print("ignoring...")
             continue
-        cms[set_label] = cur["cm"]
-        for m in misc_tmp.keys():
-            if m == "test_set":
-                continue
-            misc_tmp[m].append(cur[m])
-        misc_tmp["test_set"].append(set_label)
         for d in dfs.keys():
             df = cur[d]
             if df is not None:
                 df["test_set"] = set_label
                 dfs[d].append(df)
-    if not minimal:
-        concat = {
-            d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0
-        }
-        concat["cm"] = cms
-        concat["misc"] = pd.DataFrame(misc_tmp)
-        return concat
-    return minimal_accs
+    return {d: pd.concat(v, ignore_index=True) for d, v in dfs.items() if len(v) > 0}
 
 
 def write_cross_val(cv_results, outdir, prefix, cm_prefix: str = ""):
