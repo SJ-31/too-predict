@@ -236,15 +236,38 @@ def get_all_metrics(
 
 
 def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
+    """
+    Wrapper around sklearn's confusion matrix to show class labels
+
+    Returns
+    -------
+    DataFrame of shape (n_classes, n_classes)
+    Confusion matrix whose i-th row and j-th
+    column entry indicates the number of
+    samples with true label being i-th class
+    and predicted label being j-th class.
+
+    True values in the rows, predictions in the columns
+    """
     df = pd.DataFrame(me.confusion_matrix(true, pred, **kwargs))
     if "labels" not in kwargs:
         labels = np.unique(true)
         df.columns = labels
         df.index = labels
+        df.index.name = "truth"
     else:
         df.columns = kwargs["labels"]
         df.index = kwargs["labels"]
+        df.index.name = "truth"
     return df
+
+
+def write_cm_dict(file: Path | str, cms: dict[str, pd.DataFrame]):
+    combined_text = []
+    for k, v in cms.items():
+        combined_text.append(f"{k}\n{repr(v)}")
+    with open(file, "w") as f:
+        f.write("\n\n".join(combined_text))
 
 
 def cross_validate(
