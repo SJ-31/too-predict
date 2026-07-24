@@ -295,16 +295,29 @@ def collect_gdc_counts(
 
 
 def read_existing[T](
-    filename: Path,
-    expr: Callable[[Path], T],
+    spec: Path | dict[str, Path],
+    expr: Callable[[Path], T | dict[str, T]],
     read_fn: Callable[[Path], T] | None = None,
-) -> T | None:
-    if filename.exists() and read_fn is not None:
-        return read_fn(filename)
-    elif filename.exists():
+) -> T | None | dict[str, T]:
+    if isinstance(spec, dict):
+        if all([v.exists() for v in spec.values()]) and read_fn is not None:
+            return {k: read_fn(v) for k, v in spec.items()}
+        result = expr(spec)
+        if isinstance(result, dict) and not all([k in spec for k in result.keys()]):
+            print(
+                "WARNING: results dictionary doesn't have the same keys as the specification"
+            )
+        elif not isinstance(result, dict):
+            print(
+                "WARNING: if the specification is a dictionary, expr should also return a dictionary"
+            )
+        return result
+    if spec.exists() and read_fn is not None:
+        return read_fn(spec)
+    elif spec.exists():
         return
     else:
-        return expr(filename)
+        return expr(spec)
 
 
 def phi_proportionality(x: np.ndarray, y: np.ndarray):
