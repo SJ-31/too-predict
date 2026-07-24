@@ -296,6 +296,8 @@ def cross_validate(
     record_dir: Path | None = None,
     post_fit: Callable[[int, Pipeline | PredBase], None] | None = None,
     preprocessing: Pipeline | None | dict[int, Pipeline] = None,
+    metric_kws: dict | None = None,
+    stratify_metrics: str | None = None,
 ) -> dict:
     """Evaluate model performance with cross-validation
 
@@ -327,19 +329,12 @@ def cross_validate(
             n_splits=n_splits, random_state=random_state, shuffle=True
         )
         splits = cv.split(N.X, labels, groups=N.obs[group_col])
-    cm: dict = {}
-    main_metrics = {"report": [], "prec_recall": [], "roc": []}
-    others: dict = {
-        "fold": [],
-        "acc": [],
-        "auroc": [],
-        "aupr": [],
-        "jaccard": [],
-        "kappa": [],
-        "balanced_acc": [],
-        "fowlkes_mallows": [],
-        "mcc": [],
+    metric_kws = metric_kws or {
+        "torch": False,
+        "type": "classification",
+        "selection": ["mcc", "acc"],
     }
+    metrics: Metrics = Metrics(**metric_kws)
     misclassified: list = []
     for fold, (train_i, test_i) in enumerate(splits):
         x_train: ad.AnnData = N[train_i]
@@ -373,43 +368,49 @@ def cross_validate(
         if model.had_inf and record_dir is not None:
             record_dir.joinpath("model_had_inf.log").touch(exist_ok=True)
 
-        res: dict = get_all_metrics(true=y_true, score=score, classes=model.classes_)
-        misses: pd.DataFrame = get_misses(x_test, y_true, res["pred"], res["score"])
+        if not stratify_metrics:
+            metrics.record(
+                true=y_true,
+                score=score,
+                context={"fold": fold},
+                classes=model.classes_,
+                **metric_kws,
+            )
+        else:
+            metrics.record(
+                true=y_true,
+                score=score,
+                context={"fold": fold},
+                classes=model.classes_,
+                stratify_by=x_test[stratify_metrics],
+                **metric_kws,
+            )
+
+        misses: pd.DataFrame = get_misses(x_test, y_true, score, model.classes_)
         if misses.shape[0] > 0:
             misses.loc[:, "fold"] = fold
             misclassified.append(misses)
-        others["fold"].append(fold)
-
-        for o in others.keys():
-            if o != "fold":
-                others[o].append(res[o])
-        cm[fold] = res["cm"]
-        for k, v in main_metrics.items():
-            df = res[k]
-            if df is not None:
-                df["fold"] = fold
-                v.append(df)
 
         if trial is not None:
             trial.report(get_report_val(res), fold)
             if trial.should_prune():
                 raise optuna.TrialPruned()
 
+    metric_df, cm = metrics.to_df()
     return {
         "cm": cm,
-        "misc": pd.DataFrame(others),
+        "misc": metric_df,
         "misses": pd.concat(misclassified, ignore_index=True)
         if misclassified
         else pd.DataFrame(),
-    } | {k: pd.concat(v) for k, v in main_metrics.items() if v}
+    }
 
 
 def get_misses(
-    adata: ad.AnnData,
-    true: np.ndarray,
-    pred: np.ndarray,
-    scores: pd.DataFrame | None = None,
+    adata: ad.AnnData, true: np.ndarray, score: np.ndarray, classes
 ) -> pd.DataFrame:
+    vals = pd.DataFrame(score, columns=classes)
+    pred = vals.idxmax(1)
     if isinstance(true, pd.Series):
         true = true.values
     if isinstance(pred, pd.Series):
@@ -419,12 +420,12 @@ def get_misses(
     copy = adata.obs.copy()
     copy["prediction"] = pred
     result = copy.loc[true != pred, :]
-    if scores is None:
+    if vals is None:
         return result
     return pd.concat(
         [
             result.reset_index(drop=True),
-            scores.loc[true != pred, :].reset_index(drop=True),
+            vals.loc[true != pred, :].reset_index(drop=True),
         ],
         axis=1,
     )
@@ -1066,7 +1067,7 @@ class Metrics:
     )
     torch: bool = False
     dfs: list = field(init=False, factory=list)
-    cms: dict = field(init=False, factory=dict)
+    cms: list = field(init=False, factory=list)
     _valid: set = {
         "mcc",
         "kappa",
