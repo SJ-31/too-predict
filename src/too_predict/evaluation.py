@@ -1,9 +1,12 @@
 #!/usr/bin/env ipython
 import itertools
 import pickle
-from collections.abc import Sequence
+from collections import defaultdict
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Callable, Literal
+
+from attrs import Factory, define, field, validators
 
 try:
     from icecream import ic
@@ -217,25 +220,30 @@ def get_all_metrics(
         print(f"Exception: {e}")
         prec_recall_df = None
         aupr = np.nan
+    df = pd.DataFrame(
+        {
+            "acc": [acc],
+            "balanced_acc": [me.balanced_accuracy_score(true, pred_vals)],
+            "kappa": [me.cohen_kappa_score(true, pred_vals)],
+            "jaccard": [me.jaccard_score(true, pred_vals, average="macro")],
+            "auroc": [auroc],
+            "aupr": [aupr],
+            "mcc": [me.matthews_corrcoef(true, pred_vals)],
+            "fowlkes_mallows": [me.fowlkes_mallows_score(true, pred_vals)],
+        }
+    )
     return {
         "cm": cm,
         "pred": list(pred_vals),
         "score": predictions.rename(lambda x: f"score_{x}", axis=1),
-        "balanced_acc": me.balanced_accuracy_score(true, pred_vals),
-        "acc": acc,
-        "kappa": me.cohen_kappa_score(true, pred_vals),
-        "jaccard": me.jaccard_score(true, pred_vals, average="macro"),
-        "auroc": auroc,
-        "aupr": aupr,
-        "fowlkes_mallows": me.fowlkes_mallows_score(true, pred_vals),
-        "mcc": me.matthews_corrcoef(true, pred_vals),
+        "df": df,
         "report": rep_df,
         "prec_recall": prec_recall_df,
         "roc": roc_df,
     }
 
 
-def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
+def confusion_matrix_df(true, pred, long=False, **kws) -> pd.DataFrame:
     """
     Wrapper around sklearn's confusion matrix to show class labels
 
@@ -249,17 +257,22 @@ def confusion_matrix_df(true, pred, **kwargs) -> pd.DataFrame:
 
     True values in the rows, predictions in the columns
     """
-    df = pd.DataFrame(me.confusion_matrix(true, pred, **kwargs))
-    if "labels" not in kwargs:
+    df = pd.DataFrame(me.confusion_matrix(true, pred, **kws))
+    if "labels" not in kws:
         labels = np.unique(true)
         df.columns = labels
         df.index = labels
-        df.index.name = "truth"
     else:
-        df.columns = kwargs["labels"]
-        df.index = kwargs["labels"]
-        df.index.name = "truth"
-    return df
+        df.columns = kws["labels"]
+        df.index = kws["labels"]
+    df.index.name = "truth"
+    if not long:
+        return df
+    return (
+        df.reset_index()
+        .melt(id_vars="truth")
+        .rename({"variable": "prediction", "value": "count"}, axis=1)
+    )
 
 
 def write_cm_dict(file: Path | str, cms: dict[str, pd.DataFrame]):
@@ -1042,3 +1055,155 @@ def model_score(model: PredBase | Any, x):
     else:
         raise AttributeError("Model has no way of getting scores!")
     return score
+
+
+@define
+class Metrics:
+    selection: Sequence[str]
+    type: Literal["classification", "regression"] = field(
+        default="classification",
+        validator=validators.in_(["classification", "regression"]),
+    )
+    torch: bool = False
+    dfs: list = field(init=False, factory=list)
+    cms: dict = field(init=False, factory=dict)
+    _valid: set = {
+        "mcc",
+        "kappa",
+        "auroc",
+        "aupr",
+        "acc",
+        "jaccard",
+        "balanced_acc",
+        "fowlkes_mallows",
+    }
+
+    def __attrs_post_init__(self):
+        tmp = []
+        for s in self.selection:
+            if (self.torch and s not in self._torch_valid) or (
+                not self.torch and s not in self._valid
+            ):
+                print(f"WARNING: metric {s} is not recognized")
+            else:
+                tmp.append(s)
+
+    def to_df(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        return pd.concat(self.dfs), pd.concat(self.cms)
+
+    def record(
+        self,
+        true,
+        score,
+        stratify_by: Sequence | None = None,
+        context: dict[str, str] | None = None,
+        classes: Sequence | None = None,
+        **kws,
+    ) -> None:
+        """
+        Record performance metrics for a set of results
+        Confusion matrices are stored in long format
+
+        Parameters
+        ----------
+        stratify_by : Sequence
+            A sequence of labels to stratify metric scoring by,
+            e.g. to identify subgroup-specific performance
+        context : dict
+            Dictionary mapping of column>value for adding extra context
+            to the current result set e.g. {"fold": 1} to specify that
+            these results were taken in the 1st fold
+
+        """
+        if self.torch:
+            true = true.numpy()
+            score = score.numpy()
+        dfs, cms = [], []
+        if stratify_by is not None:
+            df: pd.DataFrame = pd.DataFrame(
+                {"by": stratify_by, "indices": range(len(true))}
+            )
+            for name, group in df.groupby("by"):
+                cur_context = context.copy()
+                cur_context["group"] = name
+                indices = group["indices"]
+                df, cm = self._record_all(
+                    true[indices],
+                    score[indices, :],
+                    context=cur_context,
+                    classes=classes,
+                )
+                dfs.append(df)
+                cms.append(cm)
+        else:
+            df, cm = self._record_all(true, score, context, classes, **kws)
+            dfs = [df]
+            cms = [cm]
+        self.dfs.extend(dfs)
+        self.cms.extend(cms)
+
+    def _record_all(
+        self,
+        true,
+        score: np.ndarray,
+        context: dict | None = None,
+        classes: Sequence | None = None,
+        **kws,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        if self.type == "classification":
+            if classes is None:
+                print("WARNING: no class names provided, using automatic")
+                classes = [f"class_{i}" for i in range(score.shape[1])]
+            df, cm = self._record_classification_metrics(
+                true, score, classes=classes, **kws
+            )
+            if context:
+                for k, v in context.items():
+                    df[k] = v
+                    cm[k] = v
+        else:
+            df, cm = self._record_regression_metrics()
+        return df, cm
+
+    def _record_classification_metrics(
+        self, true, score, classes, average: str = "macro", multi_class: str = "ovr"
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        predictions = pd.DataFrame(score, columns=classes)
+        pred_vals = predictions.idxmax(1)
+
+        cm = confusion_matrix_df(true, pred_vals, labels=classes, long=True)
+        tmp = {}
+        for metric in self.selection:
+            try:
+                if metric == "acc":
+                    val = me.accuracy_score(y_true=true, y_pred=pred_vals)
+                elif metric == "balanced_acc":
+                    val = me.balanced_accuracy_score(y_true=true, y_pred=pred_vals)
+                elif metric == "jaccard":
+                    val = me.jaccard_score(
+                        y_true=true, y_pred=pred_vals, average=average
+                    )
+                elif metric == "kappa":
+                    val = me.cohen_kappa_score(y_true=true, y_pred=pred_vals)
+                elif metric == "auroc":
+                    val = me.roc_auc_score(
+                        y_true=true,
+                        y_score=score,
+                        average=average,
+                        multi_class=multi_class,
+                    )
+                elif metric == "aupr":
+                    val = me.average_precision_score(y_true=true, y_score=score)
+                elif metric == "mcc":
+                    val = me.matthews_corrcoef(y_true=true, y_pred=pred_vals)
+                elif metric == "fowlkes_mallows":
+                    val = me.fowlkes_mallows_score(y_true=true, y_pred=pred_vals)
+                else:
+                    val = np.nan
+            except:
+                val = np.nan
+            tmp[metric] = [val]
+        return pd.DataFrame(tmp), cm
+
+    def _record_regression_metrics(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        raise NotImplementedError()
